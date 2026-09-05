@@ -24,6 +24,14 @@ interface ResizeHandleProps {
   collapseDirection?: 'left' | 'right' | 'up' | 'down';
   /** Callback fired when drag ends with the final size */
   onResizeEnd?: (size: number) => void;
+  /** #271: a gesture began, with the size currently rendered for this panel */
+  onResizeStart?: (size: number) => void;
+  /** #271: live clamped size during the gesture (at most once per frame) */
+  onResizePreview?: (size: number) => void;
+  /** #271: the gesture was revoked; nothing is committed */
+  onResizeCancel?: () => void;
+  /** #271: external layout identity — a change cancels an in-flight gesture */
+  invalidationKey?: string;
   /** Current panel size from store (used for aria-valuenow) */
   panelSize?: number;
 }
@@ -38,6 +46,10 @@ export function ResizeHandle({
   onToggleCollapse,
   collapseDirection = 'left',
   onResizeEnd,
+  onResizeStart,
+  onResizePreview,
+  onResizeCancel,
+  invalidationKey,
   panelSize = 0,
 }: ResizeHandleProps) {
   const { onMouseDown, onKeyDown } = useResize({
@@ -47,6 +59,10 @@ export function ResizeHandle({
     max,
     inverted,
     onResizeEnd,
+    onResizeStart,
+    onResizePreview,
+    onResizeCancel,
+    invalidationKey,
   });
 
   const isHorizontal = direction === 'horizontal';

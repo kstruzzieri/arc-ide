@@ -253,3 +253,286 @@ describe('useResize', () => {
     expect(setPropertySpy).toHaveBeenCalledWith('--panel-right-width', '330px');
   });
 });
+
+// #271 Task A3: a resize is a *gesture* the shell can observe (start/preview)
+// and revoke (cancel), not just a size that appears at mouseup.
+describe('useResize gesture ownership (#271)', () => {
+  const mouseDown = (
+    handler: (e: React.MouseEvent) => void,
+    clientX: number,
+    clientY = 0
+  ): void => {
+    handler({ clientX, clientY, preventDefault: jest.fn() } as unknown as React.MouseEvent);
+  };
+
+  const move = (clientX: number, clientY = 0): void => {
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX, clientY }));
+  };
+
+  const arrow = (handler: (e: React.KeyboardEvent) => void, key: string): void => {
+    handler({ key, preventDefault: jest.fn() } as unknown as React.KeyboardEvent);
+  };
+
+  it('announces the gesture start with the currently rendered size', () => {
+    const onResizeStart = jest.fn();
+    const { result } = renderHook(() =>
+      useResize({
+        direction: 'horizontal',
+        cssVar: '--panel-left-width',
+        min: 150,
+        max: 500,
+        onResizeStart,
+      })
+    );
+
+    act(() => mouseDown(result.current.onMouseDown, 260));
+    expect(onResizeStart).toHaveBeenCalledWith(260);
+
+    act(() => document.dispatchEvent(new MouseEvent('mouseup')));
+
+    // Keyboard is a gesture too, and only its first step starts one.
+    onResizeStart.mockClear();
+    act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+    act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+    expect(onResizeStart).toHaveBeenCalledTimes(1);
+    expect(onResizeStart).toHaveBeenCalledWith(260);
+  });
+
+  it('previews at most once per frame and flushes the last preview before committing', () => {
+    jest.useFakeTimers();
+    try {
+      const onResizePreview = jest.fn();
+      const onResizeEnd = jest.fn();
+      const { result } = renderHook(() =>
+        useResize({
+          direction: 'horizontal',
+          cssVar: '--panel-left-width',
+          min: 150,
+          max: 500,
+          onResizePreview,
+          onResizeEnd,
+        })
+      );
+
+      act(() => mouseDown(result.current.onMouseDown, 260));
+      act(() => {
+        move(300);
+        move(330);
+      });
+      expect(onResizePreview).not.toHaveBeenCalled();
+
+      act(() => jest.advanceTimersByTime(20));
+      expect(onResizePreview).toHaveBeenCalledTimes(1);
+      expect(onResizePreview).toHaveBeenLastCalledWith(330);
+
+      // A move in the same frame as the release must still reach the shell,
+      // so mouseup never jumps back from the final rendered preview.
+      act(() => move(350));
+      act(() => document.dispatchEvent(new MouseEvent('mouseup')));
+      expect(onResizePreview).toHaveBeenLastCalledWith(350);
+      expect(onResizeEnd).toHaveBeenCalledTimes(1);
+      expect(onResizeEnd).toHaveBeenCalledWith(350);
+
+      // No stray frame callback survives the commit.
+      onResizePreview.mockClear();
+      act(() => jest.advanceTimersByTime(50));
+      expect(onResizePreview).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each<[string, number | undefined]>([
+    ['a click with no movement', undefined],
+    ['a drag that returns to its initial rendered size', 260],
+  ])('does not commit a preference for %s', (_name, endX) => {
+    const onResizeEnd = jest.fn();
+    const { result } = renderHook(() =>
+      useResize({
+        direction: 'horizontal',
+        cssVar: '--panel-left-width',
+        min: 150,
+        max: 500,
+        onResizeEnd,
+      })
+    );
+
+    act(() => mouseDown(result.current.onMouseDown, 260));
+    if (endX !== undefined) {
+      act(() => {
+        move(400);
+        move(endX);
+      });
+    }
+    act(() => document.dispatchEvent(new MouseEvent('mouseup')));
+
+    expect(onResizeEnd).not.toHaveBeenCalled();
+  });
+
+  it('cancels rather than commits when unmounted mid-drag', () => {
+    const onResizeEnd = jest.fn();
+    const onResizeCancel = jest.fn();
+    const { result, unmount } = renderHook(() =>
+      useResize({
+        direction: 'horizontal',
+        cssVar: '--panel-left-width',
+        min: 150,
+        max: 500,
+        onResizeEnd,
+        onResizeCancel,
+      })
+    );
+
+    act(() => mouseDown(result.current.onMouseDown, 260));
+    act(() => move(330));
+
+    unmount();
+
+    expect(onResizeCancel).toHaveBeenCalledTimes(1);
+    expect(onResizeEnd).not.toHaveBeenCalled();
+    expect(document.body.style.cursor).toBe('');
+  });
+
+  it('cancels an in-flight drag when the external invalidation key changes', () => {
+    const onResizeEnd = jest.fn();
+    const onResizeCancel = jest.fn();
+    const { result, rerender } = renderHook(
+      ({ invalidationKey }) =>
+        useResize({
+          direction: 'horizontal',
+          cssVar: '--panel-left-width',
+          min: 150,
+          max: 500,
+          onResizeEnd,
+          onResizeCancel,
+          invalidationKey,
+        }),
+      { initialProps: { invalidationKey: '/workspace/A' } }
+    );
+
+    act(() => mouseDown(result.current.onMouseDown, 260));
+    act(() => move(330));
+    setPropertySpy.mockClear();
+
+    // Repository B restored under the drag.
+    rerender({ invalidationKey: '/workspace/B' });
+
+    expect(onResizeCancel).toHaveBeenCalledTimes(1);
+    expect(onResizeEnd).not.toHaveBeenCalled();
+
+    // Listeners are gone: no cleanup callback may save A's drag into B.
+    act(() => move(400));
+    expect(setPropertySpy.mock.calls.filter((c) => c[0] === '--panel-left-width')).toHaveLength(0);
+
+    act(() => document.dispatchEvent(new MouseEvent('mouseup')));
+    expect(onResizeEnd).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending keyboard commit when the external invalidation key changes', () => {
+    jest.useFakeTimers();
+    try {
+      const onResizeEnd = jest.fn();
+      const onResizeCancel = jest.fn();
+      const { result, rerender } = renderHook(
+        ({ invalidationKey }) =>
+          useResize({
+            direction: 'horizontal',
+            cssVar: '--panel-left-width',
+            min: 150,
+            max: 500,
+            onResizeEnd,
+            onResizeCancel,
+            invalidationKey,
+          }),
+        { initialProps: { invalidationKey: '/workspace/A' } }
+      );
+
+      act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+      rerender({ invalidationKey: '/workspace/B' });
+
+      expect(onResizeCancel).toHaveBeenCalledTimes(1);
+      act(() => jest.advanceTimersByTime(1000));
+      expect(onResizeEnd).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('cannot commit a stale keyboard value once a mouse gesture starts', () => {
+    jest.useFakeTimers();
+    try {
+      const onResizeEnd = jest.fn();
+      const { result } = renderHook(() =>
+        useResize({
+          direction: 'horizontal',
+          cssVar: '--panel-left-width',
+          min: 150,
+          max: 500,
+          onResizeEnd,
+        })
+      );
+
+      act(() => arrow(result.current.onKeyDown, 'ArrowRight')); // 260 -> 280, pending
+      act(() => mouseDown(result.current.onMouseDown, 280));
+      act(() => move(360));
+      act(() => document.dispatchEvent(new MouseEvent('mouseup')));
+
+      expect(onResizeEnd).toHaveBeenCalledTimes(1);
+      expect(onResizeEnd).toHaveBeenCalledWith(360);
+
+      act(() => jest.advanceTimersByTime(1000));
+      expect(onResizeEnd).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not commit a keyboard step that cannot move off its boundary', () => {
+    jest.useFakeTimers();
+    try {
+      document.documentElement.style.setProperty('--panel-left-width', '500px');
+      const onResizeEnd = jest.fn();
+      const { result } = renderHook(() =>
+        useResize({
+          direction: 'horizontal',
+          cssVar: '--panel-left-width',
+          min: 150,
+          max: 500,
+          onResizeEnd,
+        })
+      );
+
+      act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+      act(() => jest.advanceTimersByTime(1000));
+
+      expect(onResizeEnd).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('commits a completed keyboard burst exactly once', () => {
+    jest.useFakeTimers();
+    try {
+      const onResizeEnd = jest.fn();
+      const { result } = renderHook(() =>
+        useResize({
+          direction: 'horizontal',
+          cssVar: '--panel-left-width',
+          min: 150,
+          max: 500,
+          onResizeEnd,
+        })
+      );
+
+      act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+      act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+      act(() => jest.advanceTimersByTime(1000));
+
+      expect(onResizeEnd).toHaveBeenCalledTimes(1);
+      expect(onResizeEnd).toHaveBeenCalledWith(300);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
