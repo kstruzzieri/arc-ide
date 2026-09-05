@@ -206,7 +206,7 @@ const GRANT_NOTICE: Record<DestinationGrantsStatus, string> = {
  * — and the count decides the grammar.
  */
 const promptLead = (intent: ConsentPromptIntent, count: number): string => {
-  const subject = count === 1 ? 'this destination' : `these ${count} destinations`;
+  const subject = count === 1 ? 'this remote destination' : `these ${count} remote destinations`;
   return intent === 'grant-only'
     ? `Approve ${subject}. Nothing is written to your configuration.`
     : `Approve ${subject} before the configuration is written.`;
@@ -215,6 +215,15 @@ const promptLead = (intent: ConsentPromptIntent, count: number): string => {
 const DISCARD_BODY =
   'The staged changes and any API key you entered are dropped. Nothing has been written, and the file on disk does not change.';
 const DISCARD_BODY_CHALLENGED = `${DISCARD_BODY} The pending destination approval is cancelled first.`;
+/**
+ * A grant-only prompt with a CLEAN draft behind it: closing, refreshing, or
+ * switching source has nothing staged to discard — the only thing `unsaved`
+ * is protecting is the open approval, so the dialog says exactly that instead
+ * of claiming staged changes and a key are being dropped.
+ */
+const CANCEL_GRANT_TITLE = 'Cancel the pending approval?';
+const CANCEL_GRANT_BODY = 'The destination approval is cancelled. Nothing staged is dropped.';
+const CANCEL_GRANT_CONFIRM = 'Cancel approval';
 
 type Phase =
   | { kind: 'loading' }
@@ -535,10 +544,24 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     return run;
   };
 
-  /** Confirm, then cancel any challenge. Callers only reach it while dirty. */
+  /**
+   * Confirm, then cancel any challenge. Callers only reach it while dirty
+   * (`unsaved`), which a grant-only prompt satisfies on its own even with a
+   * clean draft and no unstaged editors — in that one case there is nothing
+   * staged to discard, only an approval to cancel, so the dialog says that
+   * instead of the standard discard copy.
+   */
   const clearForTransition = async (title: string, confirmLabel: string): Promise<boolean> => {
-    const body = outcomeRef.current.challenge === null ? DISCARD_BODY : DISCARD_BODY_CHALLENGED;
-    if (!(await ask({ title, body, confirmLabel }))) return false;
+    const challenge = outcomeRef.current.challenge;
+    const grantOnlyCancel =
+      challenge !== null &&
+      outcomeRef.current.intent === 'grant-only' &&
+      !isDraftDirty(draft) &&
+      unstagedEditors.size === 0;
+    const dialog = grantOnlyCancel
+      ? { title: CANCEL_GRANT_TITLE, body: CANCEL_GRANT_BODY, confirmLabel: CANCEL_GRANT_CONFIRM }
+      : { title, body: challenge === null ? DISCARD_BODY : DISCARD_BODY_CHALLENGED, confirmLabel };
+    if (!(await ask(dialog))) return false;
     return cancelChallenge();
   };
   const clearForTransitionRef = useRef(clearForTransition);
@@ -1090,7 +1113,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               sourceLoading ||
               sending ||
               recovery ||
-              outcome.challenge !== null
+              outcome.challenge !== null ||
+              // A settings-apply disclosure is still on screen: the dropped-
+              // fields panel is the ONLY copy of `outcome.drops` (restageDrops
+              // reads it), and a busy Retry keeps a request retryable. A fresh
+              // Prepare here would replace the whole outcome and destroy either
+              // one, so the action stays off until the user has resolved it.
+              outcome.drops !== null ||
+              outcome.busy ||
+              outcome.conflict !== null
             }
             onClick={approveDestinations}
           >
@@ -1268,8 +1299,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 </p>
                 {/* One line per destination, in the digest order the backend
                     sent, with the routing hops that reach it beneath. Every
-                    entry is remote — a local destination never challenges — so
-                    the classification is said once, in the copy above. */}
+                    entry is remote — a local destination never challenges —
+                    and the lead sentence above already says so, so the row
+                    itself does not repeat the classification. */}
                 <ul className={styles.dropList}>
                   {outcome.challenge.destinations.map((destination) => (
                     <li key={`${destination.endpoint} ${destination.provider} ${destination.model}`}>

@@ -566,9 +566,10 @@ describe('nonterminal apply results', () => {
     expect(within(consent).getByText(/hosted/)).toBeVisible();
     expect(within(consent).getByText(/gpt-5-mini/)).toBeVisible();
     expect(within(consent).getByText(/https:\/\/api\.example\.com\/v1/)).toBeVisible();
-    // The routing hop that reaches it, and the singular lead: one destination.
+    // The routing hop that reaches it, and the singular lead: one destination,
+    // and the word "remote" — this is a consent to egress, not a local write.
     expect(within(consent).getByText('Reached by agent')).toBeVisible();
-    expect(within(consent).getByText(/Approve this destination before/)).toBeVisible();
+    expect(within(consent).getByText(/Approve this remote destination before/)).toBeVisible();
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
     await waitFor(() => expect(ConfirmGolemSettingsApply).toHaveBeenCalledTimes(1));
@@ -889,8 +890,9 @@ describe('grant-only destination approval', () => {
     await approve();
 
     const consent = await screen.findByRole('alert');
-    // Pluralized copy, and the grant-only lead: no write is pending.
-    expect(within(consent).getByText(/Approve these 2 destinations\./)).toBeVisible();
+    // Pluralized copy, the grant-only lead (no write is pending), and the word
+    // "remote" — the user is approving egress, not a local write.
+    expect(within(consent).getByText(/Approve these 2 remote destinations\./)).toBeVisible();
     expect(within(consent).getByText(/Nothing is written to your configuration/)).toBeVisible();
     // One line per destination: endpoint, provider, and the model only when the
     // entry names one.
@@ -984,6 +986,36 @@ describe('grant-only destination approval', () => {
     expect(
       within(screen.getByTestId('provider-row-hosted')).getByText('Key staged')
     ).toBeInTheDocument();
+  });
+
+  // Fix round 1, finding 1. A settings-apply disclosure — the drop-
+  // confirmation panel here — is the ONLY copy of `outcome.drops`
+  // (`restageDrops` reads it back). A fresh Prepare replaces the whole
+  // outcome, so the action must stay off until the user has resolved it,
+  // rather than silently destroying a disclosure they are still looking at.
+  it('disables the action while a drop disclosure is on screen, and the drops survive', async () => {
+    applyReturns({
+      status: 'drop_confirmation_required',
+      drops: [{ changeId: 'route:chat', fields: ['slots', 'think_tags'] }],
+    });
+    await mountWorkspace();
+    await stageKey();
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    await stage();
+    await cancelEditor();
+    await clickApply();
+
+    expect(await screen.findByText(/slots/)).toBeVisible();
+    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    expect(action).toBeDisabled();
+
+    // A disabled control fires nothing: Prepare never runs, and the
+    // disclosure survives the click attempt intact.
+    await userEvent.click(action);
+    expect(PrepareGolemDestinationGrants).not.toHaveBeenCalled();
+    expect(screen.getByText(/slots/)).toBeVisible();
   });
 
   it('names a changed configuration on conflict and offers the action again', async () => {
@@ -1219,6 +1251,33 @@ describe('unsaved-work transitions', () => {
     );
     await expect(pending).resolves.toBe(true);
     expect(CancelGolemSettingsApply).toHaveBeenCalledWith('challenge-token-1');
+  });
+
+  // Fix round 1, finding 3. A grant-only prompt is the one case `unsaved` is
+  // true for a reason that has nothing to do with a staged change or a key —
+  // a CLEAN draft with only an open approval. The dialog must describe THAT,
+  // not claim staged changes and an API key are being dropped. It still runs
+  // the same cancel-then-teardown path (harmless here: nothing is staged, so
+  // `settleDraft`/`vault.clear()` have nothing to drop).
+  it('shows grant-aware copy and revokes the token when a clean surface closes on an open approval', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    await mountWorkspace();
+    expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
+    await approve();
+    await screen.findByRole('button', { name: 'Confirm destination' });
+    expect(hasUnsavedConfigWork()).toBe(true);
+
+    const pending = confirmConfigClose('close');
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Cancel the pending approval?')).toBeVisible();
+    expect(
+      within(dialog).getByText('The destination approval is cancelled. Nothing staged is dropped.')
+    ).toBeVisible();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel approval' }));
+    await expect(pending).resolves.toBe(true);
+    expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1');
+    expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
   });
 
   it('keeps the surface open when the challenge cannot be cancelled', async () => {
