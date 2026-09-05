@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"firn/internal/filesystem"
+	"github.com/kstruzzieri/go-llm/provider"
 )
 
 func remoteDestination(providerName, endpoint string) ProviderDestination {
@@ -146,6 +148,13 @@ func TestConsentStoreFailsClosedOnInvalidContent(t *testing.T) {
 			}
 			if err := store.Grant(remoteDestination("remote", remoteEndpoint)); !errors.Is(err, ErrConsentUnavailable) {
 				t.Fatalf("Grant = %v, want ErrConsentUnavailable", err)
+			}
+			// F18/D10 carry-forward: a legacy record that invalidates the
+			// whole store must also yield the zero destination policy —
+			// there is no partial credit for the grants that would have
+			// parsed under an older canonicalization rule.
+			if strings.HasPrefix(name, "legacy record") && !store.DestinationPolicy().IsZero() {
+				t.Fatal("DestinationPolicy is not zero for a store invalidated by a legacy record")
 			}
 		})
 	}
@@ -365,6 +374,20 @@ func TestConsentStoreKeepsPriorGrantsWhenRenameFails(t *testing.T) {
 	}
 }
 
+// lstatFailFS is durable and lets the atomic write and rename succeed, but
+// fails the post-rename Lstat verification step (persistGrantsLocked, F11c).
+type lstatFailFS struct {
+	*filesystem.OS
+	fail bool
+}
+
+func (l *lstatFailFS) Lstat(path string) (fs.FileInfo, error) {
+	if l.fail {
+		return nil, errors.New("lstat refused")
+	}
+	return l.OS.Lstat(path)
+}
+
 // syncFailpointFS is durable until armed, then fails every directory sync.
 type syncFailpointFS struct {
 	*filesystem.OS
@@ -455,4 +478,211 @@ func TestConsentStoreConcurrentGrantAndHas(t *testing.T) {
 			t.Errorf("Has(%s) = false after concurrent grants", dest.Endpoint)
 		}
 	}
+}
+
+// F2: the policy admits exactly the DURABLE grant set — proven by reopening
+// from disk rather than trusting the in-memory store that made the grant.
+func TestDestinationPolicyDerivesFromDurableGrants(t *testing.T) {
+	path := consentPath(t)
+	fsys := filesystem.NewOS()
+
+	store, err := OpenConsentStore(fsys, path)
+	if err != nil {
+		t.Fatalf("OpenConsentStore: %v", err)
+	}
+	dest := remoteDestination("hosted", "https://api.example.com/v1")
+	if err := store.Grant(dest); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	reopened, err := OpenConsentStore(fsys, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	policy := reopened.DestinationPolicy()
+
+	permitted, err := provider.NewDestination("hosted", "https://api.example.com/v1")
+	if err != nil {
+		t.Fatalf("provider.NewDestination(permitted): %v", err)
+	}
+	if !policy.Permits(permitted) {
+		t.Fatal("policy denied the durably granted destination")
+	}
+	denied, err := provider.NewDestination("hosted", "https://elsewhere.example.com")
+	if err != nil {
+		t.Fatalf("provider.NewDestination(denied): %v", err)
+	}
+	if policy.Permits(denied) {
+		t.Fatal("policy permitted a destination that was never granted")
+	}
+}
+
+// F3: an unavailable store yields the zero policy even with grants sitting on
+// disk. verifyPrivateMode is skipped on Windows, so the fixture corrupts the
+// file's "version" field rather than its mode bits.
+func TestDestinationPolicyFailsClosedWhenUnavailable(t *testing.T) {
+	path := consentPath(t)
+	fsys := filesystem.NewOS()
+
+	store, err := OpenConsentStore(fsys, path)
+	if err != nil {
+		t.Fatalf("OpenConsentStore: %v", err)
+	}
+	dest := remoteDestination("remote", "https://api.example.com/v1")
+	if err := store.Grant(dest); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	doc["version"] = 99
+	corrupted, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := os.WriteFile(path, corrupted, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	reopened, err := OpenConsentStore(fsys, path)
+	if !errors.Is(err, ErrConsentUnavailable) {
+		t.Fatalf("reopen after version corruption = %v, want ErrConsentUnavailable", err)
+	}
+	if !reopened.DestinationPolicy().IsZero() {
+		t.Fatal("DestinationPolicy is not zero for an unavailable store")
+	}
+}
+
+// F16: a destination destination/v1 cannot construct is refused at grant
+// time — nothing is stored, whether the grant comes through Grant or as part
+// of a GrantMany batch alongside an otherwise-valid destination.
+func TestGrantRefusesUnconstructibleDestination(t *testing.T) {
+	path := consentPath(t)
+	fsys := filesystem.NewOS()
+
+	store, err := OpenConsentStore(fsys, path)
+	if err != nil {
+		t.Fatalf("OpenConsentStore: %v", err)
+	}
+	// "bad/name" is a Firn-canonical provider key (NormalizeEndpoint/digest
+	// don't care), but provider.NewDestination refuses any provider name
+	// containing "/".
+	bad := remoteDestination("bad/name", "https://api.example.com/v1")
+	if err := store.Grant(bad); err == nil {
+		t.Fatal("Grant accepted a destination that destination/v1 cannot construct")
+	}
+	if store.Has(bad.Digest) {
+		t.Fatal("unconstructible destination became granted in memory")
+	}
+	reopened, err := OpenConsentStore(fsys, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if reopened.Has(bad.Digest) {
+		t.Fatal("unconstructible destination persisted despite Grant's refusal")
+	}
+
+	good := remoteDestination("remote", "https://good.example.com")
+	if err := reopened.GrantMany([]ProviderDestination{good, bad}); err == nil {
+		t.Fatal("GrantMany accepted a batch containing an unconstructible destination")
+	}
+	if reopened.Has(good.Digest) || reopened.Has(bad.Digest) {
+		t.Fatal("GrantMany partially applied a batch that failed validation")
+	}
+	final, err := OpenConsentStore(fsys, path)
+	if err != nil {
+		t.Fatalf("final reopen: %v", err)
+	}
+	if final.Has(good.Digest) || final.Has(bad.Digest) {
+		t.Fatal("an invalid GrantMany batch persisted the good half")
+	}
+}
+
+// F11: GrantMany never publishes a subset of a batch, in memory or on disk.
+func TestGrantManyNeverPublishesASubset(t *testing.T) {
+	t.Run("both persist together", func(t *testing.T) {
+		path := consentPath(t)
+		fsys := filesystem.NewOS()
+		store, err := OpenConsentStore(fsys, path)
+		if err != nil {
+			t.Fatalf("OpenConsentStore: %v", err)
+		}
+		destA := remoteDestination("remote", "https://a.example.com")
+		destB := remoteDestination("remote", "https://b.example.com")
+		if err := store.GrantMany([]ProviderDestination{destA, destB}); err != nil {
+			t.Fatalf("GrantMany: %v", err)
+		}
+		if !store.Has(destA.Digest) || !store.Has(destB.Digest) {
+			t.Fatal("GrantMany did not grant both destinations in memory")
+		}
+
+		reopened, err := OpenConsentStore(fsys, path)
+		if err != nil {
+			t.Fatalf("reopen: %v", err)
+		}
+		if !reopened.Has(destA.Digest) || !reopened.Has(destB.Digest) {
+			t.Fatal("reopen lost one of the batch-granted destinations")
+		}
+	})
+
+	t.Run("before-rename failure publishes neither", func(t *testing.T) {
+		path := consentPath(t)
+		failing := &renameFailFS{OS: filesystem.NewOS(), fail: true}
+		store, err := OpenConsentStore(failing, path)
+		if err != nil {
+			t.Fatalf("OpenConsentStore: %v", err)
+		}
+		destA := remoteDestination("remote", "https://c.example.com")
+		destB := remoteDestination("remote", "https://d.example.com")
+		if err := store.GrantMany([]ProviderDestination{destA, destB}); err == nil {
+			t.Fatal("GrantMany succeeded despite a pre-rename write failure")
+		}
+		if store.Has(destA.Digest) || store.Has(destB.Digest) {
+			t.Fatal("a failed GrantMany mutated the in-memory set")
+		}
+
+		recovered, err := OpenConsentStore(filesystem.NewOS(), path)
+		if err != nil {
+			t.Fatalf("recovery reopen: %v", err)
+		}
+		if recovered.Has(destA.Digest) || recovered.Has(destB.Digest) {
+			t.Fatal("a pre-rename failure still published part of the batch")
+		}
+	})
+
+	t.Run("after-rename failure recovers the complete batch", func(t *testing.T) {
+		path := consentPath(t)
+		failing := &lstatFailFS{OS: filesystem.NewOS()}
+		store, err := OpenConsentStore(failing, path)
+		if err != nil {
+			t.Fatalf("OpenConsentStore: %v", err)
+		}
+		destA := remoteDestination("remote", "https://e.example.com")
+		destB := remoteDestination("remote", "https://f.example.com")
+
+		failing.fail = true
+		if err := store.GrantMany([]ProviderDestination{destA, destB}); err == nil {
+			t.Fatal("GrantMany succeeded despite a post-rename verification failure")
+		}
+		if store.Has(destA.Digest) || store.Has(destB.Digest) {
+			t.Fatal("a failed GrantMany advanced the in-memory set despite unverified persistence")
+		}
+
+		// The rename itself succeeded before Lstat was asked to verify it, so
+		// the complete batch is durable; a fresh, non-failing open recovers
+		// BOTH destinations — never exactly one.
+		recovered, err := OpenConsentStore(filesystem.NewOS(), path)
+		if err != nil {
+			t.Fatalf("recovery reopen: %v", err)
+		}
+		if !recovered.Has(destA.Digest) || !recovered.Has(destB.Digest) {
+			t.Fatal("a post-rename failure did not leave the complete batch durable")
+		}
+	})
 }

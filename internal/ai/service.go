@@ -16,6 +16,7 @@ import (
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/golem"
+	"github.com/kstruzzieri/go-llm/provider"
 
 	"github.com/google/uuid"
 )
@@ -321,6 +322,14 @@ func (s *Service) clearConsentDegraded() bool {
 	was := s.degraded
 	s.degraded = nil
 	return was != nil
+}
+
+// DestinationPolicy exposes the consent store's exact-grant policy for
+// config-driven golem consumers (the commit-message generator). Keys off the
+// STORE's availability (loadErr), not the service's degraded-warning
+// bookkeeping, which also tracks transient persist failures (spec D2).
+func (s *Service) DestinationPolicy() provider.DestinationPolicy {
+	return s.consent.DestinationPolicy()
 }
 
 // BindRepository makes repoPath the current repository incarnation and returns
