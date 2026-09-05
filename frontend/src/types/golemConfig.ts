@@ -847,6 +847,7 @@ export const USE_CASE_FLOORS: ReadonlyMap<string, readonly CapabilityName[]> = n
   ['agent', ['chat', 'stream', 'tool_call']],
   ['chat', ['chat', 'stream']],
   ['embedding', ['embed']],
+  ['planning', ['chat', 'stream', 'tool_call']],
 ]);
 
 /** A use case outside the table has no floor to meet; it needs confirmation. */

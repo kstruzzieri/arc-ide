@@ -1073,6 +1073,25 @@ func TestPrepareSettingsApply(t *testing.T) {
 			},
 		},
 		{
+			// planning is a Firn capability floor (tool-bearing), unlike vision
+			// above: routing it needs no confirmUnknown at all.
+			name:    "planning route satisfies the floor",
+			changes: []Change{routeChange("planning", "ollama", "planning-model", "chat", "stream", "tool_call")},
+			check: func(t *testing.T, cfg *config.Config) {
+				if cfg.Defaults["planning"] != "planning-m" || cfg.Models["planning-m"].Name != "planning-model" {
+					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
+				}
+			},
+		},
+		{
+			// The planning floor requires tool_call; carving it off is refused
+			// before any mutation, same as the agent/chat floor rejections.
+			name:       "planning route below the floor is refused",
+			changes:    []Change{routeChange("planning", "ollama", "planning-model", "chat", "stream")},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityIneligible},
+		},
+		{
 			// Firn derives the affected defaults outside its floor table; a
 			// request that does not confirm exactly that set is stale.
 			name:       "unknown use case not confirmed",

@@ -1,5 +1,6 @@
 [
   { "useCase": "agent", "capabilities": ["chat", "stream", "tool_call"] },
   { "useCase": "chat", "capabilities": ["chat", "stream"] },
-  { "useCase": "embedding", "capabilities": ["embed"] }
+  { "useCase": "embedding", "capabilities": ["embed"] },
+  { "useCase": "planning", "capabilities": ["chat", "stream", "tool_call"] }
 ]

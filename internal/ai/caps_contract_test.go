@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/kstruzzieri/go-llm/agent"
+	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
 )
 
@@ -25,5 +26,8 @@ func TestFloorsMatchSharedCalculation(t *testing.T) {
 	}
 	if firnUseCaseFloors["chat"] != agent.ModelCallCapabilities(false) {
 		t.Fatal("the chat floor must equal agent.ModelCallCapabilities(false)")
+	}
+	if firnUseCaseFloors[config.UseCasePlanning] != agent.ModelCallCapabilities(true) {
+		t.Fatal("the planning floor must be the tool-bearing shared calculation")
 	}
 }

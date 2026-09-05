@@ -798,6 +798,8 @@ describe('use-case floors', () => {
     ['embedding', ['embed'], true],
     ['embedding', ['chat'], false],
     ['summarize', [], true],
+    ['planning', ['chat', 'stream'], false],
+    ['planning', ['chat', 'stream', 'tool_call'], true],
   ])('meetsUseCaseFloor(%s, %j) is %s', (useCase, caps, expected) => {
     expect(meetsUseCaseFloor(useCase as string, caps as CapabilityName[])).toBe(expected);
   });
