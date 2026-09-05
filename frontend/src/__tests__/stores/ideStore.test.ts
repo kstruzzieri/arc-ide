@@ -9,7 +9,7 @@ beforeEach(() => {
     isLeftPanelCollapsed: false,
     isRightPanelCollapsed: false,
     isBottomPanelCollapsed: false,
-    panelSizes: { left: 260, right: 280, bottom: 200 },
+    panelSizes: { left: 260, right: 280, bottom: 200, golem: 420 },
     terminalSessions: [],
     activeTerminalSessionId: null,
   });
@@ -120,7 +120,7 @@ describe('ideStore - setPanelSize', () => {
     setPanelSize('right', 350);
     setPanelSize('bottom', 150);
     const sizes = useIDEStore.getState().panelSizes;
-    expect(sizes).toEqual({ left: 260, right: 350, bottom: 150 });
+    expect(sizes).toEqual({ left: 260, right: 350, bottom: 150, golem: 420 });
   });
 
   it('should clamp negative values to zero', () => {

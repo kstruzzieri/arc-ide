@@ -106,7 +106,7 @@ describe('useWorkspacePersistence', () => {
       isLeftPanelCollapsed: true,
       isRightPanelCollapsed: true,
       isBottomPanelCollapsed: true,
-      panelSizes: { left: 320, right: 360, bottom: 140 },
+      panelSizes: { left: 320, right: 360, bottom: 140, golem: 500 },
       expandedPaths: new Set(['/workspace/new-workspace/src']),
       selectedPath: '/workspace/new-workspace/src',
       isRootExpanded: false,
@@ -140,7 +140,7 @@ describe('useWorkspacePersistence', () => {
     expect(state.isLeftPanelCollapsed).toBe(false);
     expect(state.isRightPanelCollapsed).toBe(false);
     expect(state.isBottomPanelCollapsed).toBe(false);
-    expect(state.panelSizes).toEqual({ left: 260, right: 280, bottom: 200 });
+    expect(state.panelSizes).toEqual({ left: 260, right: 280, bottom: 200, golem: 420 });
     expect(state.expandedPaths.size).toBe(0);
     expect(state.selectedPath).toBeNull();
     expect(state.isRootExpanded).toBe(true);

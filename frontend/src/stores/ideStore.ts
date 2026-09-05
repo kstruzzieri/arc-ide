@@ -5,6 +5,13 @@ import type { filesystem, runhistory, workspace } from '../wails/bindings';
 import type { RunProfile, RunProfileUIState } from '../types/runProfile';
 import type { FormState } from '../utils/runProfileForm';
 import { LineAssembler } from '../utils/lineAssembler';
+import {
+  DEFAULT_CENTER_LAYOUT,
+  initialCenterReveal,
+  type CenterLayoutPrefs,
+  type CenterOrder,
+  type CenterPanel,
+} from '../utils/centerLayout';
 import type {
   CompoundRun,
   CompoundRunEvent,
@@ -101,7 +108,7 @@ export interface NavigationLocation {
 
 const MAX_NAVIGATION_HISTORY = 50;
 
-const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
+const defaultPanelSizes = { left: 260, right: 280, bottom: 200, golem: DEFAULT_CENTER_LAYOUT.golemWidth };
 
 function createDefaultWorkspaceSessionState() {
   return {
@@ -110,6 +117,13 @@ function createDefaultWorkspaceSessionState() {
     isRightPanelCollapsed: false,
     isBottomPanelCollapsed: false,
     panelSizes: { ...defaultPanelSizes },
+    // #271 center pair. Preferences persist per repository session; centerReveal
+    // is the transient "which center panel was explicitly requested" target
+    // that the effective-layout budget protects under window pressure.
+    centerOrder: DEFAULT_CENTER_LAYOUT.centerOrder as CenterOrder,
+    isGolemPanelCollapsed: DEFAULT_CENTER_LAYOUT.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: DEFAULT_CENTER_LAYOUT.isFilesPanelCollapsed,
+    centerReveal: 'files' as CenterPanel,
     openFiles: [] as EditorFile[],
     activeFileId: null as string | null,
     cursorPosition: { line: 1, column: 1 },
@@ -158,7 +172,12 @@ interface IDEState {
   isLeftPanelCollapsed: boolean;
   isRightPanelCollapsed: boolean;
   isBottomPanelCollapsed: boolean;
-  panelSizes: { left: number; right: number; bottom: number };
+  panelSizes: { left: number; right: number; bottom: number; golem: number };
+  // #271 center pair
+  centerOrder: CenterOrder;
+  isGolemPanelCollapsed: boolean;
+  isFilesPanelCollapsed: boolean;
+  centerReveal: CenterPanel;
 
   // Editor
   openFiles: EditorFile[];
@@ -270,7 +289,14 @@ interface IDEActions {
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
   toggleBottomPanel: () => void;
-  setPanelSize: (panel: 'left' | 'right' | 'bottom', size: number) => void;
+  setPanelSize: (panel: 'left' | 'right' | 'bottom' | 'golem', size: number) => void;
+  // #271 center pair
+  setCenterOrder: (order: CenterOrder) => void;
+  swapCenterOrder: () => void;
+  setGolemPanelCollapsed: (collapsed: boolean) => void;
+  setFilesPanelCollapsed: (collapsed: boolean) => void;
+  revealCenterPanel: (panel: CenterPanel) => void;
+  applyCenterLayout: (prefs: CenterLayoutPrefs) => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -1149,6 +1175,65 @@ export const useIDEStore = create<IDEStore>()(
           'setPanelSize'
         );
       },
+
+      // #271 center pair. The not-both-collapsed invariant lives in the two
+      // setters, so no caller has to order a collapse against the other panel.
+      setCenterOrder: (centerOrder) => set({ centerOrder }, false, 'setCenterOrder'),
+
+      swapCenterOrder: () =>
+        set(
+          (state) => ({
+            centerOrder: state.centerOrder === 'files-first' ? 'golem-first' : 'files-first',
+          }),
+          false,
+          'swapCenterOrder'
+        ),
+
+      setGolemPanelCollapsed: (collapsed) =>
+        set(
+          (state) => ({
+            isGolemPanelCollapsed: collapsed,
+            isFilesPanelCollapsed: collapsed ? false : state.isFilesPanelCollapsed,
+          }),
+          false,
+          'setGolemPanelCollapsed'
+        ),
+
+      setFilesPanelCollapsed: (collapsed) =>
+        set(
+          (state) => ({
+            isFilesPanelCollapsed: collapsed,
+            isGolemPanelCollapsed: collapsed ? false : state.isGolemPanelCollapsed,
+          }),
+          false,
+          'setFilesPanelCollapsed'
+        ),
+
+      revealCenterPanel: (panel) =>
+        set(
+          (state) => ({
+            centerReveal: panel,
+            isGolemPanelCollapsed: panel === 'golem' ? false : state.isGolemPanelCollapsed,
+            isFilesPanelCollapsed: panel === 'files' ? false : state.isFilesPanelCollapsed,
+          }),
+          false,
+          'revealCenterPanel'
+        ),
+
+      // Restore path: one set, already normalized, so the subscribe-and-save
+      // hook never observes a half-applied pair.
+      applyCenterLayout: (prefs) =>
+        set(
+          (state) => ({
+            centerOrder: prefs.centerOrder,
+            isGolemPanelCollapsed: prefs.isGolemPanelCollapsed,
+            isFilesPanelCollapsed: prefs.isFilesPanelCollapsed,
+            panelSizes: { ...state.panelSizes, golem: prefs.golemWidth },
+            centerReveal: initialCenterReveal(prefs),
+          }),
+          false,
+          'applyCenterLayout'
+        ),
 
       // Editor actions
       openFile: (file) =>
@@ -2612,6 +2697,10 @@ export const useSidebarView = () => useIDEStore((state) => state.activeSidebarVi
 export const useIsLeftPanelCollapsed = () => useIDEStore((state) => state.isLeftPanelCollapsed);
 export const useIsRightPanelCollapsed = () => useIDEStore((state) => state.isRightPanelCollapsed);
 export const useIsBottomPanelCollapsed = () => useIDEStore((state) => state.isBottomPanelCollapsed);
+export const useCenterOrder = () => useIDEStore((state) => state.centerOrder);
+export const useIsGolemPanelCollapsed = () => useIDEStore((state) => state.isGolemPanelCollapsed);
+export const useIsFilesPanelCollapsed = () => useIDEStore((state) => state.isFilesPanelCollapsed);
+export const useCenterReveal = () => useIDEStore((state) => state.centerReveal);
 export const useOpenFiles = () => useIDEStore((state) => state.openFiles);
 export const useActiveFileId = () => useIDEStore((state) => state.activeFileId);
 export const useActiveFile = () =>
