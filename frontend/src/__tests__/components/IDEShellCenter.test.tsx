@@ -498,9 +498,9 @@ describe('IDEShell center reorder by drag', () => {
   // A drag fires `dragover` continuously; the island underneath it must not be
   // rebuilt at pointer rate just because the shell around it re-renders.
   it('does not re-render the Golem island during a dragover storm', () => {
-    let renders = 0;
+    const renders = jest.fn();
     function Probe() {
-      renders += 1;
+      renders();
       return <div data-testid="golem" />;
     }
     const golemPanel = () => <Probe />;
@@ -523,13 +523,13 @@ describe('IDEShell center reorder by drag', () => {
     const source = transport('golem');
     drag('dragStart', golemIsland(), { dataTransfer: source });
     drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 });
-    const baseline = renders;
+    const baseline = renders.mock.calls.length;
 
     for (let i = 0; i < 10; i += 1) {
       drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 + i });
     }
     expect(edgeOf(filesColumn())).toBe('left');
-    expect(renders).toBe(baseline);
+    expect(renders).toHaveBeenCalledTimes(baseline);
   });
 });
 
