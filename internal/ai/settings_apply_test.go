@@ -72,6 +72,16 @@ func validateDropSets(drops []ChangeDropSet) error {
 	return nil
 }
 
+// maxChallengeProvenanceBytes bounds one rendered provenance hop: at most two
+// bounded identifiers joined by a fixed literal. It lives with the oracle
+// because the oracle is the only thing that consults it — renderHop's inputs
+// are fixed vocabulary today (reachableDestinations only ever builds hops from
+// useCaseAgent), so no production path can exceed it and a constant sitting in
+// settings_apply.go would read as a ceiling nothing enforces. If a hop ever
+// interpolates a configuration-supplied identifier, the bound has to become a
+// real check inside applyDestinations, not just this assertion.
+const maxChallengeProvenanceBytes = 2*maxProjectionIdentifierLen + 32
+
 func validateApplyChallenge(c *ApplyChallenge) error {
 	if c == nil {
 		return fmt.Errorf("challenge missing")

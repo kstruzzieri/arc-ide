@@ -40,11 +40,6 @@ const (
 	maxApplyKeyValueBytes = 4096
 	// maxChallengeTokenBytes bounds the opaque consent-challenge token.
 	maxChallengeTokenBytes = 256
-	// maxChallengeProvenanceBytes bounds one rendered provenance hop. A hop is
-	// at most two bounded identifiers joined by a fixed literal, so the bound
-	// is derived rather than invented — but it is stated here because every
-	// string that reaches the UI carries one.
-	maxChallengeProvenanceBytes = 2*maxProjectionIdentifierLen + 32
 	// maxModelFactNumber is the §5.6 numeric-fact ceiling (int32 max).
 	maxModelFactNumber = 2147483647
 )
@@ -575,6 +570,29 @@ type ChangeDropSet struct {
 // idempotent, so an absent or expired token is already cancelled.
 type CancelSettingsApplyResult struct {
 	Status string `json:"status"`
+}
+
+// DestinationGrantsResult is the closed result of the grant-only approval
+// flow (spec D13). It approves destinations and authorizes NO document write,
+// so it carries no projection, no diagnostics, and no conflict kind: the
+// status alone says what happened.
+//
+//	none             nothing to approve — no configuration, or every remote
+//	                 the agent route reaches is already granted
+//	consent_required the challenge below lists what would be opened
+//	granted          the whole approved batch is durably recorded
+//	uncertain        the batch write failed; see ConsentStore.GrantMany
+//	conflict         the token is unknown, expired, cancelled, issued by the
+//	                 settings-write flow, or no longer describes the ACTIVE
+//	                 configuration
+//	busy             a turn is running; nothing was consumed, retry the token
+//	unavailable      consent storage cannot authorize or record anything
+//	config_invalid   the active configuration could not be loaded
+//
+// Challenge is present iff Status is consent_required.
+type DestinationGrantsResult struct {
+	Status    string          `json:"status"`
+	Challenge *ApplyChallenge `json:"challenge,omitempty"`
 }
 
 // ProfileDraftProjection is a profile preview: the settings projection minus
@@ -1244,6 +1262,21 @@ func targetPathExists(path string) bool {
 	}
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+// activeGrantTarget returns the active configuration's identity — the same
+// settingsWriteTarget the apply path binds, so a token can never authorize
+// against a different file — alongside what was loaded. The mutable Document
+// is deliberately dropped: the approve flow reads, and never writes.
+// ErrAgentConfigMissing is reported separately from every other load failure:
+// no configuration means there is nothing to approve, while a broken one must
+// never read as "nothing to approve" (R3).
+func activeGrantTarget() (target settingsWriteTarget, loaded loadedAgentConfig, missing bool, err error) {
+	_, loaded, err = loadAgentConfigDocument()
+	if err != nil {
+		return settingsWriteTarget{}, loaded, errors.Is(err, ErrAgentConfigMissing), err
+	}
+	return settingsWriteTarget{path: loaded.SourcePath, origin: loaded.Origin, revision: loaded.Revision}, loaded, false, nil
 }
 
 // applySourceDocument produces the document the staged changes run against and

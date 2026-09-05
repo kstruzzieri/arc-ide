@@ -33,7 +33,7 @@ func parityStubHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"id":"stub-model"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"stub-model"}]}`)
 	})
 	return mux
 }

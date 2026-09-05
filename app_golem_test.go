@@ -3,16 +3,23 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"firn/internal/ai"
+	"firn/internal/filesystem"
+	"firn/internal/git"
+	"firn/internal/testutil"
 	"firn/internal/watcher"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/kstruzzieri/go-llm/provider"
 )
 
 // golemMarker stands in for any credential-shaped text a raw Golem cause could
@@ -568,8 +577,9 @@ func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 	fset, files := golemPackageFiles(t)
 
 	methods := golemWailsMethods(files)
-	// Eleven bound Golem methods today: the four struct-carrying chat methods,
-	// the two zero-input settings reads, and the five §5.2 write-side bindings.
+	// Thirteen bound Golem methods today: the four struct-carrying chat methods,
+	// the two zero-input settings reads, the five §5.2 write-side bindings, and
+	// the two grant-only approval calls.
 	// The floor stays below that on purpose — fewer than six means the
 	// derivation itself broke, and everything below it would pass vacuously.
 	if len(methods) < 6 {
@@ -1220,6 +1230,7 @@ func TestGolemWriteBoundaryPerTypeAllowlists(t *testing.T) {
 		reflect.TypeOf(ai.ConfirmSettingsApplyRequest{}),
 		reflect.TypeOf(ai.SettingsApplyResult{}),
 		reflect.TypeOf(ai.CancelSettingsApplyResult{}),
+		reflect.TypeOf(ai.DestinationGrantsResult{}),
 		reflect.TypeOf(ai.GolemProfileLoadResult{}),
 		reflect.TypeOf(ai.SettingsProjection{}),
 		reflect.TypeOf(ai.SettingsReloadResult{}),
@@ -1509,6 +1520,14 @@ func TestGolemWriteMethodsUninitializedService(t *testing.T) {
 		"ConfirmGolemSettingsApply": func() error { _, err := app.ConfirmGolemSettingsApply(ai.ConfirmSettingsApplyRequest{}); return err },
 		"CancelGolemSettingsApply":  func() error { _, err := app.CancelGolemSettingsApply("tok"); return err },
 		"LoadGolemProfile":          func() error { _, err := app.LoadGolemProfile("curated/local"); return err },
+		"PrepareGolemDestinationGrants": func() error {
+			_, err := app.PrepareGolemDestinationGrants()
+			return err
+		},
+		"ConfirmGolemDestinationGrants": func() error {
+			_, err := app.ConfirmGolemDestinationGrants("tok")
+			return err
+		},
 	}
 	for name, call := range calls {
 		err := call()
@@ -1519,5 +1538,168 @@ func TestGolemWriteMethodsUninitializedService(t *testing.T) {
 		if err.Error() != "Golem is unavailable." {
 			t.Errorf("%s uninitialized = %q, want the fixed unavailable message", name, err.Error())
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Grant-only approval (spec D13; I11): the approve flow is what unblocks a
+// real run. Nothing here is mocked — one live App, one live consent store, one
+// real MessageGenerator, and an HTTP stub that only answers once its
+// destination is durably approved.
+// ---------------------------------------------------------------------------
+
+// golemApproveDiff is the smallest staged diff Generate accepts.
+const golemApproveDiff = "diff --git a/x b/x\n+added line\n"
+
+// golemApproveFallbackEndpoint is the destination the user has NOT approved.
+// ".invalid" can never resolve, so a run that reaches it fails with something
+// other than the denial sentinel and the assertion below stays honest.
+const golemApproveFallbackEndpoint = "http://firn-approve-fallback.invalid"
+
+// golemChatStubModel is the model name the stub lists and every fixture below
+// configures: RefreshModels fills the router's registry from the listing, so a
+// mismatch fails the route lookup before a completion is ever requested.
+const golemChatStubModel = "chat-model"
+
+// golemChatStubHandler answers the two OpenAI-compatible endpoints golem's
+// bootstrap and run path use, streaming answer as the assistant's reply.
+func golemChatStubHandler(answer string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"data":[{"id":%q}]}`, golemChatStubModel)
+	})
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		encoded, _ := json.Marshal(answer)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%s},\"finish_reason\":\"stop\"}]}\n\n",
+			golemChatStubModel, encoded)
+		_, _ = fmt.Fprintf(w, "data: {\"model\":%q,\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n",
+			golemChatStubModel)
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	return mux
+}
+
+// golemPrimaryOnlyConfigJSON routes the agent role at the served remote and
+// nothing else.
+func golemPrimaryOnlyConfigJSON(primaryURL string) string {
+	return fmt.Sprintf(`{
+  "providers": {"primary": {"base_url": %q, "api_format": "openai-compat", "timeout": "5s"}},
+  "models": {"chat-model": {"name": "chat-model", "provider": "primary", "type": "dense",
+    "context_window": 32768, "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "chat-model"}
+}`, primaryURL)
+}
+
+// golemFallbackConfigJSON is the same document plus a fallback the user has
+// never been asked about: the agent route now reaches two remotes and only one
+// of them is granted.
+func golemFallbackConfigJSON(primaryURL string) string {
+	return fmt.Sprintf(`{
+  "providers": {
+    "primary": {"base_url": %q, "api_format": "openai-compat", "timeout": "5s"},
+    "fallback": {"base_url": %q, "api_format": "openai-compat", "timeout": "5s"}
+  },
+  "models": {
+    "chat-model": {"name": "chat-model", "provider": "primary", "type": "dense",
+      "context_window": 32768, "capabilities": ["chat", "stream", "tool_call"],
+      "fallbacks": ["fallback-model"]},
+    "fallback-model": {"name": "fallback-model", "provider": "fallback", "type": "dense",
+      "context_window": 32768, "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "chat-model"}
+}`, primaryURL, golemApproveFallbackEndpoint)
+}
+
+func golemFileDigest(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Base(path), err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// golemApproveGrants runs the two-call approve handshake and fails the test
+// unless it reaches the terminal success; it returns the listing the user was
+// shown so the caller can assert what was actually approved.
+func golemApproveGrants(t *testing.T, app *App) []ai.ApplyDestination {
+	t.Helper()
+	prepared, err := app.PrepareGolemDestinationGrants()
+	if err != nil {
+		t.Fatalf("PrepareGolemDestinationGrants: %v", err)
+	}
+	if prepared.Status != "consent_required" || prepared.Challenge == nil {
+		t.Fatalf("prepare = %+v, want consent_required with a challenge", prepared)
+	}
+	confirmed, err := app.ConfirmGolemDestinationGrants(prepared.Challenge.Token)
+	if err != nil {
+		t.Fatalf("ConfirmGolemDestinationGrants: %v", err)
+	}
+	if confirmed.Status != "granted" || confirmed.Challenge != nil {
+		t.Fatalf("confirm = %+v, want granted with no challenge", confirmed)
+	}
+	return prepared.Challenge.Destinations
+}
+
+func TestApproveMissingDestinationsUnblocksCommitMessageGeneration(t *testing.T) {
+	listener, primaryURL := testutil.ListenNonLoopback(t)
+	server := &http.Server{Handler: golemChatStubHandler("feat: approved and generated")}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	// The store's on-disk grant identity is deliberately not reconstructible
+	// from outside the ai package, so the prior grant is seeded through the
+	// flow itself: approve the primary alone, THEN introduce the fallback. That
+	// is also the real sequence — a user approves what they have, and a later
+	// configuration change adds a destination they have not seen.
+	app, path := newGolemAppWithTarget(t, golemPrimaryOnlyConfigJSON(primaryURL))
+	golemApproveGrants(t, app)
+	if err := os.WriteFile(path, []byte(golemFallbackConfigJSON(primaryURL)), 0o600); err != nil {
+		t.Fatalf("introduce the fallback: %v", err)
+	}
+
+	generator := git.NewMessageGenerator()
+	generator.SetDestinationPolicySource(app.aiService.DestinationPolicy)
+	if _, err := generator.Generate(context.Background(), t.TempDir(), golemApproveDiff); !errors.Is(err, provider.ErrDestinationDenied) {
+		t.Fatalf("Generate before approval = %v, want a destination denial", err)
+	}
+
+	before := golemFileDigest(t, path)
+	shown := golemApproveGrants(t, app)
+
+	if len(shown) != 1 {
+		t.Fatalf("approved %d destinations, want only the fallback: %+v", len(shown), shown)
+	}
+	if shown[0].Provider != "fallback" || shown[0].Endpoint != golemApproveFallbackEndpoint ||
+		shown[0].Model != "fallback-model" || shown[0].Classification != "remote" ||
+		len(shown[0].Provenance) != 1 || shown[0].Provenance[0] != "agent" {
+		t.Fatalf("approved %+v, want the fallback reached by the agent route", shown[0])
+	}
+
+	// Durable, not merely in memory: a store opened fresh from disk permits it.
+	store, err := ai.OpenConsentStore(filesystem.NewOS(), filepath.Join(app.firnDir, "golem-consent.json"))
+	if err != nil {
+		t.Fatalf("reopen consent store: %v", err)
+	}
+	fallback, err := provider.NewDestination("fallback", golemApproveFallbackEndpoint)
+	if err != nil {
+		t.Fatalf("fallback destination identity: %v", err)
+	}
+	if !store.DestinationPolicy().Permits(fallback) {
+		t.Fatal("the approved fallback is not durably granted")
+	}
+	if after := golemFileDigest(t, path); after != before {
+		t.Fatal("approving destinations rewrote the configuration")
+	}
+
+	// The SAME generator instance, with no restart and no re-injection: the
+	// policy source is evaluated fresh on every run.
+	message, err := generator.Generate(context.Background(), t.TempDir(), golemApproveDiff)
+	if err != nil || strings.TrimSpace(message) == "" {
+		t.Fatalf("Generate after approval = %q, %v, want a message", message, err)
 	}
 }

@@ -148,6 +148,20 @@ export function ConfirmBeforeCloseReady(): $CancellablePromise<void> {
 }
 
 /**
+ * ConfirmGolemDestinationGrants is Call 2: the opaque challenge token is the
+ * whole request, because Call 1 staged nothing to resend. It records the
+ * approved batch and writes no configuration. Cancelling instead is
+ * CancelGolemSettingsApply — the challenge map is mode-blind, so the approve
+ * flow needs no cancel binding of its own.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function ConfirmGolemDestinationGrants(challengeToken: string): $CancellablePromise<ai$0.DestinationGrantsResult> {
+    return $Call.ByID(2180243700, challengeToken).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
  * ConfirmGolemSettingsApply is Call 2: the frontend resends the complete
  * request alongside the opaque challenge token, because Call 1 retained none of
  * it. One binding serves both entry points — the operation kind comes from the
@@ -195,7 +209,7 @@ export function DeleteRunProfile(id: string): $CancellablePromise<void> {
  */
 export function DetectRunProfiles(): $CancellablePromise<runprofile$0.RunProfile[]> {
     return $Call.ByID(694773045).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
@@ -205,7 +219,7 @@ export function DetectRunProfiles(): $CancellablePromise<runprofile$0.RunProfile
  */
 export function DetectWorkspaces(repoPath: string): $CancellablePromise<workspace$0.WorkspaceDef[]> {
     return $Call.ByID(3965947368, repoPath).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType7($result);
     });
 }
 
@@ -215,7 +229,7 @@ export function DetectWorkspaces(repoPath: string): $CancellablePromise<workspac
  */
 export function GetAllRunProfiles(): $CancellablePromise<runprofile$0.RunProfile[]> {
     return $Call.ByID(2872107413).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
@@ -227,7 +241,7 @@ export function GetAllRunProfiles(): $CancellablePromise<runprofile$0.RunProfile
  */
 export function GetGolemSettings(): $CancellablePromise<ai$0.SettingsProjection> {
     return $Call.ByID(3594143992).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -239,7 +253,7 @@ export function GetGolemSettings(): $CancellablePromise<ai$0.SettingsProjection>
  */
 export function GetGolemStatus(req: ai$0.StatusRequest): $CancellablePromise<ai$0.Status> {
     return $Call.ByID(107712831, req).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType9($result);
     });
 }
 
@@ -249,7 +263,7 @@ export function GetGolemStatus(req: ai$0.StatusRequest): $CancellablePromise<ai$
  */
 export function GetLSPStatus(): $CancellablePromise<lsp$0.ServerStatus[]> {
     return $Call.ByID(2864636116).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType11($result);
     });
 }
 
@@ -258,7 +272,7 @@ export function GetLSPStatus(): $CancellablePromise<lsp$0.ServerStatus[]> {
  */
 export function GetRunHistoryRecord(historyID: string): $CancellablePromise<runhistory$0.Record> {
     return $Call.ByID(2890056597, historyID).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType12($result);
     });
 }
 
@@ -267,7 +281,7 @@ export function GetRunHistoryRecord(historyID: string): $CancellablePromise<runh
  */
 export function GetRunHistorySnapshot(): $CancellablePromise<runhistory$0.Snapshot> {
     return $Call.ByID(4208353060).then(($result: any) => {
-        return $$createType12($result);
+        return $$createType13($result);
     });
 }
 
@@ -278,7 +292,7 @@ export function GetRunHistorySnapshot(): $CancellablePromise<runhistory$0.Snapsh
  */
 export function GetRunProfilesSnapshot(): $CancellablePromise<runprofile$0.RunProfilesSnapshot> {
     return $Call.ByID(3832950134).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType14($result);
     });
 }
 
@@ -291,7 +305,7 @@ export function GetRunProfilesSnapshot(): $CancellablePromise<runprofile$0.RunPr
  */
 export function GetRunStatus(profileID: string): $CancellablePromise<runprofile$0.RunStatus> {
     return $Call.ByID(2215828426, profileID).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType15($result);
     });
 }
 
@@ -312,7 +326,7 @@ export function GetWatchedPath(): $CancellablePromise<string> {
  */
 export function GetWorkspaceInfo(repoPath: string): $CancellablePromise<$models.WorkspaceInfo> {
     return $Call.ByID(4142035048, repoPath).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType16($result);
     });
 }
 
@@ -324,7 +338,7 @@ export function GetWorkspaceInfo(repoPath: string): $CancellablePromise<$models.
  */
 export function GitApplyConflictSide(root: string, path: string, side: string, expectedSourceVersion: string): $CancellablePromise<git$0.ConflictGuardResult> {
     return $Call.ByID(537832820, root, path, side, expectedSourceVersion).then(($result: any) => {
-        return $$createType16($result);
+        return $$createType17($result);
     });
 }
 
@@ -343,7 +357,7 @@ export function GitApplyHunk(root: string, patch: string, reverse: boolean): $Ca
  */
 export function GitBranches(root: string): $CancellablePromise<string[]> {
     return $Call.ByID(294983995, root).then(($result: any) => {
-        return $$createType17($result);
+        return $$createType18($result);
     });
 }
 
@@ -383,7 +397,7 @@ export function GitCommitMessageAvailable(): $CancellablePromise<boolean> {
  */
 export function GitConflictSnapshot(root: string, path: string): $CancellablePromise<git$0.ConflictSnapshot> {
     return $Call.ByID(2823404425, root, path).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType19($result);
     });
 }
 
@@ -395,7 +409,7 @@ export function GitConflictSnapshot(root: string, path: string): $CancellablePro
  */
 export function GitConflictStages(root: string, path: string): $CancellablePromise<git$0.ConflictStages> {
     return $Call.ByID(3016103446, root, path).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
@@ -409,7 +423,7 @@ export function GitConflictStages(root: string, path: string): $CancellablePromi
  */
 export function GitConflictState(root: string, path: string): $CancellablePromise<git$0.ConflictState> {
     return $Call.ByID(2052720634, root, path).then(($result: any) => {
-        return $$createType20($result);
+        return $$createType21($result);
     });
 }
 
@@ -421,7 +435,7 @@ export function GitConflictState(root: string, path: string): $CancellablePromis
  */
 export function GitFileAtRev(root: string, rev: string, path: string): $CancellablePromise<git$0.FileContent> {
     return $Call.ByID(378246237, root, rev, path).then(($result: any) => {
-        return $$createType21($result);
+        return $$createType22($result);
     });
 }
 
@@ -434,7 +448,7 @@ export function GitFileAtRev(root: string, rev: string, path: string): $Cancella
  */
 export function GitFileHunks(root: string, path: string, staged: boolean): $CancellablePromise<git$0.FileHunks> {
     return $Call.ByID(2105794102, root, path, staged).then(($result: any) => {
-        return $$createType22($result);
+        return $$createType23($result);
     });
 }
 
@@ -464,7 +478,7 @@ export function GitIntentToAdd(root: string, paths: string[]): $CancellablePromi
  */
 export function GitMergeHeads(root: string): $CancellablePromise<git$0.MergeHeads> {
     return $Call.ByID(2954081460, root).then(($result: any) => {
-        return $$createType23($result);
+        return $$createType24($result);
     });
 }
 
@@ -512,7 +526,7 @@ export function GitStage(root: string, paths: string[]): $CancellablePromise<voi
  */
 export function GitStageConflictResult(root: string, path: string, expectedSourceVersion: string): $CancellablePromise<git$0.ConflictGuardResult> {
     return $Call.ByID(3531123084, root, path, expectedSourceVersion).then(($result: any) => {
-        return $$createType16($result);
+        return $$createType17($result);
     });
 }
 
@@ -524,7 +538,7 @@ export function GitStageConflictResult(root: string, path: string, expectedSourc
  */
 export function GitStatus(root: string): $CancellablePromise<git$0.RepoStatus> {
     return $Call.ByID(1421317957, root).then(($result: any) => {
-        return $$createType24($result);
+        return $$createType25($result);
     });
 }
 
@@ -545,7 +559,7 @@ export function GitUnstage(root: string, paths: string[]): $CancellablePromise<v
  */
 export function GitWriteConflictResult(root: string, path: string, expectedSourceVersion: string, content: string, encoding: string, lineEndings: string): $CancellablePromise<git$0.ConflictGuardResult> {
     return $Call.ByID(3476173397, root, path, expectedSourceVersion, content, encoding, lineEndings).then(($result: any) => {
-        return $$createType16($result);
+        return $$createType17($result);
     });
 }
 
@@ -571,7 +585,7 @@ export function LSPClearInterpreter(workspacePath: string): $CancellablePromise<
  */
 export function LSPComplete(path: string, line: number, character: number, triggerCharacter: string): $CancellablePromise<lsp$0.CompletionList | null> {
     return $Call.ByID(1096608999, path, line, character, triggerCharacter).then(($result: any) => {
-        return $$createType26($result);
+        return $$createType27($result);
     });
 }
 
@@ -581,7 +595,7 @@ export function LSPComplete(path: string, line: number, character: number, trigg
  */
 export function LSPDefinition(path: string, line: number, character: number): $CancellablePromise<lsp$0.Location[]> {
     return $Call.ByID(1220397137, path, line, character).then(($result: any) => {
-        return $$createType28($result);
+        return $$createType29($result);
     });
 }
 
@@ -624,7 +638,7 @@ export function LSPDidSave(path: string): $CancellablePromise<void> {
  */
 export function LSPDoctor(workspacePath: string): $CancellablePromise<lsp$0.DoctorReport> {
     return $Call.ByID(4202333507, workspacePath).then(($result: any) => {
-        return $$createType29($result);
+        return $$createType30($result);
     });
 }
 
@@ -634,7 +648,7 @@ export function LSPDoctor(workspacePath: string): $CancellablePromise<lsp$0.Doct
  */
 export function LSPDocumentSymbol(path: string): $CancellablePromise<lsp$0.DocumentSymbol[]> {
     return $Call.ByID(1714560845, path).then(($result: any) => {
-        return $$createType31($result);
+        return $$createType32($result);
     });
 }
 
@@ -644,7 +658,7 @@ export function LSPDocumentSymbol(path: string): $CancellablePromise<lsp$0.Docum
  */
 export function LSPHover(path: string, line: number, character: number): $CancellablePromise<lsp$0.Hover | null> {
     return $Call.ByID(2120599106, path, line, character).then(($result: any) => {
-        return $$createType33($result);
+        return $$createType34($result);
     });
 }
 
@@ -654,7 +668,7 @@ export function LSPHover(path: string, line: number, character: number): $Cancel
  */
 export function LSPResolveCompletionItem(path: string, item: lsp$0.CompletionItem): $CancellablePromise<lsp$0.CompletionItem | null> {
     return $Call.ByID(1353444265, path, item).then(($result: any) => {
-        return $$createType35($result);
+        return $$createType36($result);
     });
 }
 
@@ -683,7 +697,7 @@ export function LSPSetInterpreter(workspacePath: string, interpreterPath: string
  */
 export function ListRecentWorkspaces(): $CancellablePromise<workspace$0.Summary[]> {
     return $Call.ByID(3459539712).then(($result: any) => {
-        return $$createType37($result);
+        return $$createType38($result);
     });
 }
 
@@ -698,7 +712,7 @@ export function ListRecentWorkspaces(): $CancellablePromise<workspace$0.Summary[
  */
 export function LoadGolemProfile(profileID: string): $CancellablePromise<ai$0.GolemProfileLoadResult> {
     return $Call.ByID(1561429884, profileID).then(($result: any) => {
-        return $$createType38($result);
+        return $$createType39($result);
     });
 }
 
@@ -718,7 +732,7 @@ export function LoadRunProfiles(workspacePath: string): $CancellablePromise<void
  */
 export function LoadWorkspaceState(workspacePath: string): $CancellablePromise<workspace$0.State | null> {
     return $Call.ByID(2334223351, workspacePath).then(($result: any) => {
-        return $$createType40($result);
+        return $$createType41($result);
     });
 }
 
@@ -740,12 +754,26 @@ export function PinRunProfile(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * PrepareGolemDestinationGrants is Call 1 of the grant-only approval
+ * handshake: it lists every remote destination the ACTIVE configuration's agent
+ * route reaches that the user has not already approved. It takes no argument —
+ * there is nothing to stage — and writes nothing. Every outcome is a closed
+ * domain result; only a missing service is an error.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function PrepareGolemDestinationGrants(): $CancellablePromise<ai$0.DestinationGrantsResult> {
+    return $Call.ByID(4086758063).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
  * ReadDirectory reads a directory and returns its contents as a tree structure.
  * This is exposed to the frontend via Wails bindings.
  */
 export function ReadDirectory(path: string): $CancellablePromise<filesystem$0.FileEntry[]> {
     return $Call.ByID(3882613584, path).then(($result: any) => {
-        return $$createType42($result);
+        return $$createType43($result);
     });
 }
 
@@ -756,7 +784,7 @@ export function ReadDirectory(path: string): $CancellablePromise<filesystem$0.Fi
  */
 export function ReadDirectoryShallow(path: string, rootPath: string): $CancellablePromise<filesystem$0.FileEntry[]> {
     return $Call.ByID(1781218628, path, rootPath).then(($result: any) => {
-        return $$createType42($result);
+        return $$createType43($result);
     });
 }
 
@@ -767,7 +795,7 @@ export function ReadDirectoryShallow(path: string, rootPath: string): $Cancellab
  */
 export function ReadFile(path: string): $CancellablePromise<filesystem$0.FileContent | null> {
     return $Call.ByID(1160596971, path).then(($result: any) => {
-        return $$createType44($result);
+        return $$createType45($result);
     });
 }
 
@@ -779,7 +807,7 @@ export function ReadFile(path: string): $CancellablePromise<filesystem$0.FileCon
  */
 export function ReloadGolemSettings(): $CancellablePromise<ai$0.SettingsReloadResult> {
     return $Call.ByID(1366669581).then(($result: any) => {
-        return $$createType45($result);
+        return $$createType46($result);
     });
 }
 
@@ -819,7 +847,7 @@ export function RestartRunProfile(profileID: string): $CancellablePromise<void> 
  */
 export function RunGolemTurn(req: ai$0.TurnRequest): $CancellablePromise<ai$0.TurnAdmission> {
     return $Call.ByID(2592072505, req).then(($result: any) => {
-        return $$createType46($result);
+        return $$createType47($result);
     });
 }
 
@@ -829,7 +857,7 @@ export function RunGolemTurn(req: ai$0.TurnRequest): $CancellablePromise<ai$0.Tu
  */
 export function SaveRunProfile(profile: runprofile$0.RunProfile): $CancellablePromise<runprofile$0.ValidationResult> {
     return $Call.ByID(2441820046, profile).then(($result: any) => {
-        return $$createType47($result);
+        return $$createType48($result);
     });
 }
 
@@ -851,7 +879,7 @@ export function SaveWorkspaceState(state: workspace$0.State): $CancellablePromis
  */
 export function SearchWorkspace(request: search$0.SearchRequest): $CancellablePromise<search$0.SearchResponse> {
     return $Call.ByID(99753730, request).then(($result: any) => {
-        return $$createType48($result);
+        return $$createType49($result);
     });
 }
 
@@ -948,7 +976,7 @@ export function UnpinRunProfile(id: string): $CancellablePromise<void> {
  */
 export function ValidateRunProfile(profile: runprofile$0.RunProfile): $CancellablePromise<runprofile$0.ValidationResult> {
     return $Call.ByID(162550721, profile).then(($result: any) => {
-        return $$createType47($result);
+        return $$createType48($result);
     });
 }
 
@@ -972,49 +1000,50 @@ export function WriteTerminal(id: string, data: string): $CancellablePromise<voi
 const $$createType0 = runhistory$0.Summary.createFrom;
 const $$createType1 = ai$0.SettingsApplyResult.createFrom;
 const $$createType2 = ai$0.CancelSettingsApplyResult.createFrom;
-const $$createType3 = runprofile$0.RunProfile.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = workspace$0.WorkspaceDef.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = ai$0.SettingsProjection.createFrom;
-const $$createType8 = ai$0.Status.createFrom;
-const $$createType9 = lsp$0.ServerStatus.createFrom;
-const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = runhistory$0.Record.createFrom;
-const $$createType12 = runhistory$0.Snapshot.createFrom;
-const $$createType13 = runprofile$0.RunProfilesSnapshot.createFrom;
-const $$createType14 = runprofile$0.RunStatus.createFrom;
-const $$createType15 = $models.WorkspaceInfo.createFrom;
-const $$createType16 = git$0.ConflictGuardResult.createFrom;
-const $$createType17 = $Create.Array($Create.Any);
-const $$createType18 = git$0.ConflictSnapshot.createFrom;
-const $$createType19 = git$0.ConflictStages.createFrom;
-const $$createType20 = git$0.ConflictState.createFrom;
-const $$createType21 = git$0.FileContent.createFrom;
-const $$createType22 = git$0.FileHunks.createFrom;
-const $$createType23 = git$0.MergeHeads.createFrom;
-const $$createType24 = git$0.RepoStatus.createFrom;
-const $$createType25 = lsp$0.CompletionList.createFrom;
-const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = lsp$0.Location.createFrom;
-const $$createType28 = $Create.Array($$createType27);
-const $$createType29 = lsp$0.DoctorReport.createFrom;
-const $$createType30 = lsp$0.DocumentSymbol.createFrom;
-const $$createType31 = $Create.Array($$createType30);
-const $$createType32 = lsp$0.Hover.createFrom;
-const $$createType33 = $Create.Nullable($$createType32);
-const $$createType34 = lsp$0.CompletionItem.createFrom;
-const $$createType35 = $Create.Nullable($$createType34);
-const $$createType36 = workspace$0.Summary.createFrom;
-const $$createType37 = $Create.Array($$createType36);
-const $$createType38 = ai$0.GolemProfileLoadResult.createFrom;
-const $$createType39 = workspace$0.State.createFrom;
-const $$createType40 = $Create.Nullable($$createType39);
-const $$createType41 = filesystem$0.FileEntry.createFrom;
-const $$createType42 = $Create.Array($$createType41);
-const $$createType43 = filesystem$0.FileContent.createFrom;
-const $$createType44 = $Create.Nullable($$createType43);
-const $$createType45 = ai$0.SettingsReloadResult.createFrom;
-const $$createType46 = ai$0.TurnAdmission.createFrom;
-const $$createType47 = runprofile$0.ValidationResult.createFrom;
-const $$createType48 = search$0.SearchResponse.createFrom;
+const $$createType3 = ai$0.DestinationGrantsResult.createFrom;
+const $$createType4 = runprofile$0.RunProfile.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = workspace$0.WorkspaceDef.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = ai$0.SettingsProjection.createFrom;
+const $$createType9 = ai$0.Status.createFrom;
+const $$createType10 = lsp$0.ServerStatus.createFrom;
+const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = runhistory$0.Record.createFrom;
+const $$createType13 = runhistory$0.Snapshot.createFrom;
+const $$createType14 = runprofile$0.RunProfilesSnapshot.createFrom;
+const $$createType15 = runprofile$0.RunStatus.createFrom;
+const $$createType16 = $models.WorkspaceInfo.createFrom;
+const $$createType17 = git$0.ConflictGuardResult.createFrom;
+const $$createType18 = $Create.Array($Create.Any);
+const $$createType19 = git$0.ConflictSnapshot.createFrom;
+const $$createType20 = git$0.ConflictStages.createFrom;
+const $$createType21 = git$0.ConflictState.createFrom;
+const $$createType22 = git$0.FileContent.createFrom;
+const $$createType23 = git$0.FileHunks.createFrom;
+const $$createType24 = git$0.MergeHeads.createFrom;
+const $$createType25 = git$0.RepoStatus.createFrom;
+const $$createType26 = lsp$0.CompletionList.createFrom;
+const $$createType27 = $Create.Nullable($$createType26);
+const $$createType28 = lsp$0.Location.createFrom;
+const $$createType29 = $Create.Array($$createType28);
+const $$createType30 = lsp$0.DoctorReport.createFrom;
+const $$createType31 = lsp$0.DocumentSymbol.createFrom;
+const $$createType32 = $Create.Array($$createType31);
+const $$createType33 = lsp$0.Hover.createFrom;
+const $$createType34 = $Create.Nullable($$createType33);
+const $$createType35 = lsp$0.CompletionItem.createFrom;
+const $$createType36 = $Create.Nullable($$createType35);
+const $$createType37 = workspace$0.Summary.createFrom;
+const $$createType38 = $Create.Array($$createType37);
+const $$createType39 = ai$0.GolemProfileLoadResult.createFrom;
+const $$createType40 = workspace$0.State.createFrom;
+const $$createType41 = $Create.Nullable($$createType40);
+const $$createType42 = filesystem$0.FileEntry.createFrom;
+const $$createType43 = $Create.Array($$createType42);
+const $$createType44 = filesystem$0.FileContent.createFrom;
+const $$createType45 = $Create.Nullable($$createType44);
+const $$createType46 = ai$0.SettingsReloadResult.createFrom;
+const $$createType47 = ai$0.TurnAdmission.createFrom;
+const $$createType48 = runprofile$0.ValidationResult.createFrom;
+const $$createType49 = search$0.SearchResponse.createFrom;

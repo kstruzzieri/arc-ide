@@ -692,6 +692,40 @@ func (a *App) CancelGolemSettingsApply(challengeToken string) (ai.CancelSettings
 	return a.aiService.CancelSettingsApply(challengeToken), nil
 }
 
+// PrepareGolemDestinationGrants is Call 1 of the grant-only approval
+// handshake: it lists every remote destination the ACTIVE configuration's agent
+// route reaches that the user has not already approved. It takes no argument —
+// there is nothing to stage — and writes nothing. Every outcome is a closed
+// domain result; only a missing service is an error.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) PrepareGolemDestinationGrants() (ai.DestinationGrantsResult, error) {
+	if a.aiService == nil {
+		return ai.DestinationGrantsResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.PrepareDestinationGrants()
+	if err != nil {
+		return ai.DestinationGrantsResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
+// ConfirmGolemDestinationGrants is Call 2: the opaque challenge token is the
+// whole request, because Call 1 staged nothing to resend. It records the
+// approved batch and writes no configuration. Cancelling instead is
+// CancelGolemSettingsApply — the challenge map is mode-blind, so the approve
+// flow needs no cancel binding of its own.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ConfirmGolemDestinationGrants(challengeToken string) (ai.DestinationGrantsResult, error) {
+	if a.aiService == nil {
+		return ai.DestinationGrantsResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.ConfirmDestinationGrants(challengeToken)
+	if err != nil {
+		return ai.DestinationGrantsResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
 // LoadGolemProfile returns one profile's credential-free draft preview plus the
 // provenance a profile-origin Apply must send back. The loader clears every
 // provider key before anything reads the document, so no profile secret can

@@ -189,6 +189,17 @@ func parseConsentGrants(data []byte) (map[string]consentRecord, error) {
 	return granted, nil
 }
 
+// Available reports whether the store opened cleanly. An unavailable store
+// fails every operation closed — Has is always false and every Grant returns
+// ErrConsentUnavailable — so it can neither answer "already granted" nor
+// record a new grant, and a flow whose whole purpose is to record grants must
+// refuse up front instead of asking a question it could never honor.
+func (s *ConsentStore) Available() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadErr == nil
+}
+
 // Has reports whether the destination digest holds a durable grant. An
 // unavailable store never authorizes.
 func (s *ConsentStore) Has(destinationDigest string) bool {

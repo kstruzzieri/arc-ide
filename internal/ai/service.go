@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -1178,6 +1179,11 @@ type settingsChallengeRecord struct {
 	targetDigest  string
 	requestDigest string
 	grants        []ReachableDestination
+	// revision is set by grant-only records ONLY. The write path stages its own
+	// revision inside requestDigest; the approve path stages nothing at all, so
+	// the revision it read is the only thing that can prove the listing the
+	// user approved still describes the active configuration (R3/I17).
+	revision string
 }
 
 // matches reports whether a fresh preparation still describes the write the
@@ -1355,6 +1361,10 @@ func (s *Service) writeSettings(token string, req SettingsApplyRequest, mode app
 		}
 		// Consent persistence and config publication are two honest commits:
 		// the grants must succeed before a remote config can become live.
+		// An empty batch is unreachable today — Call 1 only issues a challenge
+		// when it found at least one missing destination — and the guard
+		// deliberately skips the degraded-flag reset rather than clearing a
+		// degradation nothing in this call proved gone.
 		if len(record.grants) > 0 {
 			if err := s.grantSettingsDestinations(record.grants, &after); err != nil {
 				return *withConsentOutcome(
@@ -1454,6 +1464,138 @@ func logSettingsSaveFailure(stage string, err error) {
 		return
 	}
 	log.Printf("ai: golem settings %s failed", stage)
+}
+
+// ---------------------------------------------------------------------------
+// Grant-only approval of missing destinations (spec D13). Two calls that share
+// the settings write's prologue and its consent commit, and NOTHING else: no
+// document is prepared, saved, or published, and no projection is rebuilt.
+// Cancel is the settings flow's own CancelSettingsApply, which is mode-blind.
+// ---------------------------------------------------------------------------
+
+// PrepareDestinationGrants is Call 1: it reads the ACTIVE configuration and
+// asks about every remote destination the agent route reaches that is not
+// already granted. A nil prior set is what makes this the whole ungranted
+// batch rather than a delta (D13) — with no staged edit there is no
+// destination the user has already been living with.
+//
+// Nothing is written and nothing is retained but the challenge record, which
+// binds both halves of the target identity: the file (digest) and its contents
+// (revision).
+func (s *Service) PrepareDestinationGrants() (DestinationGrantsResult, error) {
+	const op = "destination-grants-prepare"
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return DestinationGrantsResult{}, s.publicErr(op, fmt.Errorf("%w: approval rejected", errServiceClosing))
+	}
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+	defer s.wg.Done()
+
+	s.bindingGate.Lock()
+	defer s.bindingGate.Unlock()
+	if s.isClosing() {
+		return DestinationGrantsResult{}, s.publicErr(op, fmt.Errorf("%w: approval rejected", errServiceClosing))
+	}
+	if s.conversationsBusy() {
+		return DestinationGrantsResult{Status: "busy"}, nil
+	}
+
+	// An unavailable store cannot answer "already granted", so every listing it
+	// produced would be a guess and every confirmation would fail.
+	if !s.consent.Available() {
+		return DestinationGrantsResult{Status: "unavailable"}, nil
+	}
+	target, loaded, missing, err := activeGrantTarget()
+	if missing {
+		return DestinationGrantsResult{Status: "none"}, nil
+	}
+	if err != nil {
+		// No detail: the settings projection's own diagnostics already name
+		// what is wrong with the configuration (§5.4).
+		return DestinationGrantsResult{Status: "config_invalid"}, nil
+	}
+	grants := newRemoteDestinations(nil, reachableDestinations(loaded.Config), s.consent)
+	if len(grants) == 0 {
+		return DestinationGrantsResult{Status: "none"}, nil
+	}
+	expiresAt := s.now().Add(consentChallengeTTL).UnixMilli()
+	token := s.installSettingsChallenge(&settingsChallengeRecord{
+		expiresAt: expiresAt, mode: applyModeGrantOnly,
+		targetDigest: target.identityDigest(), revision: loaded.Revision, grants: grants,
+	})
+	return DestinationGrantsResult{Status: "consent_required", Challenge: &ApplyChallenge{
+		Token: token, ExpiresAt: expiresAt, Destinations: applyDestinations(grants),
+	}}, nil
+}
+
+// ConfirmDestinationGrants is Call 2: it consumes the token and records the
+// approved batch. The token carries everything the call needs, so nothing is
+// resent — there is no request to resend.
+//
+// Freshness (R3/I17): the configuration is reloaded and BOTH halves of the
+// binding are compared. A file that moved, or contents that changed, means the
+// listing the user approved no longer describes what is active, so the answer
+// is conflict — the token is already consumed and the user re-prepares against
+// what is there now. The settings-write path refuses a grant-only record
+// symmetrically (writeSettings), so neither flow can spend the other's token.
+func (s *Service) ConfirmDestinationGrants(token string) (DestinationGrantsResult, error) {
+	const op = "destination-grants-confirm"
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return DestinationGrantsResult{}, s.publicErr(op, fmt.Errorf("%w: approval rejected", errServiceClosing))
+	}
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+	defer s.wg.Done()
+
+	// Registered FIRST so LIFO runs it LAST: every emit happens after the
+	// barrier below is released.
+	var after []string
+	defer func() {
+		for _, name := range after {
+			s.emit(name, nil)
+		}
+	}()
+
+	s.bindingGate.Lock()
+	defer s.bindingGate.Unlock()
+	if s.isClosing() {
+		return DestinationGrantsResult{}, s.publicErr(op, fmt.Errorf("%w: approval rejected", errServiceClosing))
+	}
+	if s.conversationsBusy() {
+		// Busy is the one nonterminal result: nothing is consumed, nothing is
+		// recorded, and the same token retries.
+		return DestinationGrantsResult{Status: "busy"}, nil
+	}
+
+	if !validChallengeTokenShape(token) {
+		// A token this shape can never have been issued, so there is nothing to
+		// look up and nothing to consume.
+		return DestinationGrantsResult{Status: "conflict"}, nil
+	}
+	record := s.takeSettingsChallenge(token)
+	// From here every result is terminal for this token.
+	if record == nil || record.mode != applyModeGrantOnly {
+		return DestinationGrantsResult{Status: "conflict"}, nil
+	}
+	target, loaded, _, err := activeGrantTarget()
+	if err != nil || !constantTimeEqual(target.identityDigest(), record.targetDigest) ||
+		!constantTimeEqual(loaded.Revision, record.revision) {
+		return DestinationGrantsResult{Status: "conflict"}, nil
+	}
+	if err := s.grantSettingsDestinations(record.grants, &after); err != nil {
+		return DestinationGrantsResult{Status: "uncertain"}, nil
+	}
+	// The recorded grants moved the destination policy, so the status changes
+	// whether or not the degraded flag also cleared — one announcement, never
+	// two.
+	if !slices.Contains(after, EventGolemStatusChanged) {
+		after = append(after, EventGolemStatusChanged)
+	}
+	return DestinationGrantsResult{Status: "granted"}, nil
 }
 
 // Close shuts the service down. The first call marks `closing` under
