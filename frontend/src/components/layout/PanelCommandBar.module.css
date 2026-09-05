@@ -17,9 +17,17 @@
 }
 
 .bar[data-panel='golem'] {
+  /* This bar mounts inside GolemPanel today (data-accent="project"), but the
+     rule must not depend on where it is mounted — a future move outside that
+     pin, under the `.ide` root's DYNAMIC data-accent={accent}, would repaint
+     GOLEM in the active workspace hue (rust/node/...) if these read
+     var(--accent-dim)/var(--accent-glow), which ARE overridden per workspace.
+     --accent-project itself is stable (never repointed), so it stays a var();
+     the dim/glow are literals copied from tokens.css [data-accent='project']
+     (#271 review, self-pinning fix). */
   --bar-key: var(--accent-project);
-  --bar-key-dim: var(--accent-dim);
-  --bar-key-glow: var(--accent-glow);
+  --bar-key-dim: rgba(56, 189, 248, 0.12);
+  --bar-key-glow: rgba(56, 189, 248, 0.25);
 }
 
 .identity {

@@ -23,6 +23,14 @@ const mergeResolutionCss = readFileSync(
   resolve(__dirname, '../../components/Editor/MergeResolutionView.module.css'),
   'utf8'
 );
+const panelRailCss = readFileSync(
+  resolve(__dirname, '../../components/layout/PanelRail.module.css'),
+  'utf8'
+);
+const panelCommandBarCss = readFileSync(
+  resolve(__dirname, '../../components/layout/PanelCommandBar.module.css'),
+  'utf8'
+);
 const statusBarCss = readFileSync(
   resolve(__dirname, '../../components/StatusBar/StatusBar.module.css'),
   'utf8'
@@ -200,6 +208,26 @@ it('defines the #271 layout tokens', () => {
   expect(css).toMatch(/--panel-golem-width:\s*420px/);
   expect(css).toMatch(/--panel-rail-width:\s*40px/);
   expect(css).toMatch(/--panel-bar-height:\s*38px/);
+});
+
+it('pins the golem rail and bar to the project accent instead of the live workspace accent', () => {
+  // The collapsed golem rail (rendered by IDEShell as a sibling of the panel
+  // island) and the golem command bar both live under the `.ide` root's
+  // DYNAMIC data-accent={accent} — never inside GolemPanel's own
+  // data-accent="project" pin. A `var(--accent-dim)` / `var(--accent-glow)`
+  // reference there would repaint GOLEM in the rust/node/... workspace hue
+  // instead of the pinned project accent, contradicting "GOLEM keys the
+  // pinned project accent" (#271 review). Both files pin with literals instead.
+  for (const [source, label] of [
+    [panelRailCss, 'PanelRail.module.css'],
+    [panelCommandBarCss, 'PanelCommandBar.module.css'],
+  ] as const) {
+    const body = rule(source, "[data-panel='golem']");
+    expect({ file: label, body }).toEqual({
+      file: label,
+      body: expect.not.stringMatching(/var\(--accent(-dim|-glow)?\)/),
+    });
+  }
 });
 
 function token(name: string): string {
