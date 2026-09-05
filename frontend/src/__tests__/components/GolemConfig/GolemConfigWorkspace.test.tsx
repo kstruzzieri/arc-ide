@@ -197,6 +197,7 @@ describe('GolemConfigWorkspace', () => {
       routeRow,
       screen.getByTestId('route-row-chat'),
       screen.getByTestId('route-row-embedding'),
+      screen.getByTestId('route-row-planning'),
     ]);
     for (const column of ['Use case', 'Provider', 'Model', 'Think', 'Status']) {
       expect(within(routeRow).getByText(column)).toBeInTheDocument();
