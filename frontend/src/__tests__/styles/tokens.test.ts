@@ -218,11 +218,32 @@ it('pins the golem rail and bar to the project accent instead of the live worksp
   // reference there would repaint GOLEM in the rust/node/... workspace hue
   // instead of the pinned project accent, contradicting "GOLEM keys the
   // pinned project accent" (#271 review). Both files pin with literals instead.
-  for (const [source, label] of [
-    [panelRailCss, 'PanelRail.module.css'],
-    [panelCommandBarCss, 'PanelCommandBar.module.css'],
+  for (const [source, label, pinned] of [
+    [
+      panelRailCss,
+      'PanelRail.module.css',
+      [/--rail-key-glow:\s*rgba\(56,\s*189,\s*248,\s*0\.25\)/],
+    ],
+    [
+      panelCommandBarCss,
+      'PanelCommandBar.module.css',
+      [
+        /--bar-key-dim:\s*rgba\(56,\s*189,\s*248,\s*0\.12\)/,
+        /--bar-key-glow:\s*rgba\(56,\s*189,\s*248,\s*0\.25\)/,
+      ],
+    ],
   ] as const) {
     const body = rule(source, "[data-panel='golem']");
+    // Assert the pinned literals are actually present FIRST: `rule()` extracts
+    // up to the first `}`, so a comment containing a stray `}` would truncate
+    // the body before these declarations and let the negative check below
+    // pass for the wrong reason (regression: #271 review round 2).
+    for (const pattern of pinned) {
+      expect({ file: label, body }).toEqual({
+        file: label,
+        body: expect.stringMatching(pattern),
+      });
+    }
     expect({ file: label, body }).toEqual({
       file: label,
       body: expect.not.stringMatching(/var\(--accent(-dim|-glow)?\)/),

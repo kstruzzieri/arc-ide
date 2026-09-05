@@ -20,12 +20,13 @@
 
 .rail[data-panel='golem'] {
   /* This collapsed rail is rendered by IDEShell as a sibling of the panel
-     island, under the `.ide` root's DYNAMIC data-accent={accent} — it is
-     never inside GolemPanel's own data-accent="project" pin. --accent-project
-     itself is a stable value (never repointed by a [data-accent] block), so
-     it is safe as var(); but var(--accent-glow) is NOT — it is overridden per
-     workspace and would repaint GOLEM in the active hue (rust/node/...)
-     instead of the pinned project accent it must always key on. So the glow
+     island, under the `.ide` root's dynamic per-workspace data-accent
+     attribute — it is never inside GolemPanel's own data-accent="project"
+     pin. --accent-project itself is a stable value (never repointed by a
+     [data-accent] block), so it is safe as var(); but --accent-glow is NOT —
+     it is overridden per workspace and would repaint GOLEM in the active hue
+     (rust/node/...) instead of the pinned project accent it must always key
+     on. So the glow
      is a literal copied from tokens.css [data-accent='project'] rather than
      the token (#271 review, self-pinning fix). No token covers the
      box-shadow's 0.08 alpha either (accent-glow is 0.25, accent-dim 0.12). */
