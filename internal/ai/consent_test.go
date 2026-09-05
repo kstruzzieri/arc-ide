@@ -120,6 +120,18 @@ func TestConsentStoreFailsClosedOnInvalidContent(t *testing.T) {
 			digestOf("remote", remoteEndpoint), remoteEndpoint),
 		"oversize": fmt.Sprintf(`{"version": 1, "grants": [%s]}`, valid) +
 			strings.Repeat(" ", ConsentStoreLimit),
+		// F18/D10 legacy-record regression: a record written before dot-segment
+		// rejection existed. NormalizeEndpoint now rejects it outright rather
+		// than returning a mismatched canonical string, but the store still
+		// fails closed the same way. Repair: see the ConsentStore doc comment.
+		"legacy record: dot-segment path": fmt.Sprintf(`{"version": 1, "grants": [%s]}`,
+			grantRecordJSON("remote", "https://api.example.com/v1/../x")),
+		// F18/D10 legacy-record regression: a record written before IP-literal
+		// collapse existed, storing the raw (non-collapsed) IPv6 spelling. It
+		// is well-formed but no longer canonical, so it fails the same way as
+		// "noncanonical endpoint" above. Repair: see the ConsentStore doc comment.
+		"legacy record: uncollapsed IPv6 spelling": fmt.Sprintf(`{"version": 1, "grants": [%s]}`,
+			grantRecordJSON("remote", "http://[2001:0db8::1]:8080")),
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {

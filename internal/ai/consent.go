@@ -47,6 +47,20 @@ type consentFile struct {
 // destinations the user has approved. All state transitions happen under the
 // mutex; the in-memory grant set only ever advances after a fully durable
 // persist.
+//
+// A store can become unavailable not just from disk/permission failures but
+// from a legacy record: parseConsentGrants requires every stored endpoint to
+// already equal NormalizeEndpoint's current canonical form, so tightening
+// that canonicalization (rejecting "." / ".." path segments, collapsing an
+// equivalent IP-literal spelling) makes any older record written under a
+// looser rule invalid, and one invalid record fails the WHOLE store closed.
+//
+// Repair: remove or hand-edit the offending record(s) in
+// ~/.firn/golem-consent.json, then re-consent through the chat, settings, or
+// approve flows to write a fresh record under the current canonical form.
+// The approve action itself cannot repair an unavailable store — Grant
+// returns ErrConsentUnavailable immediately when the store failed to open,
+// so the file must be fixed (or removed) before any new grant can persist.
 type ConsentStore struct {
 	fs   filesystem.FileSystem
 	path string
