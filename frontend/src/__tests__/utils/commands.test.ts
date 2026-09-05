@@ -101,6 +101,7 @@ test('creates the approved command registry with stable metadata', () => {
     'show-run-profiles',
     'show-golem',
     'golem-configuration',
+    'swap-center-panels',
     'show-structure',
     'navigate-back',
     'navigate-forward',
@@ -135,6 +136,12 @@ test('creates the approved command registry with stable metadata', () => {
       id: 'golem-configuration',
       title: 'Golem: Configuration',
       keywords: ['settings', 'models', 'providers', 'config', 'ai'],
+      shortcut: undefined,
+    },
+    {
+      id: 'swap-center-panels',
+      title: 'Swap Files and Golem panels',
+      keywords: ['layout', 'reorder', 'golem', 'files'],
       shortcut: undefined,
     },
     {
@@ -426,4 +433,9 @@ test('derives compound command state through the aggregate run instance', () => 
 
   expect(commandById('run-selected-profile').enabled?.()).toBe(false);
   expect(commandById('restart-selected-profile').enabled?.()).toBe(true);
+});
+
+it('swap-center-panels flips the center order', () => {
+  commandById('swap-center-panels').run();
+  expect(useIDEStore.getState().centerOrder).toBe('golem-first');
 });

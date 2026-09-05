@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { StrictMode, useEffect, useState } from 'react';
+import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { IDEShell } from '../../components/layout';
 import { GolemPanel } from '../../components/Golem';
 import { useIDEStore } from '../../stores/ideStore';
@@ -290,6 +290,203 @@ describe('IDEShell center pair', () => {
     // The abandoned drag is neither saved nor left on screen.
     expect(useIDEStore.getState().panelSizes.left).toBe(260);
     expect(cssVar('--panel-left-width')).toBe('260px');
+  });
+});
+
+describe('IDEShell center reorder by drag', () => {
+  const MIME = 'application/x-firn-center-panel';
+
+  /**
+   * The browser's drag data store is in *protected* mode during dragover: the
+   * types are readable, the payload is not. Only drop exposes it — so the
+   * transport hands back '' until `expose` is set, exactly as WKWebView does.
+   */
+  const transport = (payload: string, { types = [MIME], expose = false } = {}) => ({
+    dropEffect: 'none',
+    effectAllowed: 'move',
+    types,
+    setData: jest.fn(),
+    getData: jest.fn((type: string) => (expose && type === MIME ? payload : '')),
+  });
+
+  type DragInit = {
+    dataTransfer?: object;
+    clientX?: number;
+    relatedTarget?: Element | null;
+  };
+
+  /**
+   * jsdom has no DragEvent, so testing-library falls back to `Event` and drops
+   * the pointer coordinates; they are re-attached here.
+   */
+  const drag = (
+    kind: 'dragStart' | 'dragEnter' | 'dragOver' | 'dragLeave' | 'drop' | 'dragEnd',
+    node: Element,
+    init: DragInit = {}
+  ) => {
+    const { clientX, relatedTarget, ...rest } = init;
+    const event = createEvent[kind](node, rest);
+    if (clientX !== undefined) Object.defineProperty(event, 'clientX', { value: clientX });
+    if (relatedTarget !== undefined) {
+      Object.defineProperty(event, 'relatedTarget', { value: relatedTarget });
+    }
+    act(() => {
+      fireEvent(node, event);
+      jest.advanceTimersByTime(32);
+    });
+  };
+
+  /** Controlled geometry: jsdom measures every element as a zero-sized box. */
+  const measure = (node: HTMLElement, left: number, right: number) => {
+    node.getBoundingClientRect = () =>
+      ({ left, right, top: 0, bottom: 100, width: right - left, height: 100 }) as DOMRect;
+  };
+
+  const openPair = () => {
+    render(shell());
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    measure(filesColumn(), 100, 500);
+    measure(golemIsland(), 500, 900);
+  };
+
+  const edgeOf = (node: HTMLElement) =>
+    node.getAttribute('data-drop-over') ? node.getAttribute('data-drop-edge') : null;
+
+  it('lights the far edge only past the midpoint, then places Golem left', () => {
+    openPair();
+    const source = transport('golem');
+    drag('dragStart', golemIsland(), { dataTransfer: source });
+
+    // Files is the left island: its right half is still short of the swap.
+    drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 350 });
+    expect(edgeOf(filesColumn())).toBeNull();
+    drag('drop', filesColumn(), {
+      dataTransfer: transport('golem', { expose: true }),
+      clientX: 350,
+    });
+    expect(useIDEStore.getState().centerOrder).toBe('files-first');
+
+    drag('dragStart', golemIsland(), { dataTransfer: source });
+    drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 });
+    expect(edgeOf(filesColumn())).toBe('left');
+    drag('drop', filesColumn(), {
+      dataTransfer: transport('golem', { expose: true }),
+      clientX: 250,
+    });
+
+    expect(useIDEStore.getState().centerOrder).toBe('golem-first');
+    expect(edgeOf(filesColumn())).toBeNull();
+  });
+
+  it('places Files right from its own bar, and repeat delivery re-asserts the same order', () => {
+    openPair();
+    const grip = screen.getByRole('group', { name: 'Files panel header' });
+    const source = transport('files');
+    drag('dragStart', grip, { dataTransfer: source });
+    // The bar is the real drag source: it dims itself through the store.
+    expect(useIDEStore.getState().centerDrag).toBe('files');
+    expect(source.setData).toHaveBeenCalledWith(MIME, 'files');
+
+    drag('dragOver', golemIsland(), { dataTransfer: source, clientX: 650 });
+    expect(edgeOf(golemIsland())).toBeNull();
+    drag('dragOver', golemIsland(), { dataTransfer: source, clientX: 750 });
+    expect(edgeOf(golemIsland())).toBe('right');
+
+    const payload = transport('files', { expose: true });
+    drag('drop', golemIsland(), { dataTransfer: payload, clientX: 750 });
+    expect(useIDEStore.getState().centerOrder).toBe('golem-first');
+    expect(useIDEStore.getState().centerDrag).toBeNull();
+    // Directed assignment, not a toggle: a duplicate delivery cannot flip back.
+    drag('drop', golemIsland(), { dataTransfer: payload, clientX: 750 });
+    expect(useIDEStore.getState().centerOrder).toBe('golem-first');
+  });
+
+  it('ignores a foreign drag and a payload that does not match the captured source', () => {
+    openPair();
+    drag('dragOver', filesColumn(), {
+      dataTransfer: transport('', { types: ['Files'] }),
+      clientX: 250,
+    });
+    expect(edgeOf(filesColumn())).toBeNull();
+    drag('drop', filesColumn(), {
+      dataTransfer: transport('', { types: ['Files'], expose: true }),
+      clientX: 250,
+    });
+    expect(useIDEStore.getState().centerOrder).toBe('files-first');
+
+    drag('dragStart', golemIsland(), { dataTransfer: transport('golem') });
+    drag('drop', filesColumn(), {
+      dataTransfer: transport('files', { expose: true }),
+      clientX: 250,
+    });
+    expect(useIDEStore.getState().centerOrder).toBe('files-first');
+
+    // The same gesture with its own payload does move — the rejections above
+    // were the payload's doing, not a drop the shell never listened for.
+    drag('dragStart', golemIsland(), { dataTransfer: transport('golem') });
+    drag('drop', filesColumn(), {
+      dataTransfer: transport('golem', { expose: true }),
+      clientX: 250,
+    });
+    expect(useIDEStore.getState().centerOrder).toBe('golem-first');
+  });
+
+  it('keeps the indicator while the pointer crosses a child, and drops it on cancel', () => {
+    openPair();
+    const source = transport('golem');
+    drag('dragStart', golemIsland(), { dataTransfer: source });
+    drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 });
+    expect(edgeOf(filesColumn())).toBe('left');
+
+    drag('dragLeave', filesColumn(), { relatedTarget: screen.getByTestId('editor') });
+    expect(edgeOf(filesColumn())).toBe('left');
+    drag('dragLeave', filesColumn(), { relatedTarget: golemIsland() });
+    expect(edgeOf(filesColumn())).toBeNull();
+
+    drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 });
+    drag('dragEnd', golemIsland(), { dataTransfer: source });
+    expect(useIDEStore.getState().centerOrder).toBe('files-first');
+    expect(useIDEStore.getState().centerDrag).toBeNull();
+    expect(edgeOf(filesColumn())).toBeNull();
+  });
+});
+
+describe('IDEShell layout announcements', () => {
+  const announcer = () => screen.getByRole('status', { name: 'Layout changes' });
+
+  it('says nothing on mount, including StrictMode effect replay', () => {
+    render(<StrictMode>{shell()}</StrictMode>);
+    expect(announcer()).toBeEmptyDOMElement();
+  });
+
+  it('announces the committed swap once, and nothing for an unchanged order', () => {
+    render(shell());
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    act(() => useIDEStore.getState().setCenterOrder('golem-first'));
+    expect(announcer()).toHaveTextContent('Golem panel moved left.');
+
+    act(() => useIDEStore.getState().setCenterOrder('golem-first'));
+    expect(announcer()).toHaveTextContent('Golem panel moved left.');
+  });
+
+  it('combines a collapse and the expand it caused into one message', () => {
+    render(shell());
+    act(() => useIDEStore.getState().setFilesPanelCollapsed(true));
+    expect(announcer()).toHaveTextContent('Files panel collapsed. Golem panel expanded.');
+  });
+
+  it('stays quiet while a repository restore redefines the layout', () => {
+    render(shell());
+    act(() => {
+      useIDEStore.setState({ workspace: { path: '/repo/two' } as never });
+      useIDEStore.getState().applyCenterLayout({
+        centerOrder: 'golem-first',
+        golemWidth: 420,
+        isGolemPanelCollapsed: false,
+        isFilesPanelCollapsed: true,
+      });
+    });
+    expect(announcer()).toBeEmptyDOMElement();
   });
 });
 

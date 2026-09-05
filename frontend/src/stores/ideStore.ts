@@ -129,6 +129,7 @@ function createDefaultWorkspaceSessionState() {
     isGolemPanelCollapsed: DEFAULT_CENTER_LAYOUT.isGolemPanelCollapsed,
     isFilesPanelCollapsed: DEFAULT_CENTER_LAYOUT.isFilesPanelCollapsed,
     centerReveal: 'files' as CenterPanel,
+    centerDrag: null as CenterPanel | null,
     openFiles: [] as EditorFile[],
     activeFileId: null as string | null,
     cursorPosition: { line: 1, column: 1 },
@@ -183,6 +184,8 @@ interface IDEState {
   isGolemPanelCollapsed: boolean;
   isFilesPanelCollapsed: boolean;
   centerReveal: CenterPanel;
+  /** Panel currently being dragged for reorder; never persisted. */
+  centerDrag: CenterPanel | null;
 
   // Editor
   openFiles: EditorFile[];
@@ -302,6 +305,7 @@ interface IDEActions {
   setFilesPanelCollapsed: (collapsed: boolean) => void;
   revealCenterPanel: (panel: CenterPanel) => void;
   applyCenterLayout: (prefs: CenterLayoutPrefs) => void;
+  setCenterDrag: (panel: CenterPanel | null) => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -1239,6 +1243,8 @@ export const useIDEStore = create<IDEStore>()(
           false,
           'applyCenterLayout'
         ),
+
+      setCenterDrag: (centerDrag) => set({ centerDrag }, false, 'setCenterDrag'),
 
       // Editor actions
       openFile: (file) =>

@@ -1,8 +1,10 @@
 import golemIcon from '../../assets/branding/golem-icon.svg';
-import { useCenterOrder } from '../../stores/ideStore';
+import { useCenterOrder, useIDEStore } from '../../stores/ideStore';
 import { useGolemStore } from '../../stores/golemStore';
 import type { CenterPanel } from '../../utils/centerLayout';
+import { reorderTargetForKey } from '../../utils/centerReorder';
 import { golemAttention, type GolemAttention } from '../../utils/golemAttention';
+import { isMac } from '../../utils/platform';
 import { ChevronRightIcon, FilesIcon } from '../icons';
 import styles from './PanelRail.module.css';
 
@@ -42,6 +44,19 @@ export function PanelRail({ panel, onExpand }: PanelRailProps) {
       aria-label={name}
       title={name}
       onClick={onExpand}
+      // A collapsed panel keeps the reorder chord (spec §4.2); the rail is its
+      // own focus target, so there is nothing to bubble past here.
+      onKeyDown={(e) => {
+        const target = reorderTargetForKey(e, panel, isMac());
+        if (!target) return;
+        e.preventDefault();
+        const rail = e.currentTarget;
+        useIDEStore.getState().setCenterOrder(target);
+        // Reorder moves this node in the DOM; keep focus on the moved rail.
+        requestAnimationFrame(() => {
+          if (rail.isConnected) rail.focus();
+        });
+      }}
     >
       <span className={styles.glyph} aria-hidden="true">
         {panel === 'golem' ? <img src={golemIcon} alt="" draggable={false} /> : <FilesIcon />}

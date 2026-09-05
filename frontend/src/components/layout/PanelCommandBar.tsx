@@ -1,5 +1,8 @@
-import type { ReactNode } from 'react';
+import { useCallback, useRef, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useIDEStore } from '../../stores/ideStore';
 import type { CenterPanel } from '../../utils/centerLayout';
+import { CENTER_DRAG_MIME, reorderTargetForKey } from '../../utils/centerReorder';
+import { isMac } from '../../utils/platform';
 import { GripIcon, MinusIcon } from '../icons';
 import styles from './PanelCommandBar.module.css';
 
@@ -34,14 +37,51 @@ export function PanelCommandBar({
   onCollapse,
 }: PanelCommandBarProps) {
   const label = LABEL[panel];
+  const identityRef = useRef<HTMLDivElement>(null);
+  const centerDrag = useIDEStore((s) => s.centerDrag);
+  const isDragging = centerDrag === panel;
+
+  const onDragStart = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData(CENTER_DRAG_MIME, panel);
+      useIDEStore.getState().setCenterDrag(panel);
+    },
+    [panel]
+  );
+  const onDragEnd = useCallback(() => {
+    useIDEStore.getState().setCenterDrag(null);
+    // Reorder moves this node in the DOM; keep focus on the moved header.
+    requestAnimationFrame(() => identityRef.current?.focus());
+  }, []);
+  const onKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      // Only the header itself: a chord bubbling from a control is not a reorder.
+      if (e.target !== e.currentTarget) return;
+      const target = reorderTargetForKey(e, panel, isMac());
+      if (!target) return;
+      e.preventDefault();
+      useIDEStore.getState().setCenterOrder(target);
+      requestAnimationFrame(() => identityRef.current?.focus());
+    },
+    [panel]
+  );
+
   return (
     <div className={styles.bar} data-panel={panel}>
       <div
+        ref={identityRef}
         className={styles.identity}
         role="group"
         tabIndex={0}
         aria-label={`${label} panel header`}
         aria-roledescription="movable panel header"
+        aria-keyshortcuts="Meta+Shift+ArrowLeft Meta+Shift+ArrowRight Control+Shift+ArrowLeft Control+Shift+ArrowRight"
+        data-dragging={isDragging || undefined}
+        draggable
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onKeyDown={onKeyDown}
       >
         <span className={styles.grip} aria-hidden="true">
           <GripIcon />

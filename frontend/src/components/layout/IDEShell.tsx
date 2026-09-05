@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
 } from 'react';
 import { ToggleMaximize } from '../../wails/bindings';
 import {
@@ -36,8 +37,10 @@ import {
   computeCenterLayout,
   computeSideMax,
   computeSideWidths,
+  type CenterOrder,
   type CenterPanel,
 } from '../../utils/centerLayout';
+import { CENTER_DRAG_MIME, reorderTargetForDrop } from '../../utils/centerReorder';
 import { useGolemStore } from '../../stores/golemStore';
 import styles from './IDEShell.module.css';
 
@@ -52,6 +55,8 @@ const CSS_VAR: Record<ResizePanel, string> = {
 };
 
 const CENTER_PANELS: readonly CenterPanel[] = ['files', 'golem'];
+
+const CENTER_LABEL: Record<CenterPanel, string> = { files: 'Files', golem: 'Golem' };
 
 /** A collapsed center panel keeps its tree mounted and merely leaves layout. */
 const HIDDEN = { display: 'none' } as const;
@@ -367,6 +372,151 @@ export function IDEShell({
     rootOf,
   ]);
 
+  // ── Center-pair reorder by drag (spec §4.1) ────────────────────────────────
+  // The source, the order it started from and the repository it belongs to,
+  // captured once at dragstart: the destination is then a stable assignment
+  // rather than a toggle, so a repeated delivery lands on the same order.
+  const sessionKey = workspacePath ?? '';
+  const dragRecord = useRef<{
+    source: CenterPanel;
+    order: CenterOrder;
+    session: string;
+  } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    panel: CenterPanel;
+    edge: 'left' | 'right';
+    session: string;
+  } | null>(null);
+  // A repository switch redefines the layout the drag was aimed at, so the
+  // indicator is scoped to the session that raised it rather than swept up by
+  // an effect. `dropPlacement` refuses the stale record for the same reason.
+  const dropIndicator = dropTarget?.session === sessionKey ? dropTarget : null;
+
+  const endDrag = useCallback(() => {
+    dragRecord.current = null;
+    setDropTarget(null);
+    useIDEStore.getState().setCenterDrag(null);
+  }, []);
+
+  const onPairDragStart = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      // Only this shell's own bars carry the type; anything else is a foreign
+      // drag passing through and never becomes a reorder.
+      if (!e.dataTransfer.types.includes(CENTER_DRAG_MIME)) return;
+      const node = e.target;
+      const source =
+        node instanceof Node
+          ? CENTER_PANELS.find((panel) => rootOf(panel)?.contains(node))
+          : undefined;
+      if (!source) return;
+      dragRecord.current = { source, order: centerOrder, session: sessionKey };
+    },
+    [centerOrder, rootOf, sessionKey]
+  );
+
+  /**
+   * Where this drag would land on `panel`, or null while the drop is a no-op.
+   * The payload is deliberately not read here: browsers put the drag data store
+   * in protected mode during dragover, so `getData` is empty until drop and the
+   * captured record plus the advertised type are all there is to go on.
+   */
+  const dropPlacement = useCallback(
+    (panel: CenterPanel, e: DragEvent<HTMLElement>) => {
+      const record = dragRecord.current;
+      if (!record || record.session !== sessionKey) return null;
+      if (!e.dataTransfer.types.includes(CENTER_DRAG_MIME)) return null;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const order = reorderTargetForDrop(
+        record.source,
+        record.order,
+        panel,
+        (rect.left + rect.right) / 2,
+        e.clientX
+      );
+      // The drop-line marks the target's far edge — the side the source lands on.
+      const edge = (panel === 'files') === (record.order === 'files-first') ? 'left' : 'right';
+      return order ? ({ order, edge } as const) : null;
+    },
+    [sessionKey]
+  );
+
+  const dropHandlers = useMemo(() => {
+    const make = (panel: CenterPanel) => ({
+      onDragEnter: (e: DragEvent<HTMLElement>) => {
+        const placement = dropPlacement(panel, e);
+        setDropTarget(placement && { panel, edge: placement.edge, session: sessionKey });
+      },
+      onDragOver: (e: DragEvent<HTMLElement>) => {
+        const placement = dropPlacement(panel, e);
+        setDropTarget(placement && { panel, edge: placement.edge, session: sessionKey });
+        if (!placement) return;
+        // Accepting the drag is what lets `drop` fire on this island at all.
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      },
+      onDragLeave: (e: DragEvent<HTMLElement>) => {
+        // Crossing into a child is not leaving the island.
+        const related = e.relatedTarget;
+        if (related instanceof Node && e.currentTarget.contains(related)) return;
+        setDropTarget(null);
+      },
+      onDrop: (e: DragEvent<HTMLElement>) => {
+        const record = dragRecord.current;
+        const placement = dropPlacement(panel, e);
+        endDrag();
+        if (!record || !placement) return;
+        e.preventDefault();
+        // Only at drop is the payload readable; it has to be the drag we saw start.
+        if (e.dataTransfer.getData(CENTER_DRAG_MIME) !== record.source) return;
+        useIDEStore.getState().setCenterOrder(placement.order);
+      },
+    });
+    return { files: make('files'), golem: make('golem') };
+  }, [dropPlacement, endDrag, sessionKey]);
+
+  const dropAttributes = (panel: CenterPanel) =>
+    dropIndicator?.panel === panel
+      ? { 'data-drop-over': 'true', 'data-drop-edge': dropIndicator.edge }
+      : undefined;
+
+  // ── Layout announcements (spec §7) ─────────────────────────────────────────
+  // One region, one effect: simultaneous changes — a collapse and the expand it
+  // caused — become one message instead of three racing writes. The region is
+  // written directly rather than through state: it is an assistive-technology
+  // output, not something any render depends on.
+  const announcerRef = useRef<HTMLDivElement>(null);
+  const announced = useRef({
+    order: centerOrder,
+    files: center.filesCollapsed,
+    golem: center.golemCollapsed,
+    session: sessionKey,
+  });
+
+  useEffect(() => {
+    const previous = announced.current;
+    const next = {
+      order: centerOrder,
+      files: center.filesCollapsed,
+      golem: center.golemCollapsed,
+      session: sessionKey,
+    };
+    announced.current = next;
+    // A restore is not a change the user just made. The initial mount — and
+    // StrictMode's replay of it — compares equal to itself and says nothing.
+    if (previous.session !== next.session) return;
+    const parts: string[] = [];
+    if (previous.order !== next.order) {
+      parts.push(`Golem panel moved ${next.order === 'golem-first' ? 'left' : 'right'}.`);
+    }
+    for (const panel of CENTER_PANELS) {
+      if (previous[panel] === next[panel]) continue;
+      parts.push(`${CENTER_LABEL[panel]} panel ${next[panel] ? 'collapsed' : 'expanded'}.`);
+    }
+    if (parts.length && announcerRef.current) {
+      announcerRef.current.textContent = parts.join(' ');
+    }
+  }, [centerOrder, center.filesCollapsed, center.golemCollapsed, sessionKey]);
+
   const expandCenter = useCallback((panel: CenterPanel) => {
     useIDEStore.getState().revealCenterPanel(panel);
     // Revealing the chat is a request to type in it; the hidden mount consumes
@@ -386,6 +536,8 @@ export function IDEShell({
         aria-label="Files"
         tabIndex={-1}
         style={center.filesCollapsed ? HIDDEN : undefined}
+        {...dropAttributes('files')}
+        {...dropHandlers.files}
       >
         <section className={styles.centerPanel}>
           <FilesCommandBar />
@@ -420,6 +572,8 @@ export function IDEShell({
         aria-label="Golem"
         tabIndex={-1}
         style={center.golemCollapsed ? HIDDEN : undefined}
+        {...dropAttributes('golem')}
+        {...dropHandlers.golem}
       >
         {golemPanel(!center.golemCollapsed)}
       </section>
@@ -480,7 +634,12 @@ export function IDEShell({
           invalidationKey={invalidationKey}
           {...resize.left}
         />
-        <div className={styles.centerPair} ref={pairRef}>
+        <div
+          className={styles.centerPair}
+          ref={pairRef}
+          onDragStart={onPairDragStart}
+          onDragEnd={endDrag}
+        >
           {[slots[order[0]], seam, slots[order[1]]]}
         </div>
         <ResizeHandle
@@ -499,6 +658,14 @@ export function IDEShell({
         {!isRightPanelCollapsed && <section className={styles.rightPanel}>{rightPanel}</section>}
       </main>
       <footer className={styles.statusBar}>{statusBar}</footer>
+      <div
+        ref={announcerRef}
+        className={styles.srOnly}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label="Layout changes"
+      />
       <CommandPalette
         open={isCommandPaletteOpen}
         commands={commands}

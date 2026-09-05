@@ -240,6 +240,12 @@ export const createCommands = (openFolder: () => void): Command[] => [
     run: showGolemConfiguration,
   },
   {
+    id: 'swap-center-panels',
+    title: 'Swap Files and Golem panels',
+    keywords: ['layout', 'reorder', 'golem', 'files'],
+    run: () => useIDEStore.getState().swapCenterOrder(),
+  },
+  {
     id: 'show-structure',
     title: 'Show Structure',
     keywords: ['symbols', 'outline'],
