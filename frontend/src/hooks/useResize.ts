@@ -25,9 +25,11 @@ export interface UseResizeOptions {
    */
   onResizePreview?: (size: number) => void;
   /**
-   * #271: the gesture was revoked — unmount, or an external layout change
-   * (`invalidationKey`). Nothing is committed; the shell releases ownership
-   * and reapplies the current effective layout.
+   * #271: the gesture ended without committing — unmount, an external layout
+   * change (`invalidationKey`), or a release that did not move the panel.
+   * Every `onResizeStart` is terminated by exactly one `onResizeEnd` *or*
+   * `onResizeCancel`, so the shell can release ownership unconditionally and
+   * reapply the current effective layout.
    */
   onResizeCancel?: () => void;
   /**
@@ -43,6 +45,13 @@ export interface UseResizeOptions {
 const KEYBOARD_STEP = 20;
 /** Delay before firing onResizeEnd for keyboard resize (ms) */
 const KEYBOARD_RESIZE_END_DELAY = 300;
+
+/**
+ * Both halves must exist: a frame we can schedule but not cancel would outlive
+ * its gesture. One check gates scheduling and cancelling alike.
+ */
+const supportsAnimationFrame = (): boolean =>
+  typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
 
 /** Read current pixel size from a CSS custom property */
 export function readCssVarSize(cssVar: string): number {
@@ -80,8 +89,10 @@ export function useResize({
 
   /** Drop any scheduled frame callback; returns the preview it would have sent. */
   const takePendingPreview = useCallback((): number | null => {
+    // frameRef is only ever set while supportsAnimationFrame(), so cancelling
+    // it needs no second capability check.
     if (frameRef.current !== null) {
-      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frameRef.current);
+      cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     }
     const pending = pendingPreview.current;
@@ -90,12 +101,11 @@ export function useResize({
   }, []);
 
   const schedulePreview = useCallback((size: number) => {
-    pendingPreview.current = size;
-    if (typeof requestAnimationFrame !== 'function') {
-      pendingPreview.current = null;
+    if (!supportsAnimationFrame()) {
       callbacks.current.onResizePreview?.(size);
       return;
     }
+    pendingPreview.current = size;
     if (frameRef.current !== null) return; // already coalescing into this frame
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
@@ -189,8 +199,10 @@ export function useResize({
         cleanup();
         // A click, or a drag back to where it started, is a no-op for
         // preferences: committing here would save an effective clamp over a
-        // larger preferred size.
+        // larger preferred size. It still has to terminate the gesture, or the
+        // shell would hold ownership of this CSS var forever.
         if (changed) callbacks.current.onResizeEnd?.(finalSize);
+        else callbacks.current.onResizeCancel?.();
       };
 
       // Set cursor for the entire document during drag
@@ -242,8 +254,10 @@ export function useResize({
         keyboardStartSize.current = null;
         const pending = takePendingPreview();
         if (pending !== null) callbacks.current.onResizePreview?.(pending);
-        // A boundary keypress that could not move the panel is a no-op.
+        // A boundary keypress that could not move the panel is a no-op for
+        // preferences, but still terminates the gesture it opened.
         if (clamped !== burstStart) callbacks.current.onResizeEnd?.(clamped);
+        else callbacks.current.onResizeCancel?.();
       }, KEYBOARD_RESIZE_END_DELAY);
     },
     [direction, cssVar, min, max, inverted, schedulePreview, takePendingPreview]

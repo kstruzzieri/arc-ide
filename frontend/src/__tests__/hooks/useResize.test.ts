@@ -303,6 +303,7 @@ describe('useResize gesture ownership (#271)', () => {
     try {
       const onResizePreview = jest.fn();
       const onResizeEnd = jest.fn();
+      const onResizeCancel = jest.fn();
       const { result } = renderHook(() =>
         useResize({
           direction: 'horizontal',
@@ -311,6 +312,7 @@ describe('useResize gesture ownership (#271)', () => {
           max: 500,
           onResizePreview,
           onResizeEnd,
+          onResizeCancel,
         })
       );
 
@@ -332,6 +334,8 @@ describe('useResize gesture ownership (#271)', () => {
       expect(onResizePreview).toHaveBeenLastCalledWith(350);
       expect(onResizeEnd).toHaveBeenCalledTimes(1);
       expect(onResizeEnd).toHaveBeenCalledWith(350);
+      // A completed drag terminates as a commit, never also as a cancellation.
+      expect(onResizeCancel).not.toHaveBeenCalled();
 
       // No stray frame callback survives the commit.
       onResizePreview.mockClear();
@@ -345,15 +349,19 @@ describe('useResize gesture ownership (#271)', () => {
   it.each<[string, number | undefined]>([
     ['a click with no movement', undefined],
     ['a drag that returns to its initial rendered size', 260],
-  ])('does not commit a preference for %s', (_name, endX) => {
+  ])('releases without committing a preference for %s', (_name, endX) => {
+    const onResizeStart = jest.fn();
     const onResizeEnd = jest.fn();
+    const onResizeCancel = jest.fn();
     const { result } = renderHook(() =>
       useResize({
         direction: 'horizontal',
         cssVar: '--panel-left-width',
         min: 150,
         max: 500,
+        onResizeStart,
         onResizeEnd,
+        onResizeCancel,
       })
     );
 
@@ -366,31 +374,59 @@ describe('useResize gesture ownership (#271)', () => {
     }
     act(() => document.dispatchEvent(new MouseEvent('mouseup')));
 
+    // Suppression applies to the commit only. The gesture must still terminate,
+    // or the shell's transient ownership record leaks and its CSS variable is
+    // never written again.
     expect(onResizeEnd).not.toHaveBeenCalled();
+    expect(onResizeStart).toHaveBeenCalledTimes(1);
+    expect(onResizeCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels rather than commits when unmounted mid-drag', () => {
-    const onResizeEnd = jest.fn();
-    const onResizeCancel = jest.fn();
-    const { result, unmount } = renderHook(() =>
-      useResize({
-        direction: 'horizontal',
-        cssVar: '--panel-left-width',
-        min: 150,
-        max: 500,
-        onResizeEnd,
-        onResizeCancel,
-      })
-    );
+  it('cancels rather than commits when unmounted mid-drag, dropping pending work', () => {
+    jest.useFakeTimers();
+    try {
+      const onResizeEnd = jest.fn();
+      const onResizeCancel = jest.fn();
+      const onResizePreview = jest.fn();
+      const { result, unmount } = renderHook(() =>
+        useResize({
+          direction: 'horizontal',
+          cssVar: '--panel-left-width',
+          min: 150,
+          max: 500,
+          onResizeEnd,
+          onResizeCancel,
+          onResizePreview,
+        })
+      );
 
-    act(() => mouseDown(result.current.onMouseDown, 260));
-    act(() => move(330));
+      // A pending keyboard commit and a pending preview frame are both open.
+      act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
+      act(() => mouseDown(result.current.onMouseDown, 280));
+      act(() => move(350));
+      onResizeCancel.mockClear(); // the mousedown already cancelled the keyboard burst
+      onResizePreview.mockClear();
+      setPropertySpy.mockClear();
 
-    unmount();
+      unmount();
 
-    expect(onResizeCancel).toHaveBeenCalledTimes(1);
-    expect(onResizeEnd).not.toHaveBeenCalled();
-    expect(document.body.style.cursor).toBe('');
+      expect(onResizeCancel).toHaveBeenCalledTimes(1);
+      expect(onResizeEnd).not.toHaveBeenCalled();
+      expect(document.body.style.cursor).toBe('');
+
+      // Nothing scheduled before the unmount may still run after it.
+      act(() => move(400));
+      act(() => jest.advanceTimersByTime(1000));
+
+      expect(setPropertySpy.mock.calls.filter((c) => c[0] === '--panel-left-width')).toHaveLength(
+        0
+      );
+      expect(onResizePreview).not.toHaveBeenCalled();
+      expect(onResizeEnd).not.toHaveBeenCalled();
+      expect(onResizeCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('cancels an in-flight drag when the external invalidation key changes', () => {
@@ -487,18 +523,22 @@ describe('useResize gesture ownership (#271)', () => {
     }
   });
 
-  it('does not commit a keyboard step that cannot move off its boundary', () => {
+  it('releases a keyboard step that cannot move off its boundary without committing', () => {
     jest.useFakeTimers();
     try {
       document.documentElement.style.setProperty('--panel-left-width', '500px');
+      const onResizeStart = jest.fn();
       const onResizeEnd = jest.fn();
+      const onResizeCancel = jest.fn();
       const { result } = renderHook(() =>
         useResize({
           direction: 'horizontal',
           cssVar: '--panel-left-width',
           min: 150,
           max: 500,
+          onResizeStart,
           onResizeEnd,
+          onResizeCancel,
         })
       );
 
@@ -506,6 +546,8 @@ describe('useResize gesture ownership (#271)', () => {
       act(() => jest.advanceTimersByTime(1000));
 
       expect(onResizeEnd).not.toHaveBeenCalled();
+      expect(onResizeStart).toHaveBeenCalledTimes(1);
+      expect(onResizeCancel).toHaveBeenCalledTimes(1);
     } finally {
       jest.useRealTimers();
     }
@@ -514,14 +556,18 @@ describe('useResize gesture ownership (#271)', () => {
   it('commits a completed keyboard burst exactly once', () => {
     jest.useFakeTimers();
     try {
+      const onResizeStart = jest.fn();
       const onResizeEnd = jest.fn();
+      const onResizeCancel = jest.fn();
       const { result } = renderHook(() =>
         useResize({
           direction: 'horizontal',
           cssVar: '--panel-left-width',
           min: 150,
           max: 500,
+          onResizeStart,
           onResizeEnd,
+          onResizeCancel,
         })
       );
 
@@ -529,8 +575,10 @@ describe('useResize gesture ownership (#271)', () => {
       act(() => arrow(result.current.onKeyDown, 'ArrowRight'));
       act(() => jest.advanceTimersByTime(1000));
 
+      expect(onResizeStart).toHaveBeenCalledTimes(1);
       expect(onResizeEnd).toHaveBeenCalledTimes(1);
       expect(onResizeEnd).toHaveBeenCalledWith(300);
+      expect(onResizeCancel).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }
