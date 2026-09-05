@@ -164,7 +164,7 @@ func SanitizeError(err error) PublicError {
 	case errors.Is(err, ErrAgentConfigInvalid):
 		return PublicError{Code: "config_invalid", Message: "Golem configuration is invalid."}
 	case errors.Is(err, ErrConsentUnavailable):
-		return PublicError{Code: "consent_unavailable", Message: "Remote consent storage is unavailable."}
+		return PublicError{Code: "consent_unavailable", Message: "Remote consent storage is unavailable; open Golem configuration for repair steps."}
 	case errors.Is(err, ErrRequestRejected):
 		return PublicError{Code: "request_rejected", Message: "The Golem request is invalid or stale."}
 	case errors.Is(err, ErrWorkspaceUnavailable):

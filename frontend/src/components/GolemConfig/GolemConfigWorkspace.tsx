@@ -442,6 +442,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       resetCards();
     }
     setOutcome({ ...NO_OUTCOME, ...next });
+    // The grant-only flow never reaches settle, but its own leftover notice
+    // must not linger beside a settings-apply outcome that landed after it.
+    setGrantNotice('');
   };
   const settleRef = useRef(settle);
   settleRef.current = settle;

@@ -666,7 +666,7 @@ func TestServiceSanitizeErrorAllowlist(t *testing.T) {
 	}{
 		{"config_missing", fmt.Errorf("%w: %s", ErrAgentConfigMissing, seed), "config_missing", "Golem configuration was not found."},
 		{"config_invalid", fmt.Errorf("%w: %s", ErrAgentConfigInvalid, seed), "config_invalid", "Golem configuration is invalid."},
-		{"consent_unavailable", fmt.Errorf("%w: %s", ErrConsentUnavailable, seed), "consent_unavailable", "Remote consent storage is unavailable."},
+		{"consent_unavailable", fmt.Errorf("%w: %s", ErrConsentUnavailable, seed), "consent_unavailable", "Remote consent storage is unavailable; open Golem configuration for repair steps."},
 		{"request_rejected", fmt.Errorf("%w: epoch for %s", ErrRequestRejected, seed), "request_rejected", "The Golem request is invalid or stale."},
 		{"workspace_unavailable", fmt.Errorf("%w: stat %q: %s", ErrWorkspaceUnavailable, rootMarker, seed), "workspace_unavailable", "The Golem workspace is unavailable."},
 		{"run_failed", fmt.Errorf("%w: dial: %s", ErrRunFailed, seed), "run_failed", "The Golem run failed."},
@@ -1438,7 +1438,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if code := publicCode(t, err); code != "consent_unavailable" {
 		t.Fatalf("degraded retry code = %q", code)
 	}
-	if err.Error() != "Remote consent storage is unavailable." {
+	if err.Error() != "Remote consent storage is unavailable; open Golem configuration for repair steps." {
 		t.Fatalf("degraded retry message = %q", err.Error())
 	}
 	st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
@@ -1450,7 +1450,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	}
 	degradedWarning := false
 	for _, w := range st.Warnings {
-		if w == "Remote consent storage is unavailable." {
+		if w == "Remote consent storage is unavailable; open Golem configuration for repair steps." {
 			degradedWarning = true
 		}
 	}

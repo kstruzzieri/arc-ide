@@ -40,7 +40,7 @@ const golemMarker = "API_KEY_MARKER_sk-live-0f9a8b7c6d5e"
 const golemRunID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 
 // golemConsentDegraded is the only Remote-consent degradation notice.
-const golemConsentDegraded = "Remote consent storage is unavailable."
+const golemConsentDegraded = "Remote consent storage is unavailable; open Golem configuration for repair steps."
 
 // golemPublicMessages is the complete set of user-visible Golem failures.
 // Anything else crossing the boundary is a leak or an unprojected error.
@@ -583,7 +583,7 @@ func TestGolemWailsMethodsReturnErrorsOnlyThroughGolemError(t *testing.T) {
 	// The floor stays below that on purpose — fewer than six means the
 	// derivation itself broke, and everything below it would pass vacuously.
 	if len(methods) < 6 {
-		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 6 (eleven expected today)",
+		t.Fatalf("derived %d exported App methods using the Golem service (%v), want at least 6 (thirteen expected today)",
 			len(methods), golemSortedNames(methods))
 	}
 
@@ -1171,6 +1171,11 @@ func TestGolemSettingsWriteMethodSignatures(t *testing.T) {
 		// idempotent success variant.
 		{"CancelGolemSettingsApply", reflect.TypeOf(""), reflect.TypeOf(ai.CancelSettingsApplyResult{})},
 		{"LoadGolemProfile", reflect.TypeOf(""), reflect.TypeOf(ai.GolemProfileLoadResult{})},
+		// Prepare is Call 1 of the grant-only approval flow and takes no input at
+		// all; a nil tc.in marks that zero-input case below.
+		{"PrepareGolemDestinationGrants", nil, reflect.TypeOf(ai.DestinationGrantsResult{})},
+		// Confirm's input IS the opaque challenge token, like Cancel above.
+		{"ConfirmGolemDestinationGrants", reflect.TypeOf(""), reflect.TypeOf(ai.DestinationGrantsResult{})},
 	} {
 		method, ok := appType.MethodByName(tc.method)
 		if !ok {
@@ -1178,7 +1183,12 @@ func TestGolemSettingsWriteMethodSignatures(t *testing.T) {
 			continue
 		}
 		signature := method.Type
-		if signature.NumIn() != 2 || signature.In(1) != tc.in {
+		if tc.in == nil {
+			if signature.NumIn() != 1 {
+				t.Errorf("%s takes %v, want no input", tc.method, signature)
+				continue
+			}
+		} else if signature.NumIn() != 2 || signature.In(1) != tc.in {
 			t.Errorf("%s takes %v, want exactly (%v)", tc.method, signature, tc.in)
 			continue
 		}

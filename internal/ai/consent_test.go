@@ -149,12 +149,13 @@ func TestConsentStoreFailsClosedOnInvalidContent(t *testing.T) {
 			if err := store.Grant(remoteDestination("remote", remoteEndpoint)); !errors.Is(err, ErrConsentUnavailable) {
 				t.Fatalf("Grant = %v, want ErrConsentUnavailable", err)
 			}
-			// F18/D10 carry-forward: a legacy record that invalidates the
-			// whole store must also yield the zero destination policy —
-			// there is no partial credit for the grants that would have
-			// parsed under an older canonicalization rule.
-			if strings.HasPrefix(name, "legacy record") && !store.DestinationPolicy().IsZero() {
-				t.Fatal("DestinationPolicy is not zero for a store invalidated by a legacy record")
+			// F18/D10 carry-forward: every invalid-content case above fails
+			// the store closed, so each must also yield the zero destination
+			// policy — there is no partial credit for grants that would have
+			// parsed under an older canonicalization rule or any other
+			// invalid-content case.
+			if !store.DestinationPolicy().IsZero() {
+				t.Fatal("DestinationPolicy is not zero for a store invalidated by invalid content")
 			}
 		})
 	}

@@ -1070,6 +1070,31 @@ describe('grant-only destination approval', () => {
     expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
   });
+
+  // The grant-only notice never reaches `settle` on its own, so a later
+  // settings apply must clear it explicitly — otherwise "Destinations
+  // approved. Your configuration was not changed." would still be on screen
+  // beside a fresh "Configuration applied." notice, contradicting it.
+  it('clears the grant-only notice once a later Apply lands', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
+    await mountWorkspace();
+    await approve();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    expect(await screen.findByTestId('golem-grant-notice')).toHaveTextContent(
+      'Destinations approved. Your configuration was not changed.'
+    );
+
+    await stageEndpoint();
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await clickApply();
+
+    expect(await screen.findByText('Configuration applied.')).toBeVisible();
+    expect(screen.queryByTestId('golem-grant-notice')).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
