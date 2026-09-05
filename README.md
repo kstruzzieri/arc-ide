@@ -247,6 +247,8 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Workspace chat panel (#226 phase 1) — read-only assistant on the embedded `go-llm` runtime, scoped to the bound repository with a sensitive-path floor, consent-gated remote egress with durable per-destination approval, streamed conversations that survive workspace switches, and a persistent status-bar segment (`Cmd/Ctrl+Shift+I`)
 - [x] Git commit messages on the embedded `go-llm` runtime (#165) — the CLI shell-out is gone
 
+If the Golem consent store becomes unavailable — a banner appears, and remote egress is blocked — the fix lives outside the app: remove or hand-repair `~/.firn/golem-consent.json`, then re-consent through the chat panel, the settings surface, or the "Approve missing destinations" flow to write a fresh record. The approve action itself cannot repair an unavailable store; a new grant can only persist once the file is fixed or removed.
+
 ### Planned
 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
