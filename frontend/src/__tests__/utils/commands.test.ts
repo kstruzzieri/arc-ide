@@ -141,7 +141,7 @@ test('creates the approved command registry with stable metadata', () => {
     },
     {
       id: 'toggle-golem-panel',
-      title: 'Toggle Golem panel',
+      title: 'Golem: Toggle Panel',
       keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
       shortcut: undefined,
     },

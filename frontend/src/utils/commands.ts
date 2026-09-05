@@ -287,7 +287,7 @@ export const createCommands = (openFolder: () => void): Command[] => [
   },
   {
     id: 'toggle-golem-panel',
-    title: 'Toggle Golem panel',
+    title: 'Golem: Toggle Panel',
     keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
     run: toggleGolemPanel,
   },
