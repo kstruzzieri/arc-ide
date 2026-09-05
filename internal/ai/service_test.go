@@ -4375,6 +4375,58 @@ func TestPrepareDestinationGrantsRefusesABrokenConfiguration(t *testing.T) {
 	}
 }
 
+func TestPrepareDestinationGrantsEnforcesResponseBounds(t *testing.T) {
+	const endpoint = "https://example.com/"
+	for _, tc := range []struct {
+		name          string
+		providers     int
+		providerName  string
+		endpoint      string
+		wantStatus    string
+		wantChallenge int
+	}{
+		{"destination count at limit", 256, "", endpoint, "consent_required", 1},
+		{"destination count over limit", 257, "", endpoint, "config_invalid", 0},
+		// Each control byte becomes a three-byte replacement rune in the response.
+		{"sanitized identifier at limit", 1, strings.Repeat("\x01", 85) + "x", endpoint, "consent_required", 1},
+		{"sanitized identifier over limit", 1, strings.Repeat("\x01", 85) + "xx", endpoint, "config_invalid", 0},
+		{"endpoint at limit", 1, "remote", endpoint + strings.Repeat("a", 1024-len(endpoint)), "consent_required", 1},
+		{"endpoint over limit", 1, "remote", endpoint + strings.Repeat("a", 1025-len(endpoint)), "config_invalid", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{Providers: make(map[string]config.ProviderConfig)}
+			for i := 0; i < tc.providers; i++ {
+				name := tc.providerName
+				if name == "" {
+					name = fmt.Sprintf("remote-%03d", i)
+				}
+				cfg.Providers[name] = config.ProviderConfig{BaseURL: tc.endpoint, APIFormat: "openai-compat"}
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatalf("marshal configuration: %v", err)
+			}
+			h := newApplyHarness(t, string(raw))
+			res, err := h.svc.PrepareDestinationGrants()
+			if err != nil {
+				t.Fatalf("PrepareDestinationGrants: %v", err)
+			}
+			if res.Status != tc.wantStatus {
+				t.Errorf("PrepareDestinationGrants status = %q, want %q", res.Status, tc.wantStatus)
+			}
+			h.svc.challengeMu.Lock()
+			pending := len(h.svc.pendingApplies)
+			h.svc.challengeMu.Unlock()
+			if pending != tc.wantChallenge {
+				t.Errorf("PrepareDestinationGrants retained %d challenges, want %d", pending, tc.wantChallenge)
+			}
+			if res.Status == tc.wantStatus {
+				checkGrantsResult(t, "prepare", res)
+			}
+		})
+	}
+}
+
 // TestPrepareDestinationGrantsRefusesAnUnavailableStore (F18): an unavailable
 // store can neither answer "already granted" nor record a new grant, so the
 // flow refuses before issuing a challenge it could never honor.

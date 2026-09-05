@@ -883,6 +883,24 @@ const approve = async () =>
   await userEvent.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
 
 describe('grant-only destination approval', () => {
+  it('preserves unstaged provider fields until they are staged before approval', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    await mountWorkspace();
+    await openProvider();
+    await userEvent.type(screen.getByLabelText('Endpoint'), '-edited');
+    await userEvent.type(screen.getByLabelText('New API key'), KEY);
+
+    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    expect(action).toBeDisabled();
+    await userEvent.click(action);
+    expect(PrepareGolemDestinationGrants).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Endpoint')).toHaveValue('https://api.example.com/v1-edited');
+    expect(screen.getByLabelText('New API key')).toHaveValue(KEY);
+
+    await stage();
+    expect(action).toBeEnabled();
+  });
+
   it('lists the whole batch and records it on Confirm', async () => {
     prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
@@ -1043,10 +1061,10 @@ describe('grant-only destination approval', () => {
   // config_invalid line must never read as "nothing to approve" (R3).
   const inlineOutcomes: Array<[string, RegExp]> = [
     ['none', /^Nothing to approve\./],
-    ['unavailable', /Consent storage unavailable — see repair steps/],
+    ['unavailable', /fix or remove .*restart Firn.*then approve again/],
     ['busy', /Nothing was written; retry when idle/],
     ['config_invalid', /Configuration failed to load — fix the diagnostics above first/],
-    ['uncertain', /could not save the approval/],
+    ['uncertain', /could not confirm whether the approval was saved/],
   ];
 
   it.each(inlineOutcomes)('answers %s inline with no prompt', async (status, copy) => {
@@ -1070,6 +1088,34 @@ describe('grant-only destination approval', () => {
     expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
   });
+
+  it.each(['rejected', 'malformed'])(
+    'cancels a %s confirmation without losing staged keys',
+    async (response) => {
+      prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+      if (response === 'rejected') {
+        (ConfirmGolemDestinationGrants as jest.Mock).mockRejectedValue('connection lost');
+      } else {
+        (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'unexpected' });
+      }
+      (CancelGolemSettingsApply as jest.Mock).mockRejectedValue('also unavailable');
+      await mountWorkspace();
+      await stageKey();
+      await approve();
+      await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+
+      await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
+      expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('golem-grant-notice')).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+
+      applyReturns({ status: 'applied', projection: readyProjection });
+      await clickApply();
+      await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
+      expect(lastApply().keys).toEqual({ hosted: KEY });
+    }
+  );
 
   // The grant-only notice never reaches `settle` on its own, so a later
   // settings apply must clear it explicitly — otherwise "Destinations

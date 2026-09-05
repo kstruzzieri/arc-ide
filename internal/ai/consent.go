@@ -57,11 +57,12 @@ type consentFile struct {
 // looser rule invalid, and one invalid record fails the WHOLE store closed.
 //
 // Repair: remove or hand-edit the offending record(s) in
-// ~/.firn/golem-consent.json, then re-consent through the chat, settings, or
-// approve flows to write a fresh record under the current canonical form.
+// ~/.firn/golem-consent.json, restart Firn, then re-consent through the chat,
+// settings, or approve flows to write a fresh record under the current form.
 // The approve action itself cannot repair an unavailable store — Grant
 // returns ErrConsentUnavailable immediately when the store failed to open,
-// so the file must be fixed (or removed) before any new grant can persist.
+// so the file must be fixed (or removed) and Firn restarted before any new
+// grant can persist. Refreshing settings does not reopen the consent store.
 type ConsentStore struct {
 	fs   filesystem.FileSystem
 	path string

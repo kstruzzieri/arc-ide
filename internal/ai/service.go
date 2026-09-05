@@ -1511,7 +1511,7 @@ func (s *Service) PrepareDestinationGrants() (DestinationGrantsResult, error) {
 	if missing {
 		return DestinationGrantsResult{Status: "none"}, nil
 	}
-	if err != nil {
+	if err != nil || exceedsProjectionBounds(loaded.Config) {
 		// No detail: the settings projection's own diagnostics already name
 		// what is wrong with the configuration (§5.4).
 		return DestinationGrantsResult{Status: "config_invalid"}, nil

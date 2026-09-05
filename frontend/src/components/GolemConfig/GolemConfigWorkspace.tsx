@@ -180,10 +180,10 @@ const GRANT_CONFIG_INVALID = 'Configuration failed to load — fix the diagnosti
 /** The store's own repair path: one invalid record fails the whole file
  * closed, and no grant can persist until it is fixed or removed. */
 const GRANT_UNAVAILABLE =
-  'Consent storage unavailable — see repair steps: fix or remove ~/.firn/golem-consent.json, then approve again. Nothing can be approved until it opens cleanly.';
+  'Consent storage unavailable — see repair steps: fix or remove ~/.firn/golem-consent.json, restart Firn, then approve again. Nothing can be approved until it opens cleanly.';
 const GRANT_GRANTED = 'Destinations approved. Your configuration was not changed.';
 const GRANT_UNCERTAIN =
-  'Golem could not save the approval, so nothing was approved. Try approving again.';
+  'Golem could not confirm whether the approval was saved. Try approving again.';
 const GRANT_CONFLICT = `The configuration changed while this approval was open, so nothing was approved. Choose ${APPROVE_ACTION} again to review the current set.`;
 const GRANT_EXPIRED = `The approval request expired. Nothing was approved. Choose ${APPROVE_ACTION} again.`;
 const GRANT_CANCELLED = 'The approval request was cancelled. Nothing was approved.';
@@ -837,7 +837,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   };
 
   /** One grant RPC. Every landing is a `setOutcome`, never a `settle`. */
-  const sendGrants = (call: () => Promise<unknown>): void => {
+  const sendGrants = (call: () => Promise<unknown>, token: string | null): void => {
     if (!beginOperation()) return;
     const run = (async () => {
       try {
@@ -854,8 +854,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         if (status !== 'busy') setOutcome(NO_OUTCOME);
         setGrantNotice(GRANT_NOTICE[status]);
       } catch (err) {
-        // A rejected or malformed grant response is not a lost write — nothing
-        // here writes a document — so the surface says what failed and stops.
+        // The approval outcome is unknown; preserve the draft and best-effort
+        // cancel any known challenge.
+        if (token !== null) void CancelGolemSettingsApply(token).catch(() => undefined);
         setOutcome(NO_OUTCOME);
         setGrantNotice(boundedGolemMessage(err));
       } finally {
@@ -868,7 +869,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   /** Call 1, fresh on every click: there is no subscription to keep it warm. */
   const approveDestinations = (): void => {
     setGrantNotice('');
-    sendGrants(() => PrepareGolemDestinationGrants());
+    sendGrants(() => PrepareGolemDestinationGrants(), null);
   };
 
   const confirmDestination = () => {
@@ -876,7 +877,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     if (challenge === null) return;
     if (outcome.intent === 'grant-only') {
       if (lapsed(challenge)) void dismissGrants(GRANT_EXPIRED);
-      else sendGrants(() => ConfirmGolemDestinationGrants(challenge.token));
+      else sendGrants(() => ConfirmGolemDestinationGrants(challenge.token), challenge.token);
       return;
     }
     const request = pendingRequestRef.current;
@@ -1116,6 +1117,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               sourceLoading ||
               sending ||
               recovery ||
+              // Locking remounts the editors, so their fields must be staged first.
+              unstagedEditors.size > 0 ||
               outcome.challenge !== null ||
               // A settings-apply disclosure is still on screen: the dropped-
               // fields panel is the ONLY copy of `outcome.drops` (restageDrops
