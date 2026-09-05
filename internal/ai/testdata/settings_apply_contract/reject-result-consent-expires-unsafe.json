@@ -6,12 +6,17 @@
     "challenge": {
       "token": "opaque-challenge-token",
       "expiresAt": 9007199254740993,
-      "destination": {
-        "provider": "hosted",
-        "model": "wire-model",
-        "endpoint": "https://api.example.com/v1",
-        "classification": "remote"
-      }
+      "destinations": [
+        {
+          "provider": "hosted",
+          "model": "wire-model",
+          "endpoint": "https://api.example.com/v1",
+          "classification": "remote",
+          "provenance": [
+            "agent"
+          ]
+        }
+      ]
     }
   }
 }

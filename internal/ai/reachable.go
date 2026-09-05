@@ -50,7 +50,9 @@ func renderHop(h ReachableHop) string {
 // set — every configured provider. A present-but-unresolvable chain is
 // fatal upstream before any I/O, so it derives to empty; an unresolvable
 // single hop (unknown provider, uncanonicalizable endpoint) contributes
-// nothing because upstream admission refuses the same hop.
+// nothing here — upstream's planner would refuse to admit the whole route on
+// that same failure, while Firn only drops the hop from this read-only
+// listing.
 func reachableDestinations(cfg *config.Config) []ReachableDestination {
 	if cfg == nil {
 		return nil

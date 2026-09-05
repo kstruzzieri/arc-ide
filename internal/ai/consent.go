@@ -224,7 +224,8 @@ func validateConsentDestination(destination ProviderDestination) (consentRecord,
 		return consentRecord{}, errors.New("consent destination digest does not match its destination")
 	}
 	if _, err := provider.NewDestination(destination.Provider, canonical); err != nil {
-		return consentRecord{}, fmt.Errorf("consent destination is not a valid destination identity: %w", err)
+		log.Printf("ai: consent destination is not a valid destination identity: %v", err)
+		return consentRecord{}, errors.New("consent destination is not a valid destination identity")
 	}
 	return consentRecord{Digest: digest, Provider: destination.Provider, Endpoint: canonical}, nil
 }

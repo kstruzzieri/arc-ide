@@ -1170,25 +1170,24 @@ func (s *Service) retireCachedRunners(op string) {
 // settingsChallengeRecord is the short-lived consent record behind one issued
 // token. It holds NO document, request, draft, path, or key value: only the
 // expiry, the operation kind, the canonical target and request digests, and
-// the resolved pre/post destination identity the user was actually shown.
+// the destinations the user was actually shown and would be granting.
 // Everything else Call 2 needs it recomputes.
 type settingsChallengeRecord struct {
 	expiresAt     int64
 	mode          applyMode
 	targetDigest  string
 	requestDigest string
-	pre           ProviderDestination
-	post          ProviderDestination
+	grants        []ReachableDestination
 }
 
 // matches reports whether a fresh preparation still describes the write the
 // user approved. Both digests are compared in constant time: they are the
-// values an attacker could otherwise probe for. The destinations are already
-// bound into the request digest; comparing them again states the §5.2 check
-// rather than inferring it.
-func (r *settingsChallengeRecord) matches(targetDigest, requestDigest string, pre, post ProviderDestination) bool {
+// values an attacker could otherwise probe for. The request digest binds the
+// complete pre and post destination SETS, so a fresh preparation that reaches
+// anywhere else can never reproduce it.
+func (r *settingsChallengeRecord) matches(targetDigest, requestDigest string) bool {
 	return constantTimeEqual(r.targetDigest, targetDigest) &&
-		constantTimeEqual(r.requestDigest, requestDigest) && r.pre == pre && r.post == post
+		constantTimeEqual(r.requestDigest, requestDigest)
 }
 
 // ApplySettings is Call 1 against an existing target.
@@ -1312,6 +1311,13 @@ func (s *Service) writeSettings(token string, req SettingsApplyRequest, mode app
 		}
 		// From here every result is terminal for this token.
 		mode = record.mode
+		// A grant-only challenge approves destinations and authorizes no
+		// document write. Refusing it HERE — before its mode can reach request
+		// validation, which has no rules for it — is what makes the refusal the
+		// §5.2 conflict rather than an argument diagnostic.
+		if mode == applyModeGrantOnly {
+			return *conflictChallenge(consentUnchanged), nil
+		}
 		if err := validateConfirmSettingsApplyRequest(
 			ConfirmSettingsApplyRequest{ChallengeToken: token, Request: req}, mode); err != nil {
 			return *blockingDiagnostics(Diagnostic{Code: codeInvalidArgument}), nil
@@ -1322,50 +1328,51 @@ func (s *Service) writeSettings(token string, req SettingsApplyRequest, mode app
 	if result != nil {
 		return *result, nil
 	}
-	// Both destinations come from the freshly prepared documents, never from a
-	// draft or a cached snapshot.
-	pre, post := agentDestination(prepared.prior), agentDestination(prepared.doc.Config())
+	// Both destination sets come from the freshly prepared documents, never
+	// from a draft or a cached snapshot.
+	preSet, postSet := reachableDestinations(prepared.prior), reachableDestinations(prepared.doc.Config())
 	targetDigest := prepared.target.identityDigest()
-	requestDigest := canonicalApplyDigest(req, mode, targetDigest, pre, post)
+	requestDigest := canonicalApplyDigest(req, mode, targetDigest, destinationsOf(preSet), destinationsOf(postSet))
 
 	outcome := consentUnchanged
 	if record == nil {
-		if consentChangesEgress(pre, post) && !s.consent.Has(post.Digest) {
+		missing := newRemoteDestinations(preSet, postSet, s.consent)
+		if len(missing) > 0 {
 			// Nothing is written and the Document is discarded with this frame.
 			expiresAt := s.now().Add(consentChallengeTTL).UnixMilli()
 			challengeToken := s.installSettingsChallenge(&settingsChallengeRecord{
 				expiresAt: expiresAt, mode: mode, targetDigest: targetDigest,
-				requestDigest: requestDigest, pre: pre, post: post,
+				requestDigest: requestDigest, grants: missing,
 			})
 			return SettingsApplyResult{Status: "consent_required", Challenge: &ApplyChallenge{
 				Token: challengeToken, ExpiresAt: expiresAt,
-				Destination: ApplyDestination{
-					Provider: post.Provider, Model: post.Model,
-					Endpoint: post.Endpoint, Classification: post.Classification,
-				},
+				Destinations: applyDestinations(missing),
 			}}, nil
 		}
 	} else {
-		if !record.matches(targetDigest, requestDigest, pre, post) {
+		if !record.matches(targetDigest, requestDigest) {
 			return *conflictChallenge(consentUnchanged), nil
 		}
 		// Consent persistence and config publication are two honest commits:
-		// the grant must succeed before a remote config can become live.
-		if err := s.grantSettingsDestination(post, &after); err != nil {
-			return *withConsentOutcome(
-				blockingDiagnostics(Diagnostic{Code: codeConsentStoreFailed}), consentUncertain), nil
+		// the grants must succeed before a remote config can become live.
+		if len(record.grants) > 0 {
+			if err := s.grantSettingsDestinations(record.grants, &after); err != nil {
+				return *withConsentOutcome(
+					blockingDiagnostics(Diagnostic{Code: codeConsentStoreFailed}), consentUncertain), nil
+			}
+			outcome = consentRecorded
 		}
-		outcome = consentRecorded
 	}
 	return s.publishSettingsWrite(prepared, mode, outcome, &after), nil
 }
 
-// grantSettingsDestination records the durable grant. Any failure prevents the
-// save and the publication; the store's own writer may still have renamed
-// bytes, which is why the caller reports `uncertain` rather than `unchanged`.
-func (s *Service) grantSettingsDestination(dest ProviderDestination, after *[]string) error {
-	if err := s.consent.Grant(dest); err != nil {
-		log.Printf("ai: golem settings consent grant failed: %v", err)
+// grantSettingsDestinations commits the challenge's whole batch with one
+// atomic write. On error nothing is published by the caller and the outcome
+// is uncertain: memory keeps the prior authority, while the complete batch
+// may already be durable on disk (never a subset) — spec D2.
+func (s *Service) grantSettingsDestinations(grants []ReachableDestination, after *[]string) error {
+	if err := s.consent.GrantMany(destinationsOf(grants)); err != nil {
+		log.Printf("ai: golem consent batch grant failed: %v", err)
 		if s.setConsentDegraded(err) {
 			*after = append(*after, EventGolemStatusChanged)
 		}
