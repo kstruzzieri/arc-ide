@@ -6,8 +6,9 @@ import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfi
 
 jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
+  PrepareGolemDestinationGrants: jest.fn(),
 }));
-import { ReloadGolemSettings } from '../../../wails/bindings';
+import { PrepareGolemDestinationGrants, ReloadGolemSettings } from '../../../wails/bindings';
 
 const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
@@ -149,6 +150,37 @@ describe('GolemConfigWorkspace', () => {
       testRevision
     );
     expect(ReloadGolemSettings).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Spec I15: the approval action is PERMANENT. Nothing probes for missing
+   * destinations on mount and no runtime event tells this surface when the set
+   * changes, so the action cannot appear conditionally — it is always there,
+   * and every click asks afresh.
+   */
+  it('always offers the destination approval action', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+
+    // Before the first load lands there is nothing to approve against yet, so
+    // the action is present and waiting rather than absent.
+    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    expect(action).toBeInTheDocument();
+    expect(action).toBeDisabled();
+
+    await screen.findByTestId('provider-row-llama-swap');
+    expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+    // A permanent action asks nothing on its own.
+    expect(PrepareGolemDestinationGrants).not.toHaveBeenCalled();
+  });
+
+  it('keeps the approval action on a configuration that could not load', async () => {
+    (ReloadGolemSettings as jest.Mock).mockRejectedValue('no service');
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+
+    await screen.findByRole('button', { name: 'Retry' });
+    expect(
+      screen.getByRole('button', { name: 'Approve missing destinations' })
+    ).toBeInTheDocument();
   });
 
   it('moves focus to the heading when the tab opens', async () => {

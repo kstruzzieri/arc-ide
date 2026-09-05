@@ -95,11 +95,13 @@ describe('adapter routing', () => {
   const routes: Array<[RawCallName, unknown[]]> = [
     ['ApplyGolemSettings', [{ request: 'apply' }]],
     ['CancelGolemSettingsApply', ['challenge-token']],
+    ['ConfirmGolemDestinationGrants', ['challenge-token']],
     ['ConfirmGolemSettingsApply', [{ request: 'confirm' }]],
     ['CreateGolemSettings', [{ request: 'create' }]],
     ['GetGolemSettings', []],
     ['GetGolemStatus', [{ request: 'status' }]],
     ['LoadGolemProfile', ['profile-id']],
+    ['PrepareGolemDestinationGrants', []],
     ['ReloadGolemSettings', []],
     ['RunGolemTurn', [{ request: 'turn' }]],
   ];

@@ -29,14 +29,18 @@ jest.mock('../../../wails/bindings', () => ({
   CreateGolemSettings: jest.fn(),
   ConfirmGolemSettingsApply: jest.fn(),
   CancelGolemSettingsApply: jest.fn(),
+  ConfirmGolemDestinationGrants: jest.fn(),
+  PrepareGolemDestinationGrants: jest.fn(),
   LoadGolemProfile: jest.fn(),
 }));
 import {
   ApplyGolemSettings,
   CancelGolemSettingsApply,
+  ConfirmGolemDestinationGrants,
   ConfirmGolemSettingsApply,
   CreateGolemSettings,
   LoadGolemProfile,
+  PrepareGolemDestinationGrants,
   ReloadGolemSettings,
 } from '../../../wails/bindings';
 
@@ -121,15 +125,19 @@ const loadedProfile = {
   },
 };
 
+const destination = (over: Record<string, unknown> = {}) => ({
+  provider: 'hosted',
+  model: 'gpt-5-mini',
+  endpoint: 'https://api.example.com/v1',
+  classification: 'remote',
+  provenance: ['agent'],
+  ...over,
+});
+
 const challenge = (over: Record<string, unknown> = {}) => ({
   token: 'challenge-token-1',
   expiresAt: Date.now() + 600_000,
-  destination: {
-    provider: 'hosted',
-    model: 'gpt-5-mini',
-    endpoint: 'https://api.example.com/v1',
-    classification: 'remote',
-  },
+  destinations: [destination()],
   ...over,
 });
 
@@ -558,7 +566,9 @@ describe('nonterminal apply results', () => {
     expect(within(consent).getByText(/hosted/)).toBeVisible();
     expect(within(consent).getByText(/gpt-5-mini/)).toBeVisible();
     expect(within(consent).getByText(/https:\/\/api\.example\.com\/v1/)).toBeVisible();
-    expect(within(consent).getByText(/remote/)).toBeVisible();
+    // The routing hop that reaches it, and the singular lead: one destination.
+    expect(within(consent).getByText('Reached by agent')).toBeVisible();
+    expect(within(consent).getByText(/Approve this destination before/)).toBeVisible();
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
     await waitFor(() => expect(ConfirmGolemSettingsApply).toHaveBeenCalledTimes(1));
@@ -835,6 +845,198 @@ describe('nonterminal apply results', () => {
 
     expect(await screen.findByText(/could not be cancelled/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Grant-only destination approval (spec D13, I15; F17, F20)
+//
+// The action approves destinations for the ACTIVE configuration and writes no
+// document, so the invariant under test in most of these is a NEGATIVE one:
+// the staged draft and every key ref it holds come through Confirm, Cancel and
+// a lapsed prompt untouched. Retention is asserted the same honest way the rest
+// of this file asserts it — by the row markers and by what the next Apply
+// carries.
+// ---------------------------------------------------------------------------
+
+/** A two-destination batch: one routed hop and one recommendation entry. */
+const grantChallenge = (over: Record<string, unknown> = {}) => ({
+  token: 'grant-token-1',
+  expiresAt: Date.now() + 600_000,
+  destinations: [
+    destination(),
+    destination({
+      provider: 'hosted-mirror',
+      model: '',
+      endpoint: 'https://mirror.example.com/v1',
+      provenance: ['agent (recommendation)'],
+    }),
+  ],
+  ...over,
+});
+
+const prepareReturns = (result: unknown) =>
+  (PrepareGolemDestinationGrants as jest.Mock).mockResolvedValue(result);
+
+const approve = async () =>
+  await userEvent.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+
+describe('grant-only destination approval', () => {
+  it('lists the whole batch and records it on Confirm', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
+    await mountWorkspace();
+    await approve();
+
+    const consent = await screen.findByRole('alert');
+    // Pluralized copy, and the grant-only lead: no write is pending.
+    expect(within(consent).getByText(/Approve these 2 destinations\./)).toBeVisible();
+    expect(within(consent).getByText(/Nothing is written to your configuration/)).toBeVisible();
+    // One line per destination: endpoint, provider, and the model only when the
+    // entry names one.
+    expect(within(consent).getByText('https://api.example.com/v1')).toBeVisible();
+    expect(within(consent).getByText('gpt-5-mini')).toBeVisible();
+    expect(within(consent).getByText('https://mirror.example.com/v1')).toBeVisible();
+    expect(within(consent).getByText('hosted-mirror')).toBeVisible();
+    expect(within(consent).getByText('Reached by agent')).toBeVisible();
+    expect(within(consent).getByText('Reached by agent (recommendation)')).toBeVisible();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
+    await waitFor(() =>
+      expect(ConfirmGolemDestinationGrants).toHaveBeenCalledWith('grant-token-1')
+    );
+    expect(await screen.findByText(/Destinations approved/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    // Nothing about the configuration was written, and Call 1 ran exactly once.
+    expect(ApplyGolemSettings).not.toHaveBeenCalled();
+    expect(ConfirmGolemSettingsApply).not.toHaveBeenCalled();
+    expect(PrepareGolemDestinationGrants).toHaveBeenCalledTimes(1);
+  });
+
+  // F17. The settings-apply cancel keeps clearing the vault — that is
+  // "cancels the challenge and drops the keys while keeping the rows" above,
+  // and it still passes unchanged.
+  it('leaves the draft and its key refs standing through confirm, cancel, and a lapse', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
+    await mountWorkspace();
+    await stageEndpoint();
+    await stageKey();
+
+    const staged = () => {
+      const row = screen.getByTestId('provider-row-hosted');
+      expect(within(row).getByText('Modified')).toBeInTheDocument();
+      expect(within(row).getByText('Key staged')).toBeInTheDocument();
+    };
+    staged();
+
+    await approve();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    expect(await screen.findByText(/Destinations approved/)).toBeVisible();
+    staged();
+
+    await approve();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
+    expect(await screen.findByText(/approval request was cancelled/)).toBeVisible();
+    staged();
+
+    // A prompt left standing past its deadline: no timer fires (nothing to
+    // settle), and the next interaction is a Cancel.
+    (PrepareGolemDestinationGrants as jest.Mock).mockResolvedValueOnce({
+      status: 'consent_required',
+      challenge: grantChallenge({ expiresAt: Date.now() - 1 }),
+    });
+    await approve();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    expect(await screen.findByText(/approval request expired/)).toBeVisible();
+    expect(ConfirmGolemDestinationGrants).toHaveBeenCalledTimes(1); // never the lapsed token
+    staged();
+
+    // The honest proof: the very next Apply still carries the staged row AND
+    // the key value the vault has been holding the whole time.
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
+    expect(lastApply().keys).toEqual({ hosted: KEY });
+    expect(lastApply().changes).toEqual([
+      { kind: 'provider-update', name: 'hosted', endpoint: 'https://api.example.com/v2' },
+      { kind: 'provider-key-set', name: 'hosted' },
+    ]);
+  });
+
+  // F20. Cancel revokes the token rather than letting it sit out its TTL, and
+  // the draft is none of its business either.
+  it('revokes the token on Cancel and keeps the draft', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    await mountWorkspace();
+    await stageKey();
+    await approve();
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
+
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
+    expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1');
+    expect(ConfirmGolemDestinationGrants).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Nothing was approved/)).toBeVisible();
+    expect(
+      within(screen.getByTestId('provider-row-hosted')).getByText('Key staged')
+    ).toBeInTheDocument();
+  });
+
+  it('names a changed configuration on conflict and offers the action again', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'conflict' });
+    await mountWorkspace();
+    await approve();
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+
+    expect(
+      await screen.findByText(/configuration changed while this approval was open/)
+    ).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    expect(action).toBeEnabled();
+
+    // And it prepares afresh rather than reusing the spent challenge.
+    prepareReturns({ status: 'none' });
+    await userEvent.click(action);
+    expect(await screen.findByText(/Nothing to approve/)).toBeVisible();
+    expect(PrepareGolemDestinationGrants).toHaveBeenCalledTimes(2);
+  });
+
+  // Every closed status that answers with a line rather than a prompt. The
+  // config_invalid line must never read as "nothing to approve" (R3).
+  const inlineOutcomes: Array<[string, RegExp]> = [
+    ['none', /^Nothing to approve\./],
+    ['unavailable', /Consent storage unavailable — see repair steps/],
+    ['busy', /Nothing was written; retry when idle/],
+    ['config_invalid', /Configuration failed to load — fix the diagnostics above first/],
+    ['uncertain', /could not save the approval/],
+  ];
+
+  it.each(inlineOutcomes)('answers %s inline with no prompt', async (status, copy) => {
+    prepareReturns({ status });
+    await mountWorkspace();
+    await approve();
+
+    expect(await screen.findByText(copy)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+    if (status === 'config_invalid') {
+      expect(screen.queryByText(/Nothing to approve/)).not.toBeInTheDocument();
+    }
+  });
+
+  it('says what failed when the grant call is refused', async () => {
+    (PrepareGolemDestinationGrants as jest.Mock).mockRejectedValue('service unavailable');
+    await mountWorkspace();
+    await approve();
+
+    expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
   });
 });
 
