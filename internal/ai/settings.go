@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -127,7 +128,7 @@ var settingsDiagnosticCodes = []string{
 // (§3.3 confirmUnknownUseCases).
 var firnUseCaseFloors = map[string]provider.Capability{
 	useCaseAgent: requiredAgentCaps,
-	"chat":       provider.CapChat | provider.CapStream,
+	"chat":       agent.ModelCallCapabilities(false),
 	"embedding":  provider.CapEmbed,
 }
 

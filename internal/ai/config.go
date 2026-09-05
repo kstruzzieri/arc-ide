@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -197,9 +198,11 @@ type providerTarget struct {
 	thinkTags   *provider.ThinkTags
 }
 
-// requiredAgentCaps are the capabilities the agent role's primary model must
-// declare. tool_call is never type-derived, so configs must state it.
-const requiredAgentCaps = provider.CapChat | provider.CapStream | provider.CapToolCall
+// requiredAgentCaps is the capability set the agent role's primary model must
+// declare, expressed via upstream's shared call-shape calculation so a go-llm
+// change propagates here instead of stranding a stale copy. tool_call is
+// never type-derived, so configs must state it.
+var requiredAgentCaps = agent.ModelCallCapabilities(true)
 
 // ResolveAgentTarget resolves the single agent destination from cfg: the
 // "agent" use-case's primary model and provider only. ModelConfig.Fallbacks
