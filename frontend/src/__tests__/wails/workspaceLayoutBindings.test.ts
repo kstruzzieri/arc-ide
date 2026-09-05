@@ -31,10 +31,11 @@ beforeEach(() => {
  * does not default is left out so it exercises the real defaulting path. */
 const rawState = (layout: unknown) => ({ layout });
 
-/** task A3's eventual mapping from the wire model to the normalizer's input
- * shape — panelSizes.golem carries the preferred width. Reproduced here (not
- * imported) because A3 has not landed yet; this is what the binding hands
- * the normalizer, not a claim about A3's own code. */
+/** The mapping from the wire model to the normalizer's input shape —
+ * panelSizes.golem carries the preferred width. Deliberately mirrors
+ * `restoreWorkspaceState` in useWorkspacePersistence.ts field for field; it is
+ * reproduced rather than imported because the real one is a local expression
+ * inside that function, not an export. Keep the two in step. */
 const toRawCenterLayout = (layout: {
   centerOrder?: unknown;
   golemCollapsed?: unknown;

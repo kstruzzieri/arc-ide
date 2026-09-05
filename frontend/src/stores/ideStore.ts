@@ -125,9 +125,13 @@ function createDefaultWorkspaceSessionState() {
     // #271 center pair. Preferences persist per repository session; centerReveal
     // is the transient "which center panel was explicitly requested" target
     // that the effective-layout budget protects under window pressure.
-    centerOrder: DEFAULT_CENTER_LAYOUT.centerOrder as CenterOrder,
+    centerOrder: DEFAULT_CENTER_LAYOUT.centerOrder,
     isGolemPanelCollapsed: DEFAULT_CENTER_LAYOUT.isGolemPanelCollapsed,
     isFilesPanelCollapsed: DEFAULT_CENTER_LAYOUT.isFilesPanelCollapsed,
+    // Bumped only by applyCenterLayout, so a consumer can tell a restore from a
+    // change the user just made. Transient: never collected into the persisted
+    // state, never in the save-subscribe list, and reset with the session.
+    centerLayoutRevision: 0,
     centerReveal: 'files' as CenterPanel,
     centerDrag: null as CenterPanel | null,
     openFiles: [] as EditorFile[],
@@ -184,6 +188,12 @@ interface IDEState {
   isGolemPanelCollapsed: boolean;
   isFilesPanelCollapsed: boolean;
   centerReveal: CenterPanel;
+  /**
+   * Counts restores of the center pair; never persisted. A layout that arrives
+   * this way is not a change the user made, and the shell owes it neither an
+   * announcement nor a focus move (spec §2.4, D2, §7).
+   */
+  centerLayoutRevision: number;
   /** Panel currently being dragged for reorder; never persisted. */
   centerDrag: CenterPanel | null;
 
@@ -1239,6 +1249,7 @@ export const useIDEStore = create<IDEStore>()(
             isFilesPanelCollapsed: prefs.isFilesPanelCollapsed,
             panelSizes: { ...state.panelSizes, golem: prefs.golemWidth },
             centerReveal: initialCenterReveal(prefs),
+            centerLayoutRevision: state.centerLayoutRevision + 1,
           }),
           false,
           'applyCenterLayout'

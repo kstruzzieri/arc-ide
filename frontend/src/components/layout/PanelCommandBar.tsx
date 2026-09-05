@@ -76,7 +76,13 @@ export function PanelCommandBar({
         tabIndex={0}
         aria-label={`${label} panel header`}
         aria-roledescription="movable panel header"
-        aria-keyshortcuts="Meta+Shift+ArrowLeft Meta+Shift+ArrowRight Control+Shift+ArrowLeft Control+Shift+ArrowRight"
+        // One chord, the one this platform actually accepts — `onKeyDown`
+        // rejects the other modifier, so advertising both misleads.
+        aria-keyshortcuts={
+          isMac()
+            ? 'Meta+Shift+ArrowLeft Meta+Shift+ArrowRight'
+            : 'Control+Shift+ArrowLeft Control+Shift+ArrowRight'
+        }
         data-dragging={isDragging || undefined}
         draggable
         onDragStart={onDragStart}

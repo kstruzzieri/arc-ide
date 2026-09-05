@@ -107,6 +107,7 @@ export function IDEShell({
   const centerReveal = useCenterReveal();
   const isGolemPanelCollapsed = useIsGolemPanelCollapsed();
   const isFilesPanelCollapsed = useIsFilesPanelCollapsed();
+  const centerLayoutRevision = useIDEStore((s) => s.centerLayoutRevision);
   const workspacePath = useIDEStore((s) => s.workspace?.path ?? null);
   const [isCommandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
@@ -301,6 +302,7 @@ export function IDEShell({
     preferredGolem: isGolemPanelCollapsed,
     reveal: centerReveal,
     order: centerOrder,
+    revision: centerLayoutRevision,
   });
 
   useLayoutEffect(() => {
@@ -312,7 +314,13 @@ export function IDEShell({
       preferredGolem: isGolemPanelCollapsed,
       reveal: centerReveal,
       order: centerOrder,
+      revision: centerLayoutRevision,
     };
+
+    // A restore is not a gesture. It lands a render or more after the
+    // repository itself changed — `LoadWorkspaceState` is awaited in between —
+    // so the session key has already settled and only the revision marks it.
+    if (previous.revision !== centerLayoutRevision) return;
 
     // Moving a DOM node drops the focus it held, so a reorder restores the
     // control the user was on by identity once the move has committed. Only
@@ -369,6 +377,7 @@ export function IDEShell({
     centerReveal,
     isFilesPanelCollapsed,
     isGolemPanelCollapsed,
+    centerLayoutRevision,
     rootOf,
   ]);
 
@@ -441,36 +450,49 @@ export function IDEShell({
   );
 
   const dropHandlers = useMemo(() => {
-    const make = (panel: CenterPanel) => ({
-      onDragEnter: (e: DragEvent<HTMLElement>) => {
-        const placement = dropPlacement(panel, e);
-        setDropTarget(placement && { panel, edge: placement.edge, session: sessionKey });
-      },
-      onDragOver: (e: DragEvent<HTMLElement>) => {
-        const placement = dropPlacement(panel, e);
-        setDropTarget(placement && { panel, edge: placement.edge, session: sessionKey });
-        if (!placement) return;
-        // Accepting the drag is what lets `drop` fire on this island at all.
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-      },
-      onDragLeave: (e: DragEvent<HTMLElement>) => {
-        // Crossing into a child is not leaving the island.
-        const related = e.relatedTarget;
-        if (related instanceof Node && e.currentTarget.contains(related)) return;
-        setDropTarget(null);
-      },
-      onDrop: (e: DragEvent<HTMLElement>) => {
-        const record = dragRecord.current;
-        const placement = dropPlacement(panel, e);
-        endDrag();
-        if (!record || !placement) return;
-        e.preventDefault();
-        // Only at drop is the payload readable; it has to be the drag we saw start.
-        if (e.dataTransfer.getData(CENTER_DRAG_MIME) !== record.source) return;
-        useIDEStore.getState().setCenterOrder(placement.order);
-      },
-    });
+    const make = (panel: CenterPanel) => {
+      // `dragover` fires continuously; an unchanged placement has to keep the
+      // same object or the shell re-renders at pointer rate for nothing.
+      const applyPlacement = (placement: { edge: 'left' | 'right' } | null) =>
+        setDropTarget((previous) => {
+          if (!placement) return previous === null ? previous : null;
+          return previous?.panel === panel &&
+            previous.edge === placement.edge &&
+            previous.session === sessionKey
+            ? previous
+            : { panel, edge: placement.edge, session: sessionKey };
+        });
+
+      return {
+        onDragEnter: (e: DragEvent<HTMLElement>) => {
+          applyPlacement(dropPlacement(panel, e));
+        },
+        onDragOver: (e: DragEvent<HTMLElement>) => {
+          const placement = dropPlacement(panel, e);
+          applyPlacement(placement);
+          if (!placement) return;
+          // Accepting the drag is what lets `drop` fire on this island at all.
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        },
+        onDragLeave: (e: DragEvent<HTMLElement>) => {
+          // Crossing into a child is not leaving the island.
+          const related = e.relatedTarget;
+          if (related instanceof Node && e.currentTarget.contains(related)) return;
+          setDropTarget(null);
+        },
+        onDrop: (e: DragEvent<HTMLElement>) => {
+          const record = dragRecord.current;
+          const placement = dropPlacement(panel, e);
+          endDrag();
+          if (!record || !placement) return;
+          e.preventDefault();
+          // Only at drop is the payload readable; it has to be the drag we saw start.
+          if (e.dataTransfer.getData(CENTER_DRAG_MIME) !== record.source) return;
+          useIDEStore.getState().setCenterOrder(placement.order);
+        },
+      };
+    };
     return { files: make('files'), golem: make('golem') };
   }, [dropPlacement, endDrag, sessionKey]);
 
@@ -490,6 +512,7 @@ export function IDEShell({
     files: center.filesCollapsed,
     golem: center.golemCollapsed,
     session: sessionKey,
+    revision: centerLayoutRevision,
   });
 
   useEffect(() => {
@@ -499,11 +522,14 @@ export function IDEShell({
       files: center.filesCollapsed,
       golem: center.golemCollapsed,
       session: sessionKey,
+      revision: centerLayoutRevision,
     };
     announced.current = next;
-    // A restore is not a change the user just made. The initial mount — and
-    // StrictMode's replay of it — compares equal to itself and says nothing.
-    if (previous.session !== next.session) return;
+    // A restore is not a change the user just made — and it lands a render
+    // after the session key it belongs to, so the revision is what marks it.
+    // The initial mount — and StrictMode's replay of it — compares equal to
+    // itself and says nothing.
+    if (previous.session !== next.session || previous.revision !== next.revision) return;
     const parts: string[] = [];
     if (previous.order !== next.order) {
       parts.push(`Golem panel moved ${next.order === 'golem-first' ? 'left' : 'right'}.`);
@@ -515,7 +541,7 @@ export function IDEShell({
     if (parts.length && announcerRef.current) {
       announcerRef.current.textContent = parts.join(' ');
     }
-  }, [centerOrder, center.filesCollapsed, center.golemCollapsed, sessionKey]);
+  }, [centerOrder, center.filesCollapsed, center.golemCollapsed, sessionKey, centerLayoutRevision]);
 
   const expandCenter = useCallback((panel: CenterPanel) => {
     useIDEStore.getState().revealCenterPanel(panel);
@@ -525,6 +551,14 @@ export function IDEShell({
   }, []);
   const expandFiles = useCallback(() => expandCenter('files'), [expandCenter]);
   const expandGolem = useCallback(() => expandCenter('golem'), [expandCenter]);
+
+  // The island's tree depends on nothing but its visibility, and the shell
+  // around it re-renders per animation frame during a drag and per `dragover`
+  // during a reorder. Holding the element identity keeps the chat out of both.
+  const golemIsland = useMemo(
+    () => golemPanel(!center.golemCollapsed),
+    [golemPanel, center.golemCollapsed]
+  );
 
   const filesSlot = (
     <div key="files" className={styles.centerSlot}>
@@ -575,7 +609,7 @@ export function IDEShell({
         {...dropAttributes('golem')}
         {...dropHandlers.golem}
       >
-        {golemPanel(!center.golemCollapsed)}
+        {golemIsland}
       </section>
       {center.golemCollapsed && <PanelRail panel="golem" onExpand={expandGolem} />}
     </div>

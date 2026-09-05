@@ -494,6 +494,43 @@ describe('IDEShell center reorder by drag', () => {
     expect(useIDEStore.getState().centerDrag).toBeNull();
     expect(edgeOf(filesColumn())).toBeNull();
   });
+
+  // A drag fires `dragover` continuously; the island underneath it must not be
+  // rebuilt at pointer rate just because the shell around it re-renders.
+  it('does not re-render the Golem island during a dragover storm', () => {
+    let renders = 0;
+    function Probe() {
+      renders += 1;
+      return <div data-testid="golem" />;
+    }
+    const golemPanel = () => <Probe />;
+    render(
+      <IDEShell
+        header={() => <div />}
+        sidebar={<div />}
+        leftPanel={<div />}
+        centerPanel={<div data-testid="editor" />}
+        golemPanel={golemPanel}
+        bottomPanel={<div />}
+        rightPanel={<div />}
+        statusBar={<div />}
+      />
+    );
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    measure(filesColumn(), 100, 500);
+    measure(golemIsland(), 500, 900);
+
+    const source = transport('golem');
+    drag('dragStart', golemIsland(), { dataTransfer: source });
+    drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 });
+    const baseline = renders;
+
+    for (let i = 0; i < 10; i += 1) {
+      drag('dragOver', filesColumn(), { dataTransfer: source, clientX: 250 + i });
+    }
+    expect(edgeOf(filesColumn())).toBe('left');
+    expect(renders).toBe(baseline);
+  });
 });
 
 describe('IDEShell layout announcements', () => {
@@ -532,6 +569,50 @@ describe('IDEShell layout announcements', () => {
       });
     });
     expect(announcer()).toBeEmptyDOMElement();
+  });
+
+  // The real restore is two renders apart: the path lands, and only after
+  // LoadWorkspaceState resolves does applyCenterLayout follow. A session
+  // comparison alone is blind to that gap, so the apply has to carry its own
+  // "this was a restore" marker (spec §2.4, D2, §7).
+  it('stays quiet and keeps focus when the apply lands a render after the path', () => {
+    render(
+      <IDEShell
+        header={() => <div />}
+        sidebar={<div />}
+        leftPanel={<div />}
+        centerPanel={<div data-testid="editor" />}
+        golemPanel={() => (
+          <button type="button" data-testid="golem-action">
+            Golem action
+          </button>
+        )}
+        bottomPanel={<div />}
+        rightPanel={
+          <button type="button" data-testid="runs-action">
+            Runs action
+          </button>
+        }
+        statusBar={<div />}
+      />
+    );
+    const runs = screen.getByTestId('runs-action');
+    act(() => runs.focus());
+
+    act(() => {
+      useIDEStore.setState({ workspace: { path: '/repo/two' } as never });
+    });
+    act(() => {
+      useIDEStore.getState().applyCenterLayout({
+        centerOrder: 'golem-first',
+        golemWidth: 420,
+        isGolemPanelCollapsed: false,
+        isFilesPanelCollapsed: true,
+      });
+    });
+
+    expect(announcer()).toBeEmptyDOMElement();
+    expect(document.activeElement).toBe(runs);
   });
 });
 
