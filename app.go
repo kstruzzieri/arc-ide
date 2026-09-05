@@ -184,6 +184,7 @@ func (a *App) startup(ctx context.Context) {
 		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
 	}
 	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit)
+	a.gitMsgGen.SetDestinationPolicySource(a.aiService.DestinationPolicy)
 }
 
 // wireLSPProvisioners builds and registers the managed-server provisioners on

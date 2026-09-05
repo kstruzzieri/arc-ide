@@ -5,14 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/kstruzzieri/go-llm/provider"
 
 	"firn/internal/git/gittest"
+	"firn/internal/testutil"
 )
 
 func TestMessageGenerator_AvailableWithEmbeddedRuntime(t *testing.T) {
@@ -208,5 +214,142 @@ func TestMessageGenerator_Generate_RejectsUnusableOutput(t *testing.T) {
 				t.Fatalf("Generate() error = %v, want unusable-output error", err)
 			}
 		})
+	}
+}
+
+// sampleDiff is a minimal staged-diff fixture shared by the destination-
+// policy tests below; it mirrors the inline literal already used by
+// TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext above.
+const sampleDiff = "diff --git a/x b/x\n+added line\n"
+
+// writeModelsConfig writes a models.json fixture and points GO_LLM_CONFIG at
+// it for the duration of the test.
+func writeModelsConfig(t *testing.T, body string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", path)
+}
+
+// chatStubModel is the model name shared by chatStubHandler's /v1/models
+// listing and every fixture's model "name" field below: RefreshModels
+// populates the router's registry from the listing, and a mismatch against
+// the configured name fails the route lookup before the stub is ever asked
+// for a completion.
+const chatStubModel = "chat-model"
+
+// chatStubHandler answers both the models-list and chat-completion
+// OpenAI-compatible endpoints golem's bootstrap and run path use, streaming
+// answer as the assistant's reply.
+func chatStubHandler(answer string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"data":[{"id":%q}]}`, chatStubModel)
+	})
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		encoded, _ := json.Marshal(answer)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: {\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%s},\"finish_reason\":\"stop\"}]}\n\n", chatStubModel, encoded)
+		fmt.Fprintf(w, "data: {\"model\":%q,\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n", chatStubModel)
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	return mux
+}
+
+// F1/I2: ungranted remote -> typed denial (pre-I/O per upstream; ".invalid"
+// makes any wrong path surface a non-sentinel error).
+func TestGenerateDeniesUngrantedRemoteDestination(t *testing.T) {
+	writeModelsConfig(t, `{
+		"providers":{"remote":{"base_url":"http://firn-remote.invalid","api_format":"openai-compat","timeout":"2s","api_key":"sk-test-secret"}},
+		"models":{"chat-model":{"name":"chat-model","provider":"remote","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
+		"defaults":{"agent":"chat-model"}
+	}`)
+
+	gen := NewMessageGenerator()
+	_, err := gen.Generate(context.Background(), t.TempDir(), sampleDiff)
+	if !errors.Is(err, provider.ErrDestinationDenied) {
+		t.Fatalf("want destination denial, got %v", err)
+	}
+	if strings.Contains(err.Error(), "sk-test-secret") {
+		t.Fatal("denial message leaked config material")
+	}
+}
+
+// I2 success half: granted + servable remote returns a real message.
+func TestGenerateSucceedsAgainstGrantedRemoteListener(t *testing.T) {
+	ln, baseURL := testutil.ListenNonLoopback(t)
+	server := &http.Server{Handler: chatStubHandler("feat: remote message")}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	writeModelsConfig(t, fmt.Sprintf(`{
+		"providers":{"remote":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
+		"models":{"chat-model":{"name":"chat-model","provider":"remote","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
+		"defaults":{"agent":"chat-model"}
+	}`, baseURL))
+
+	gen := NewMessageGenerator()
+	gen.SetDestinationPolicySource(func() provider.DestinationPolicy {
+		d, err := provider.NewDestination("remote", baseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return provider.NewDestinationPolicy(d)
+	})
+	msg, err := gen.Generate(context.Background(), t.TempDir(), sampleDiff)
+	if err != nil || strings.TrimSpace(msg) == "" {
+		t.Fatalf("want a message, got %q, %v", msg, err)
+	}
+}
+
+// F7: planning (and summarize, with compression off) are not generator
+// routes. Agent -> loopback stub; defaults.planning -> provider "planner" at
+// http://firn-planning.invalid; analysis/chat UNBOUND. A compression
+// regression would plan summarize as RECOMMEND and demand the planner
+// destination too, failing this test.
+func TestGeneratorDoesNotRequirePlanningDestination(t *testing.T) {
+	server := httptest.NewServer(chatStubHandler("feat: no planning needed"))
+	t.Cleanup(server.Close)
+
+	writeModelsConfig(t, fmt.Sprintf(`{
+		"providers":{
+			"chat":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
+			"planner":{"base_url":"http://firn-planning.invalid","api_format":"openai-compat","timeout":"2s"}
+		},
+		"models":{
+			"chat-model":{"name":"chat-model","provider":"chat","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]},
+			"planner-model":{"name":"planner-model","provider":"planner","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}
+		},
+		"defaults":{"agent":"chat-model","planning":"planner-model"}
+	}`, server.URL))
+
+	gen := NewMessageGenerator() // zero grants: no destination is approved
+	msg, err := gen.Generate(context.Background(), t.TempDir(), sampleDiff)
+	if err != nil || strings.TrimSpace(msg) == "" {
+		t.Fatalf("Generate() = %q, %v, want success without touching defaults.planning", msg, err)
+	}
+}
+
+// F14: scrubbed, bounded, rune-safe, sentinel-preserving.
+func TestDestinationDeniedMessageIsScrubbedAndBounded(t *testing.T) {
+	inner := &provider.DestinationDeniedError{Provider: "p", Purpose: "agent\nx\u2028y\u200b"}
+	msg, ok := destinationDeniedMessage(fmt.Errorf("wrapper sk-synthetic-secret: %w", inner))
+	if !ok || strings.Contains(msg, "sk-synthetic-secret") || strings.ContainsAny(msg, "\n\u2028\u200b") {
+		t.Fatalf("scrub failed: %q %v", msg, ok)
+	}
+
+	long := strings.Repeat("é", 400)
+	msg, _ = destinationDeniedMessage(&provider.DestinationDeniedError{Provider: "p", Purpose: long})
+	if !utf8.ValidString(msg) || utf8.RuneCountInString(msg) > 600 {
+		t.Fatalf("truncation not rune-safe/bounded: %d runes valid=%v", utf8.RuneCountInString(msg), utf8.ValidString(msg))
+	}
+
+	wrapped := fmt.Errorf("commit message generation blocked: %s: %w", msg, provider.ErrDestinationDenied)
+	if !errors.Is(wrapped, provider.ErrDestinationDenied) {
+		t.Fatal("sentinel must survive composition")
 	}
 }
