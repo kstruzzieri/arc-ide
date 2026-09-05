@@ -108,7 +108,12 @@ export interface NavigationLocation {
 
 const MAX_NAVIGATION_HISTORY = 50;
 
-const defaultPanelSizes = { left: 260, right: 280, bottom: 200, golem: DEFAULT_CENTER_LAYOUT.golemWidth };
+const defaultPanelSizes = {
+  left: 260,
+  right: 280,
+  bottom: 200,
+  golem: DEFAULT_CENTER_LAYOUT.golemWidth,
+};
 
 function createDefaultWorkspaceSessionState() {
   return {

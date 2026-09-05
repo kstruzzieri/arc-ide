@@ -37,7 +37,8 @@ export interface RawCenterLayout {
 }
 
 export function normalizeCenterLayout(raw: RawCenterLayout): CenterLayoutPrefs {
-  const centerOrder: CenterOrder = raw.centerOrder === 'golem-first' ? 'golem-first' : 'files-first';
+  const centerOrder: CenterOrder =
+    raw.centerOrder === 'golem-first' ? 'golem-first' : 'files-first';
   const golemWidth =
     typeof raw.golemWidth === 'number' && Number.isFinite(raw.golemWidth) && raw.golemWidth > 0
       ? Math.max(1, Math.round(raw.golemWidth))

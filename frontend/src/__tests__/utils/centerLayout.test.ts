@@ -18,7 +18,9 @@ describe('normalizeCenterLayout', () => {
   it('rounds a finite positive width and falls back for zero, negative, NaN, or non-numbers', () => {
     expect(normalizeCenterLayout({ golemWidth: 501.6 }).golemWidth).toBe(502);
     expect(normalizeCenterLayout({ golemWidth: 0.1 }).golemWidth).toBe(1);
-    expect(normalizeCenterLayout({ golemWidth: Number.POSITIVE_INFINITY }).golemWidth).toBe(DEFAULT_GOLEM_WIDTH);
+    expect(normalizeCenterLayout({ golemWidth: Number.POSITIVE_INFINITY }).golemWidth).toBe(
+      DEFAULT_GOLEM_WIDTH
+    );
     expect(normalizeCenterLayout({ golemWidth: 0 }).golemWidth).toBe(DEFAULT_GOLEM_WIDTH);
     expect(normalizeCenterLayout({ golemWidth: -20 }).golemWidth).toBe(DEFAULT_GOLEM_WIDTH);
     expect(normalizeCenterLayout({ golemWidth: Number.NaN }).golemWidth).toBe(DEFAULT_GOLEM_WIDTH);
@@ -40,12 +42,18 @@ describe('normalizeCenterLayout', () => {
 describe('initialCenterReveal', () => {
   it('is Golem only when Golem is the sole open panel', () => {
     expect(
-      initialCenterReveal({ ...DEFAULT_CENTER_LAYOUT, isFilesPanelCollapsed: true, isGolemPanelCollapsed: false })
+      initialCenterReveal({
+        ...DEFAULT_CENTER_LAYOUT,
+        isFilesPanelCollapsed: true,
+        isGolemPanelCollapsed: false,
+      })
     ).toBe('golem');
   });
 
   it('is Files when both are open or when Files is the sole open panel', () => {
-    expect(initialCenterReveal({ ...DEFAULT_CENTER_LAYOUT, isGolemPanelCollapsed: false })).toBe('files');
+    expect(initialCenterReveal({ ...DEFAULT_CENTER_LAYOUT, isGolemPanelCollapsed: false })).toBe(
+      'files'
+    );
     expect(initialCenterReveal(DEFAULT_CENTER_LAYOUT)).toBe('files');
   });
 });
