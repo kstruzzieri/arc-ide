@@ -2462,16 +2462,6 @@ it('keeps TurnAdmission discriminated by state', () => {
   expect(status.identity.conversationId).toBe(CONV);
 });
 
-describe('golemView navigation', () => {
-  it('defaults to chat and toggles to configuration', () => {
-    expect(useGolemStore.getState().golemView).toBe('chat');
-    useGolemStore.getState().setGolemView('configuration');
-    expect(useGolemStore.getState().golemView).toBe('configuration');
-    useGolemStore.getState().setGolemView('chat');
-    expect(useGolemStore.getState().golemView).toBe('chat');
-  });
-});
-
 describe('configuration tab flags (#263 Slice B)', () => {
   beforeEach(() => {
     __resetGolemStore();

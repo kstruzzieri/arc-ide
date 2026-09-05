@@ -104,7 +104,7 @@ export function showGolem(conversationId?: string): void {
 /**
  * Opens — or refocuses — the one app-global Golem configuration tab in the
  * editor area (#263 spec §3.1). The bar gear and the unavailable-state "Review
- * configuration" CTA route here too (Task A6).
+ * configuration" CTA route here too (#271 D1).
  */
 export function showGolemConfiguration(): void {
   focusConfigTab();

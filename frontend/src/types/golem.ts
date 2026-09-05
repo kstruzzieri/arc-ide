@@ -174,8 +174,6 @@ export interface GolemStoreState {
   activityRevision: number;
   lastFailureConversationId: string | null;
   failureRevision: number;
-  golemView: 'chat' | 'configuration'; // panel-level view; initialize to 'chat'
-  setGolemView(view: GolemStoreState['golemView']): void;
   /**
    * The one app-global configuration tab (#263 spec §3.1). Only its open/focus
    * flags live here: the draft and any pending API-key value stay inside the

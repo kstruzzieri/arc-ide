@@ -10,11 +10,13 @@ import {
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useGolemStore } from '../../stores/golemStore';
+import { useIDEStore } from '../../stores/ideStore';
 import { GOLEM_UNAVAILABLE } from '../../types/golem';
 import type { ConversationView, RunPhase, RunView, TranscriptEntry } from '../../types/golem';
+import { focusConfigTab } from '../../utils/editorSurface';
 import golemIcon from '../../assets/branding/golem-icon.svg';
 import { PlusIcon, SettingsIcon } from '../icons';
-import { GolemConfiguration } from './GolemConfiguration';
+import { PanelBarButton, PanelCommandBar } from '../layout/PanelCommandBar';
 import styles from './GolemPanel.module.css';
 
 /**
@@ -24,10 +26,11 @@ import styles from './GolemPanel.module.css';
  * background strip are five views of one conversation record, and splitting
  * them would mean five components all reaching into the same store slice.
  *
- * Nothing here holds state at all: the panel unmounts whenever the right panel
- * collapses or switches to Runs, so the draft, the queue, the pending consent
- * turn, and the composer focus signal all live in `golemStore`. Even the live
- * region is derived, not accumulated.
+ * The island stays mounted while collapsed (#271); in Plan A the draft, queue,
+ * pending consent turn and focus signal stay in the existing golemStore. Plan B
+ * moves drafts to the visible host and uses an acknowledged whole-map handoff;
+ * it does not share one JavaScript store between windows. Even the live region
+ * is derived, not accumulated.
  */
 
 const NO_WORKSPACE = 'Open a workspace to chat with Golem.';
@@ -48,7 +51,7 @@ const isCancelablePhase = (phase: RunPhase): boolean =>
   phase === 'needs-consent' || phase === 'running';
 
 /**
- * The header status chip (the mockups' `.chip.run`).
+ * The bar's live status, carried as sr-only text beside the breathing mark.
  *
  * Keyed by exactly the live phases, so a present label is also the panel's
  * "something is happening" flag — the transcript's live rail node reads it
@@ -406,6 +409,18 @@ const PIN_SLACK = 4;
 /** Composer auto-grow ceiling, in px, past which the field scrolls. */
 const COMPOSER_MAX_HEIGHT = 160;
 
+/**
+ * Escape closes the connection disclosure and hands focus back to its summary —
+ * the behaviour a dialog-like disclosure owes the keyboard, which `<details>`
+ * does not supply on its own.
+ */
+function closeDetailsOnEscape(event: KeyboardEvent<HTMLDetailsElement>) {
+  if (event.key !== 'Escape' || !event.currentTarget.open) return;
+  event.preventDefault();
+  event.currentTarget.open = false;
+  event.currentTarget.querySelector<HTMLElement>('summary')?.focus();
+}
+
 interface GolemPanelProps {
   /**
    * The shell's *effective* visibility (#271). Not the saved collapse flag: a
@@ -422,15 +437,9 @@ export function GolemPanel({ visible }: GolemPanelProps) {
   const bridgePhase = useGolemStore((state) => state.bridgePhase);
   const bridgeError = useGolemStore((state) => state.bridgeError);
   const composerFocusRevision = useGolemStore((state) => state.composerFocusRevision);
-  const golemView = useGolemStore((state) => state.golemView);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  // The header toggle unmounts while the configuration view is shown, so
-  // `onClose` cannot focus it synchronously — it flags the restore instead,
-  // and this effect fires it once the toggle has remounted.
-  const configToggleRef = useRef<HTMLButtonElement>(null);
-  const pendingToggleFocus = useRef(false);
   // Follow the stream only while the user is already at the newest row, the
   // same rule the run output follows: scrolling back through a conversation
   // must not be yanked away by the next delta.
@@ -572,8 +581,8 @@ export function GolemPanel({ visible }: GolemPanelProps) {
   // composer, and only the visible host consumes it. A request raised while the
   // panel is a rail waits here until the panel is shown, so ⌘⇧I still lands;
   // becoming visible on its own (a widened window, a restore) never does.
-  // The request is only spent once a composer actually takes the focus: the
-  // configuration view renders none, and a request must survive that too.
+  // The request is only spent once a composer actually takes the focus, so a
+  // render without one leaves the request armed rather than dropping it.
   const consumedFocusRevision = useRef(composerFocusRevision);
   useEffect(() => {
     if (!visible || consumedFocusRevision.current === composerFocusRevision) return;
@@ -581,7 +590,7 @@ export function GolemPanel({ visible }: GolemPanelProps) {
     if (!composer) return;
     consumedFocusRevision.current = composerFocusRevision;
     composer.focus();
-  }, [composerFocusRevision, visible, golemView]);
+  }, [composerFocusRevision, visible]);
 
   // A hidden pane cannot be measured or scrolled, so becoming visible re-pins
   // the transcript to the newest row and re-fits the composer — without focus.
@@ -594,15 +603,6 @@ export function GolemPanel({ visible }: GolemPanelProps) {
     composer.style.height = 'auto';
     composer.style.height = `${Math.min(composer.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
   }, [visible]);
-
-  // Fires only after the chat view (and its header toggle) has remounted, so
-  // the pending flag from `onClose` below survives the unmount in between.
-  useLayoutEffect(() => {
-    if (golemView === 'chat' && pendingToggleFocus.current) {
-      pendingToggleFocus.current = false;
-      configToggleRef.current?.focus();
-    }
-  }, [golemView]);
 
   const transcript = conversation?.transcript;
   useEffect(() => {
@@ -648,46 +648,54 @@ export function GolemPanel({ visible }: GolemPanelProps) {
     send();
   };
 
-  if (golemView === 'configuration') {
-    return (
-      <div className={styles.panel} data-accent="project">
-        <GolemConfiguration
-          onClose={() => {
-            pendingToggleFocus.current = true;
-            useGolemStore.getState().setGolemView('chat');
-          }}
-        />
-      </div>
-    );
-  }
-
   return (
     // data-accent pins the whole panel to the glacier accent the way
     // Terminal.tsx does, so Send, focus rings, and the Golem chrome share one
     // accent regardless of the workspace.
     <div className={styles.panel} data-accent="project">
-      <header className={styles.header}>
-        {/* Two deliberate rows at dock width (layout.html option A shows a
-            collapsed header): identity + live status, then the destination. */}
-        <div className={styles.identityRow}>
-          <span className={styles.wordmark}>
-            {/* The logo doubles as the live indicator: it breathes while a run
-                is active, replacing a separate status chip. Decorative — "GOLEM"
-                is the accessible name; the live state rides the sr-only span. */}
+      <div className={styles.chrome}>
+        <PanelCommandBar
+          panel="golem"
+          name="GOLEM"
+          tile={
+            // The mark doubles as the live indicator: it breathes while a run is
+            // active. Decorative — the sr-only status in `meta` carries the state.
             <img
-              className={styles.wordmarkIcon}
+              className={styles.tileIcon}
               src={golemIcon}
               alt=""
-              aria-hidden="true"
+              draggable={false}
               data-live={statusLabel ? 'true' : undefined}
             />
-            GOLEM
-            {/* Not a live region (the single announcer is below): plain sr-only
-                text so the phase stays readable without the visible chip. */}
-            {statusLabel && <span className={styles.srOnly}>{statusLabel}</span>}
-          </span>
-        </div>
-        <div className={styles.identityRow}>
+          }
+          meta={
+            statusLabel ? (
+              <>
+                <span className={styles.liveDot} aria-hidden="true" />
+                <span className={styles.srOnly}>{statusLabel}</span>
+              </>
+            ) : undefined
+          }
+          controls={
+            <>
+              <PanelBarButton label="Configuration" onClick={focusConfigTab}>
+                <SettingsIcon aria-hidden="true" />
+              </PanelBarButton>
+              <PanelBarButton
+                label="New chat"
+                title={clearBusy ? 'Finish or cancel the current run first' : 'New chat'}
+                disabled={!canClear}
+                onClick={() => {
+                  if (conversationId) useGolemStore.getState().clearConversation(conversationId);
+                }}
+              >
+                <PlusIcon aria-hidden="true" />
+              </PanelBarButton>
+            </>
+          }
+          onCollapse={() => useIDEStore.getState().setGolemPanelCollapsed(true)}
+        />
+        <div className={styles.chipsRow}>
           <span className={styles.workspace}>
             {conversation ? workspaceName(conversation) : 'No workspace'}
           </span>
@@ -696,6 +704,7 @@ export function GolemPanel({ visible }: GolemPanelProps) {
               {destination.classification === 'local' ? 'Local' : 'Remote'}
             </span>
           )}
+          {!destination && <span className={styles.badge}>Unknown</span>}
           {destination && (
             <span className={styles.modelChip}>
               <span className={styles.provider}>{destination.provider}</span>
@@ -703,39 +712,19 @@ export function GolemPanel({ visible }: GolemPanelProps) {
               <span className={styles.model}>{destination.model}</span>
             </span>
           )}
+          {/* D5: the exact endpoint stays reachable — it is the only place the
+              machine a prompt would reach is spelled out — but behind a native
+              disclosure instead of a permanent third row. Escape closes it and
+              returns focus to the summary. */}
+          <details className={styles.chipDetails} onKeyDown={closeDetailsOnEscape}>
+            <summary className={styles.chipSummary}>Connection</summary>
+            <div className={styles.chipDetailsBody}>
+              {destination && <span className={styles.endpoint}>{destination.endpoint}</span>}
+              <span>Context: prompt only</span>
+            </div>
+          </details>
         </div>
-        {/* The mockup header drops the endpoint; it stays because it is the only
-            place the exact machine a prompt would reach is spelled out. */}
-        <div className={styles.metaRow}>
-          {destination && <span className={styles.endpoint}>{destination.endpoint}</span>}
-          <span>Context: prompt only</span>
-        </div>
-        {/* A compact + in the corner, absolutely placed so it never shifts the
-            centered wordmark rows. Disabled — not hidden — when there is nothing
-            to clear or a run is live, so the affordance stays discoverable. */}
-        <button
-          ref={configToggleRef}
-          type="button"
-          className={`${styles.newChatButton} ${styles.configButton}`}
-          aria-label="Configuration"
-          title="Configuration"
-          onClick={() => useGolemStore.getState().setGolemView('configuration')}
-        >
-          <SettingsIcon aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className={styles.newChatButton}
-          disabled={!canClear}
-          aria-label="New chat"
-          title={clearBusy ? 'Finish or cancel the current run first' : 'New chat'}
-          onClick={() => {
-            if (conversationId) useGolemStore.getState().clearConversation(conversationId);
-          }}
-        >
-          <PlusIcon aria-hidden="true" />
-        </button>
-      </header>
+      </div>
 
       {/* A switcher for one conversation is just a label repeated. */}
       {conversationList.length > 1 && (
@@ -758,11 +747,7 @@ export function GolemPanel({ visible }: GolemPanelProps) {
         <p className={styles.notice}>
           {notice}
           {unavailable && (
-            <button
-              type="button"
-              className={styles.reviewConfigButton}
-              onClick={() => useGolemStore.getState().setGolemView('configuration')}
-            >
+            <button type="button" className={styles.reviewConfigButton} onClick={focusConfigTab}>
               Review configuration
             </button>
           )}

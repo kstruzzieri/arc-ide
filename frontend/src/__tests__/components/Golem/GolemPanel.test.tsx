@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { CommandPalette } from '../../../components/CommandPalette';
 import { GolemPanel } from '../../../components/Golem';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { useGitStore } from '../../../stores/gitStore';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 import { useIDEStore } from '../../../stores/ideStore';
 import { parseGolemStatus } from '../../../types/golem';
@@ -256,7 +257,7 @@ beforeEach(() => {
 // ── identity and destination ──────────────────────────────────────────────────
 
 describe('GolemPanel destination', () => {
-  it('shows the backend workspace label, classification, provider, model, and endpoint', () => {
+  it('shows the backend workspace label, classification, provider, model, and endpoint', async () => {
     hydrate();
     selectFocused();
     render(<GolemPanel visible />);
@@ -265,7 +266,10 @@ describe('GolemPanel destination', () => {
     expect(screen.getByText('Local')).toBeInTheDocument();
     expect(screen.getByText('ollama')).toBeInTheDocument();
     expect(screen.getByText('qwen3')).toBeInTheDocument();
-    expect(screen.getByText('http://127.0.0.1:11434')).toBeInTheDocument();
+
+    // The endpoint moved behind the Connection disclosure (#271 D5).
+    await userEvent.click(screen.getByText('Connection'));
+    expect(screen.getByText('http://127.0.0.1:11434')).toBeVisible();
   });
 
   it('classifies a remote destination as Remote', () => {
@@ -277,12 +281,13 @@ describe('GolemPanel destination', () => {
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
   });
 
-  it('states the fixed Phase 1 context scope', () => {
+  it('states the fixed Phase 1 context scope', async () => {
     hydrate();
     selectFocused();
     render(<GolemPanel visible />);
 
-    expect(screen.getByText('Context: prompt only')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Connection'));
+    expect(screen.getByText('Context: prompt only')).toBeVisible();
   });
 });
 
@@ -1310,20 +1315,21 @@ describe('GolemPanel cancel and retry', () => {
   });
 });
 
-// ── header logo ───────────────────────────────────────────────────────────────
+// ── bar tile ──────────────────────────────────────────────────────────────────
 
 describe('GolemPanel header', () => {
-  it('shows the Golem logo decoratively beside the GOLEM wordmark', () => {
+  it('shows the Golem logo decoratively in the bar tile beside the GOLEM name', () => {
     hydrate();
     selectFocused();
     const { container } = render(<GolemPanel visible />);
 
     // GOLEM stays the accessible name; the image is decorative, so it must be
-    // hidden from the accessibility tree with an empty alt.
+    // hidden from the accessibility tree — empty alt, inside the hidden tile.
     expect(screen.getByText('GOLEM')).toBeInTheDocument();
-    const logo = container.querySelector('img[aria-hidden="true"]');
+    const logo = container.querySelector('img');
     expect(logo).not.toBeNull();
     expect(logo).toHaveAttribute('alt', '');
+    expect(logo?.closest('[aria-hidden="true"]')).not.toBeNull();
   });
 });
 
@@ -1590,22 +1596,9 @@ describe('GolemPanel new chat', () => {
   });
 });
 
-// ── configuration view ───────────────────────────────────────────────────────
+// ── configuration routing ────────────────────────────────────────────────────
 
-describe('configuration view', () => {
-  it('toggles to the configuration view from the header control', async () => {
-    hydrate();
-    selectFocused();
-    render(<GolemPanel visible />);
-
-    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
-
-    expect(useGolemStore.getState().golemView).toBe('configuration');
-    expect(await screen.findByRole('heading', { name: /configuration/i })).toBeInTheDocument();
-    expect(await screen.findByText(/No models\.json was found/)).toBeInTheDocument();
-    expect(screen.queryByText('Golem returned an unexpected response.')).not.toBeInTheDocument();
-  });
-
+describe('configuration routing', () => {
   it('offers Review configuration from the unavailable state', async () => {
     hydrate({ available: false, initError: 'golem.yaml could not be read.' });
     selectFocused();
@@ -1613,40 +1606,13 @@ describe('configuration view', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /review configuration/i }));
 
-    expect(await screen.findByRole('heading', { name: /configuration/i })).toHaveFocus();
-  });
-
-  it('restores focus to the header toggle after closing the view', async () => {
-    hydrate();
-    selectFocused();
-    render(<GolemPanel visible />);
-
-    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
-    await screen.findByRole('heading', { name: /configuration/i });
-
-    await userEvent.click(screen.getByRole('button', { name: /back to chat/i }));
-
-    expect(useGolemStore.getState().golemView).toBe('chat');
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^configuration$/i })).toHaveFocus()
-    );
-  });
-
-  it('keeps a composer focus request alive until a composer exists', async () => {
-    hydrate();
-    selectFocused();
-    render(<GolemPanel visible />);
-
-    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
-    await screen.findByRole('heading', { name: /configuration/i });
-
-    // ⌘⇧I with the configuration view showing: there is no composer to focus,
-    // so the request has to wait rather than be consumed and dropped.
-    act(() => useGolemStore.getState().requestComposerFocus());
-
-    await userEvent.click(screen.getByRole('button', { name: /back to chat/i }));
-
-    await waitFor(() => expect(screen.getByLabelText('Message Golem')).toHaveFocus());
+    // The editor-area tab is the one configuration surface now (#271 D1): the
+    // panel keeps showing the chat, it does not swap itself out for a readout.
+    expect(useGolemStore.getState()).toMatchObject({
+      configTabOpen: true,
+      configTabFocused: true,
+    });
+    expect(screen.queryByRole('heading', { name: /configuration/i })).toBeNull();
   });
 });
 
@@ -1688,10 +1654,45 @@ describe('configuration workspace and command palette focus interplay', () => {
     await user.keyboard('{Enter}');
 
     expect(useGolemStore.getState().configTabOpen).toBe(true);
-    // The dock is untouched: the workspace tab is the surface the palette owns.
-    expect(useGolemStore.getState().golemView).toBe('chat');
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: 'Golem Configuration' })).toHaveFocus()
     );
+  });
+});
+
+// ── the GOLEM command bar (#271 Task A6) ─────────────────────────────────────
+
+describe('#271 command bar', () => {
+  it('renders the GOLEM bar and routes the gear to the configuration tab', () => {
+    render(<GolemPanel visible />);
+    expect(screen.getByRole('group', { name: 'Golem panel header' })).toBeInTheDocument();
+    expect(screen.getByText('GOLEM')).toBeInTheDocument();
+    // No hydrated destination: the chips row still says which machine it is,
+    // honestly, rather than dropping the classification badge entirely.
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Configuration' }));
+    expect(useGolemStore.getState()).toMatchObject({ configTabOpen: true, configTabFocused: true });
+    expect(useGitStore.getState().diffFocused).toBe(false);
+    // The in-panel readout is gone (D1): nothing switches the panel's view.
+    expect(screen.queryByRole('heading', { name: /configuration/i })).toBeNull();
+  });
+
+  it('collapses the island from the bar', () => {
+    useIDEStore.getState().revealCenterPanel('golem');
+    render(<GolemPanel visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Golem panel' }));
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+  });
+
+  it('keeps the connection details behind an accessible disclosure closed by Escape', async () => {
+    hydrate();
+    render(<GolemPanel visible />);
+    const summary = screen.getByText('Connection');
+    expect(screen.getByText('Context: prompt only')).not.toBeVisible();
+    await userEvent.click(summary);
+    expect(screen.getByText('Context: prompt only')).toBeVisible();
+    fireEvent.keyDown(summary, { key: 'Escape' });
+    expect(screen.getByText('Context: prompt only')).not.toBeVisible();
   });
 });

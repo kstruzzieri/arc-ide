@@ -607,7 +607,6 @@ const initialState = () => ({
   activityRevision: 0,
   lastFailureConversationId: null as string | null,
   failureRevision: 0,
-  golemView: 'chat' as GolemStoreState['golemView'],
   configTabOpen: false,
   configTabFocused: false,
   composerFocusRevision: 0,
@@ -1083,10 +1082,6 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
 
     requestComposerFocus() {
       set((state) => ({ composerFocusRevision: state.composerFocusRevision + 1 }));
-    },
-
-    setGolemView(view: GolemStoreState['golemView']) {
-      set({ golemView: view });
     },
 
     // One app-global tab: opening an already-open tab only re-focuses it.

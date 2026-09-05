@@ -254,8 +254,7 @@ it('golem-configuration opens and focuses the app-global configuration tab', () 
   expect(golem.configTabOpen).toBe(true);
   expect(golem.configTabFocused).toBe(true);
   // The editor-area tab is the surface now: the right panel keeps whatever the
-  // user had, and the dock stays on its own view.
-  expect(golem.golemView).toBe('chat');
+  // user had.
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
 });
 
