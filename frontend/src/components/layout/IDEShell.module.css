@@ -94,12 +94,54 @@
   flex-shrink: 0;
 }
 
+/* #271 center pair: the files column and the Golem island, in `centerOrder`
+   DOM order, with the seam (or its dead spacer) between them. */
+.centerPair {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Keyed wrapper so reorder moves a node instead of remounting a subtree; it
+   contributes no box of its own, so the panel and its rail stay direct flex
+   children of the pair. */
+.centerSlot {
+  display: contents;
+}
+
+/* A disabled seam still occupies the gap the budget accounts for. */
+.centerSpacer {
+  width: var(--panel-gap);
+  flex: none;
+}
+
 .centerArea {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.golemPanel {
+  width: var(--panel-golem-width);
+  flex: none;
+  min-width: 0;
+  background: var(--surface-panel);
+  border: 1px solid color-mix(in srgb, var(--accent-project) 22%, transparent);
+  border-radius: var(--panel-radius);
+  box-shadow: 0 0 22px rgba(56, 189, 248, 0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Files is a rail: the island takes the remaining center width and keeps its
+   preferred split width for the next time both panels are open. */
+.golemPanel[data-fill='true'] {
+  width: auto;
+  flex: 1;
 }
 
 .centerPanel {

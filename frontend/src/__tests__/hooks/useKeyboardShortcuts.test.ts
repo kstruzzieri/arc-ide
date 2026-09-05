@@ -1,7 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { getPlatform } from '../../utils/platform';
 import * as platform from '../../utils/platform';
-import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
+import { __resetGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 import { useSearchStore } from '../../stores/searchStore';
 
@@ -391,8 +391,10 @@ describe('useKeyboardShortcuts', () => {
         window.dispatchEvent(event);
       });
 
-      expect(useGolemStore.getState().panelMode).toBe('golem');
-      expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+      expect(useIDEStore.getState()).toMatchObject({
+        centerReveal: 'golem',
+        isGolemPanelCollapsed: false,
+      });
       // WKWebView and Chromium both claim Cmd/Ctrl+Shift+I for devtools.
       expect(event.defaultPrevented).toBe(true);
     });
@@ -404,7 +406,10 @@ describe('useKeyboardShortcuts', () => {
         window.dispatchEvent(golemEvent({ key: 'I' }));
       });
 
-      expect(useGolemStore.getState().panelMode).toBe('golem');
+      expect(useIDEStore.getState()).toMatchObject({
+        centerReveal: 'golem',
+        isGolemPanelCollapsed: false,
+      });
     });
 
     it('ignores plain I, a missing Shift, an Alt-modified chord, and the other platform modifier', () => {
@@ -420,8 +425,10 @@ describe('useKeyboardShortcuts', () => {
         events.forEach((event) => window.dispatchEvent(event));
       });
 
-      expect(useGolemStore.getState().panelMode).toBe('runs');
-      expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
+      expect(useIDEStore.getState()).toMatchObject({
+        centerReveal: 'files',
+        isGolemPanelCollapsed: true,
+      });
       events.forEach((event) => expect(event.defaultPrevented).toBe(false));
     });
   });

@@ -110,6 +110,8 @@
   --panel-left-width: 260px;
   --panel-right-width: 280px;
   --panel-bottom-height: 200px;
+  --panel-golem-width: 420px; /* #271 center island preferred width */
+  --panel-rail-width: 40px; /* #271 collapsed identity rail */
   --panel-gap: 6px;
   --panel-radius: 10px;
   --content-padding: 6px;

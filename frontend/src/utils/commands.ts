@@ -83,9 +83,7 @@ const openRightPanel = (): void => {
 };
 
 export function showRunProfiles(): void {
-  // Expanding is not enough now that the right panel has two modes: an expand
-  // alone would re-show whichever mode was last selected.
-  useGolemStore.getState().setPanelMode('runs');
+  // The dock is the Runs home now (#271); expanding it is the whole job.
   openRightPanel();
 }
 
@@ -97,15 +95,16 @@ export function showRunProfiles(): void {
 export function showGolem(conversationId?: string): void {
   const golem = useGolemStore.getState();
   if (conversationId) golem.selectConversation(conversationId);
-  golem.setPanelMode('golem');
-  golem.setGolemView('chat');
-  openRightPanel();
+  // Reveal through the effective layout: the transient target guarantees the
+  // island (not a rail) is what the budget keeps under window pressure.
+  useIDEStore.getState().revealCenterPanel('golem');
+  golem.requestComposerFocus();
 }
 
 /**
  * Opens — or refocuses — the one app-global Golem configuration tab in the
- * editor area (#263 spec §3.1). The dock's gear and its "Review configuration"
- * CTA still open the read-only dock readout; this command owns the workspace.
+ * editor area (#263 spec §3.1). The bar gear and the unavailable-state "Review
+ * configuration" CTA route here too (Task A6).
  */
 export function showGolemConfiguration(): void {
   focusConfigTab();

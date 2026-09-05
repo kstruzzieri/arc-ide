@@ -1,47 +1,74 @@
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { ToggleMaximize } from '../../wails/bindings';
 import {
   useIDEStore,
   useIsLeftPanelCollapsed,
   useIsRightPanelCollapsed,
   useIsBottomPanelCollapsed,
+  useCenterOrder,
+  useCenterReveal,
+  useIsFilesPanelCollapsed,
+  useIsGolemPanelCollapsed,
 } from '../../stores/ideStore';
 import type { WorkspaceAccent } from '../../stores/ideStore';
 import { CommandPalette } from '../CommandPalette';
+import { PanelRail } from './PanelRail';
 import { ResizeHandle } from './ResizeHandle';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
+import { useLayoutCssSync } from '../../hooks/useLayoutCssSync';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { createCommands } from '../../utils/commands';
+import {
+  CENTER_LIMITS,
+  HORIZONTAL_CHROME,
+  MIN_BOTTOM_HEIGHT,
+  MIN_SIDE_WIDTH,
+  computeBottomLayout,
+  computeCenterLayout,
+  computeSideMax,
+  computeSideWidths,
+  type CenterPanel,
+} from '../../utils/centerLayout';
+import { useGolemStore } from '../../stores/golemStore';
 import styles from './IDEShell.module.css';
 
-/** Maximum fraction of viewport a single panel may occupy */
-const MAX_PANEL_FRACTION = 0.4;
-/** Absolute ceiling in px (never exceed even on ultra-wide) */
-const MAX_PANEL_PX = 600;
-/** Minimum width reserved for the center editor */
-const MIN_CENTER_WIDTH = 200;
-/** Minimum panel size for horizontal panels */
-const MIN_PANEL_WIDTH = 180;
-/** Minimum panel size for bottom panel */
-const MIN_PANEL_HEIGHT = 100;
+/** Panels whose size is a draggable CSS variable. */
+type ResizePanel = 'left' | 'right' | 'bottom' | 'golem';
 
-/** Layout chrome dimensions matching CSS tokens */
-const SIDEBAR_WIDTH = 56; // --sidebar-width
-const HEADER_HEIGHT = 44; // --header-height
-const STATUSBAR_HEIGHT = 26; // --statusbar-height
-const CONTENT_PADDING = 6; // --content-padding (per side)
-const PANEL_GAP = 6; // --panel-gap (resize handle width)
+const CSS_VAR: Record<ResizePanel, string> = {
+  left: '--panel-left-width',
+  right: '--panel-right-width',
+  bottom: '--panel-bottom-height',
+  golem: '--panel-golem-width',
+};
 
-/** Horizontal layout overhead: left+right content padding + 2 horizontal resize handle gaps */
-const HORIZONTAL_OVERHEAD = CONTENT_PADDING * 2 + PANEL_GAP * 2;
-/** Vertical layout overhead: header + statusbar + top+bottom content padding + 1 vertical handle */
-const VERTICAL_OVERHEAD = HEADER_HEIGHT + STATUSBAR_HEIGHT + CONTENT_PADDING * 2 + PANEL_GAP;
+const CENTER_PANELS: readonly CenterPanel[] = ['files', 'golem'];
+
+/** A collapsed center panel keeps its tree mounted and merely leaves layout. */
+const HIDDEN = { display: 'none' } as const;
+
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface IDEShellProps {
   header: (openCommandPalette: () => void) => ReactNode;
   sidebar: ReactNode;
   leftPanel: ReactNode;
   centerPanel: ReactNode;
+  /**
+   * The Golem island's host. A render callback rather than a node because the
+   * host needs the *effective* visibility — a saved-open island is still a rail
+   * under window pressure — and that derived truth must not enter the store.
+   */
+  golemPanel: (visible: boolean) => ReactNode;
   rightPanel: ReactNode;
   bottomPanel: ReactNode;
   statusBar: ReactNode;
@@ -53,6 +80,7 @@ export function IDEShell({
   sidebar,
   leftPanel,
   centerPanel,
+  golemPanel,
   rightPanel,
   bottomPanel,
   statusBar,
@@ -68,6 +96,12 @@ export function IDEShell({
   const leftPanelSize = useIDEStore((s) => s.panelSizes.left);
   const rightPanelSize = useIDEStore((s) => s.panelSizes.right);
   const bottomPanelSize = useIDEStore((s) => s.panelSizes.bottom);
+  const golemPanelSize = useIDEStore((s) => s.panelSizes.golem);
+  const centerOrder = useCenterOrder();
+  const centerReveal = useCenterReveal();
+  const isGolemPanelCollapsed = useIsGolemPanelCollapsed();
+  const isFilesPanelCollapsed = useIsFilesPanelCollapsed();
+  const workspacePath = useIDEStore((s) => s.workspace?.path ?? null);
   const [isCommandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
   const { openFolder } = useOpenFolder();
@@ -101,46 +135,301 @@ export function IDEShell({
     ToggleMaximize();
   }, []);
 
-  // Dynamic max constraints: min of (absolute cap, fraction cap, available space), floored at min
-  const maxLeft = useMemo(() => {
-    const rightWidth = isRightPanelCollapsed ? 0 : rightPanelSize;
-    const available =
-      viewport.width - rightWidth - MIN_CENTER_WIDTH - SIDEBAR_WIDTH - HORIZONTAL_OVERHEAD;
-    return Math.max(
-      MIN_PANEL_WIDTH,
-      Math.min(MAX_PANEL_PX, viewport.width * MAX_PANEL_FRACTION, available)
-    );
-  }, [isRightPanelCollapsed, rightPanelSize, viewport.width]);
-
-  const maxRight = useMemo(() => {
-    const leftWidth = isLeftPanelCollapsed ? 0 : leftPanelSize;
-    const available =
-      viewport.width - leftWidth - MIN_CENTER_WIDTH - SIDEBAR_WIDTH - HORIZONTAL_OVERHEAD;
-    return Math.max(
-      MIN_PANEL_WIDTH,
-      Math.min(MAX_PANEL_PX, viewport.width * MAX_PANEL_FRACTION, available)
-    );
-  }, [isLeftPanelCollapsed, leftPanelSize, viewport.width]);
-
-  const maxBottom = useMemo(() => {
-    return Math.max(
-      MIN_PANEL_HEIGHT,
-      Math.min(MAX_PANEL_PX, viewport.height - VERTICAL_OVERHEAD - MIN_CENTER_WIDTH)
-    );
-  }, [viewport.height]);
-
-  const handleLeftResizeEnd = useCallback(
-    (size: number) => setPanelSize('left', size),
-    [setPanelSize]
+  /**
+   * The one in-flight gesture (#271). `size` is its live preview, which feeds
+   * the budget so peers give way before paint; `peer` is the other side's
+   * effective width read at gesture start, so a peer shrinking to make room
+   * cannot feed back into this gesture's own maximum.
+   */
+  const [active, setActive] = useState<{ panel: ResizePanel; size: number; peer: number } | null>(
+    null
   );
-  const handleRightResizeEnd = useCallback(
-    (size: number) => setPanelSize('right', size),
-    [setPanelSize]
+  /** Bumped on a cancelled gesture: the CSS var is ahead of the store. */
+  const [invalidationRevision, setInvalidationRevision] = useState(0);
+
+  const previewOf = (panel: ResizePanel, saved: number) =>
+    active?.panel === panel ? active.size : saved;
+
+  const sideWidths = computeSideWidths({
+    viewportWidth: viewport.width,
+    chrome: HORIZONTAL_CHROME,
+    preferred: {
+      left: previewOf('left', leftPanelSize),
+      right: previewOf('right', rightPanelSize),
+    },
+    collapsed: { left: isLeftPanelCollapsed, right: isRightPanelCollapsed },
+    active: active?.panel === 'left' || active?.panel === 'right' ? active.panel : undefined,
+  });
+
+  const center = computeCenterLayout({
+    viewportWidth: viewport.width,
+    chrome: HORIZONTAL_CHROME,
+    sideWidths,
+    prefs: {
+      centerOrder,
+      golemWidth: previewOf('golem', golemPanelSize),
+      isGolemPanelCollapsed,
+      isFilesPanelCollapsed,
+    },
+    reveal: centerReveal,
+    limits: CENTER_LIMITS,
+  });
+
+  const bottom = computeBottomLayout(viewport.height, previewOf('bottom', bottomPanelSize));
+
+  const maxLeft = computeSideMax(
+    viewport.width,
+    HORIZONTAL_CHROME,
+    active?.panel === 'left' ? active.peer : sideWidths.right
   );
-  const handleBottomResizeEnd = useCallback(
-    (size: number) => setPanelSize('bottom', size),
-    [setPanelSize]
+  const maxRight = computeSideMax(
+    viewport.width,
+    HORIZONTAL_CHROME,
+    active?.panel === 'right' ? active.peer : sideWidths.left
   );
+
+  // Effective sizes reach the CSS variables here, never through the store: a
+  // restore, a clamp, or a peer giving way must land without a drag. The one
+  // variable a live gesture owns is left to `useResize`.
+  useLayoutCssSync(
+    {
+      left: sideWidths.left,
+      right: sideWidths.right,
+      bottom: bottom.height,
+      golem: center.golemWidth,
+    },
+    active ? CSS_VAR[active.panel] : null,
+    invalidationRevision
+  );
+
+  const peers: Record<ResizePanel, number> = {
+    left: sideWidths.right,
+    right: sideWidths.left,
+    bottom: 0,
+    golem: 0,
+  };
+  const peersLeft = peers.left;
+  const peersRight = peers.right;
+
+  const resize = useMemo(() => {
+    const make = (panel: ResizePanel) => ({
+      onResizeStart: (size: number) =>
+        setActive({ panel, size, peer: panel === 'left' ? peersLeft : peersRight }),
+      onResizePreview: (size: number) =>
+        setActive((previous) =>
+          previous && previous.panel === panel ? { ...previous, size } : previous
+        ),
+      onResizeEnd: (size: number) => {
+        setActive(null);
+        setPanelSize(panel, size);
+      },
+      onResizeCancel: () => {
+        setActive(null);
+        // The inline CSS variable is whatever the abandoned drag last wrote, so
+        // the sync hook has to rewrite it even though its desired value never
+        // moved.
+        setInvalidationRevision((revision) => revision + 1);
+      },
+    });
+    return {
+      left: make('left'),
+      right: make('right'),
+      bottom: make('bottom'),
+      golem: make('golem'),
+    };
+  }, [peersLeft, peersRight, setPanelSize]);
+
+  // Everything that redefines the layout underneath an in-flight gesture, and
+  // nothing this gesture itself produces.
+  const invalidationKey = [
+    viewport.width,
+    viewport.height,
+    centerOrder,
+    centerReveal,
+    isLeftPanelCollapsed,
+    isRightPanelCollapsed,
+    isBottomPanelCollapsed,
+    isGolemPanelCollapsed,
+    isFilesPanelCollapsed,
+    workspacePath ?? '',
+  ].join('|');
+
+  // ── Center-pair focus ownership (spec §2.4) ────────────────────────────────
+  const pairRef = useRef<HTMLDivElement>(null);
+  const filesRootRef = useRef<HTMLDivElement>(null);
+  const golemRootRef = useRef<HTMLElement>(null);
+  const lastFocused = useRef<Record<CenterPanel, HTMLElement | null>>({ files: null, golem: null });
+  const lastFocusedPanel = useRef<CenterPanel | null>(null);
+  const lastFocusedInPair = useRef<HTMLElement | null>(null);
+  const rootOf = useCallback(
+    (panel: CenterPanel): HTMLElement | null =>
+      panel === 'files' ? filesRootRef.current : golemRootRef.current,
+    []
+  );
+
+  useEffect(() => {
+    const node = pairRef.current;
+    if (!node) return;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      lastFocusedInPair.current = target;
+      const panel = CENTER_PANELS.find((candidate) => rootOf(candidate)?.contains(target));
+      lastFocusedPanel.current = panel ?? null;
+      if (panel) lastFocused.current[panel] = target;
+    };
+    node.addEventListener('focusin', onFocusIn);
+    return () => node.removeEventListener('focusin', onFocusIn);
+  }, [rootOf]);
+
+  const previousLayout = useRef({
+    files: center.filesCollapsed,
+    golem: center.golemCollapsed,
+    preferredFiles: isFilesPanelCollapsed,
+    preferredGolem: isGolemPanelCollapsed,
+    reveal: centerReveal,
+    order: centerOrder,
+  });
+
+  useLayoutEffect(() => {
+    const previous = previousLayout.current;
+    previousLayout.current = {
+      files: center.filesCollapsed,
+      golem: center.golemCollapsed,
+      preferredFiles: isFilesPanelCollapsed,
+      preferredGolem: isGolemPanelCollapsed,
+      reveal: centerReveal,
+      order: centerOrder,
+    };
+
+    // Moving a DOM node drops the focus it held, so a reorder restores the
+    // control the user was on by identity once the move has committed.
+    if (previous.order !== centerOrder) {
+      const held = lastFocusedInPair.current;
+      if (held?.isConnected && document.activeElement !== held) held.focus();
+    }
+
+    for (const panel of CENTER_PANELS) {
+      const collapsed = panel === 'files' ? center.filesCollapsed : center.golemCollapsed;
+      if (collapsed === previous[panel]) continue;
+      const root = rootOf(panel);
+      const preferredCollapsed = panel === 'files' ? isFilesPanelCollapsed : isGolemPanelCollapsed;
+      const wasPreferredCollapsed =
+        panel === 'files' ? previous.preferredFiles : previous.preferredGolem;
+
+      if (collapsed) {
+        // An explicit collapse always hands focus to the rail that replaced the
+        // panel. Automatic degradation only does so when the focus it just hid
+        // would otherwise be lost to the document body.
+        const explicit = preferredCollapsed && !wasPreferredCollapsed;
+        if (explicit || focusWasIn(root, panel, lastFocusedPanel.current)) {
+          pairRef.current?.querySelector<HTMLElement>(`button[data-panel="${panel}"]`)?.focus();
+        }
+        continue;
+      }
+
+      // Automatic widening never steals focus; only a preference change or an
+      // explicit reveal of this panel does.
+      const explicitExpand =
+        (wasPreferredCollapsed && !preferredCollapsed) ||
+        (centerReveal === panel && previous.reveal !== panel);
+      if (!explicitExpand || !root) continue;
+      if (root.contains(document.activeElement)) continue;
+      const remembered = lastFocused.current[panel];
+      if (remembered?.isConnected && root.contains(remembered) && !isDisabled(remembered)) {
+        remembered.focus();
+        if (document.activeElement === remembered) continue;
+      }
+      (root.querySelector<HTMLElement>(FOCUSABLE) ?? root).focus();
+    }
+  }, [
+    center.filesCollapsed,
+    center.golemCollapsed,
+    centerOrder,
+    centerReveal,
+    isFilesPanelCollapsed,
+    isGolemPanelCollapsed,
+    rootOf,
+  ]);
+
+  const expandCenter = useCallback((panel: CenterPanel) => {
+    useIDEStore.getState().revealCenterPanel(panel);
+    // Revealing the chat is a request to type in it; the hidden mount consumes
+    // the request only once it is actually visible.
+    if (panel === 'golem') useGolemStore.getState().requestComposerFocus();
+  }, []);
+  const expandFiles = useCallback(() => expandCenter('files'), [expandCenter]);
+  const expandGolem = useCallback(() => expandCenter('golem'), [expandCenter]);
+
+  const filesSlot = (
+    <div key="files" className={styles.centerSlot}>
+      <div
+        ref={filesRootRef}
+        className={styles.centerArea}
+        data-center-panel="files"
+        tabIndex={-1}
+        style={center.filesCollapsed ? HIDDEN : undefined}
+      >
+        <section className={styles.centerPanel} aria-label="Files">
+          {centerPanel}
+        </section>
+        <ResizeHandle
+          direction="vertical"
+          cssVar="--panel-bottom-height"
+          min={MIN_BOTTOM_HEIGHT}
+          max={bottom.max}
+          inverted
+          isCollapsed={isBottomPanelCollapsed}
+          onToggleCollapse={toggleBottomPanel}
+          collapseDirection="down"
+          panelSize={bottom.height}
+          invalidationKey={invalidationKey}
+          {...resize.bottom}
+        />
+        {!isBottomPanelCollapsed && <section className={styles.bottomPanel}>{bottomPanel}</section>}
+      </div>
+      {center.filesCollapsed && <PanelRail panel="files" onExpand={expandFiles} />}
+    </div>
+  );
+
+  const golemSlot = (
+    <div key="golem" className={styles.centerSlot}>
+      <section
+        ref={golemRootRef}
+        className={styles.golemPanel}
+        data-center-panel="golem"
+        data-fill={center.filesCollapsed ? 'true' : undefined}
+        aria-label="Golem"
+        tabIndex={-1}
+        style={center.golemCollapsed ? HIDDEN : undefined}
+      >
+        {golemPanel(!center.golemCollapsed)}
+      </section>
+      {center.golemCollapsed && <PanelRail panel="golem" onExpand={expandGolem} />}
+    </div>
+  );
+
+  // A dead seam is a plain spacer, not a ResizeHandle wearing a collapse
+  // chevron: the rail beside it already owns the one expand action.
+  const seam = center.seamEnabled ? (
+    <ResizeHandle
+      key="center-seam"
+      direction="horizontal"
+      cssVar="--panel-golem-width"
+      min={CENTER_LIMITS.minGolem}
+      max={center.maxGolemWidth}
+      inverted={centerOrder === 'files-first'}
+      panelSize={center.golemWidth}
+      invalidationKey={invalidationKey}
+      {...resize.golem}
+    />
+  ) : (
+    <div key="center-seam" className={styles.centerSpacer} aria-hidden="true" />
+  );
+
+  const slots = { files: filesSlot, golem: golemSlot };
+  const order: CenterPanel[] =
+    centerOrder === 'files-first' ? ['files', 'golem'] : ['golem', 'files'];
 
   return (
     <div
@@ -149,6 +438,8 @@ export function IDEShell({
       data-left-collapsed={isLeftPanelCollapsed || undefined}
       data-right-collapsed={isRightPanelCollapsed || undefined}
       data-bottom-collapsed={isBottomPanelCollapsed || undefined}
+      data-files-collapsed={center.filesCollapsed || undefined}
+      data-golem-collapsed={center.golemCollapsed || undefined}
     >
       <a className={styles.skipLink} href="#main-content">
         Skip to main content
@@ -162,43 +453,30 @@ export function IDEShell({
         <ResizeHandle
           direction="horizontal"
           cssVar="--panel-left-width"
-          min={MIN_PANEL_WIDTH}
+          min={MIN_SIDE_WIDTH}
           max={maxLeft}
           isCollapsed={isLeftPanelCollapsed}
           onToggleCollapse={toggleLeftPanel}
           collapseDirection="left"
-          onResizeEnd={handleLeftResizeEnd}
-          panelSize={leftPanelSize}
+          panelSize={sideWidths.left}
+          invalidationKey={invalidationKey}
+          {...resize.left}
         />
-        <div className={styles.centerArea}>
-          <section className={styles.centerPanel}>{centerPanel}</section>
-          <ResizeHandle
-            direction="vertical"
-            cssVar="--panel-bottom-height"
-            min={MIN_PANEL_HEIGHT}
-            max={maxBottom}
-            inverted
-            isCollapsed={isBottomPanelCollapsed}
-            onToggleCollapse={toggleBottomPanel}
-            collapseDirection="down"
-            onResizeEnd={handleBottomResizeEnd}
-            panelSize={bottomPanelSize}
-          />
-          {!isBottomPanelCollapsed && (
-            <section className={styles.bottomPanel}>{bottomPanel}</section>
-          )}
+        <div className={styles.centerPair} ref={pairRef}>
+          {[slots[order[0]], seam, slots[order[1]]]}
         </div>
         <ResizeHandle
           direction="horizontal"
           cssVar="--panel-right-width"
-          min={MIN_PANEL_WIDTH}
+          min={MIN_SIDE_WIDTH}
           max={maxRight}
           inverted
           isCollapsed={isRightPanelCollapsed}
           onToggleCollapse={toggleRightPanel}
           collapseDirection="right"
-          onResizeEnd={handleRightResizeEnd}
-          panelSize={rightPanelSize}
+          panelSize={sideWidths.right}
+          invalidationKey={invalidationKey}
+          {...resize.right}
         />
         {!isRightPanelCollapsed && <section className={styles.rightPanel}>{rightPanel}</section>}
       </main>
@@ -211,3 +489,21 @@ export function IDEShell({
     </div>
   );
 }
+
+const isDisabled = (element: HTMLElement): boolean =>
+  element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true';
+
+/**
+ * Whether focus lived in a panel that has just been hidden. A browser blurs the
+ * element the moment it stops rendering, so the recorded owner plus a focus that
+ * has fallen back to the document is as much evidence as remains.
+ */
+const focusWasIn = (
+  root: HTMLElement | null,
+  panel: CenterPanel,
+  owner: CenterPanel | null
+): boolean => {
+  const activeElement = document.activeElement;
+  if (root && activeElement instanceof HTMLElement && root.contains(activeElement)) return true;
+  return owner === panel && (activeElement === null || activeElement === document.body);
+};

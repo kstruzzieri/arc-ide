@@ -607,9 +607,6 @@ const initialState = () => ({
   activityRevision: 0,
   lastFailureConversationId: null as string | null,
   failureRevision: 0,
-  // Preserve today's panel: Golem is opt-in, and once chosen it stays chosen
-  // for the rest of the process.
-  panelMode: 'runs' as GolemStoreState['panelMode'],
   golemView: 'chat' as GolemStoreState['golemView'],
   configTabOpen: false,
   configTabFocused: false,
@@ -1084,14 +1081,8 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       });
     },
 
-    setPanelMode(mode: GolemStoreState['panelMode']) {
-      // Showing the chat is a request to type in it, so the same action that
-      // reveals the panel arms the composer; Runs has no composer to focus.
-      set((state) => ({
-        panelMode: mode,
-        composerFocusRevision:
-          mode === 'golem' ? state.composerFocusRevision + 1 : state.composerFocusRevision,
-      }));
+    requestComposerFocus() {
+      set((state) => ({ composerFocusRevision: state.composerFocusRevision + 1 }));
     },
 
     setGolemView(view: GolemStoreState['golemView']) {

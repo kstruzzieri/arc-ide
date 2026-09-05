@@ -173,21 +173,18 @@ test('shows search by selecting and expanding the sidebar, then focusing its inp
   expect(useSearchStore.getState().focusInputRevision).toBe(1);
 });
 
-test('shows run profiles by expanding only the right panel, in Runs mode', () => {
+test('shows run profiles by expanding only the right panel', () => {
   useIDEStore.setState({
     activeSidebarView: 'git',
     isLeftPanelCollapsed: true,
     isRightPanelCollapsed: true,
   });
-  useGolemStore.setState({ panelMode: 'golem' });
 
   commandById('show-run-profiles').run();
 
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
   expect(useIDEStore.getState().activeSidebarView).toBe('git');
   expect(useIDEStore.getState().isLeftPanelCollapsed).toBe(true);
-  // Expanding the panel is not enough: it would have re-shown Golem.
-  expect(useGolemStore.getState().panelMode).toBe('runs');
 });
 
 const golemStatus = (conversationId: string, workspaceId: string) =>
@@ -200,28 +197,27 @@ const golemStatus = (conversationId: string, workspaceId: string) =>
   });
 
 describe('showGolem', () => {
-  it('shows the Golem panel, expanding the right panel and focusing the composer', () => {
-    useIDEStore.setState({ isRightPanelCollapsed: true, activeSidebarView: 'git' });
-    useGolemStore.getState().setGolemView('configuration');
+  it('reveals the Golem island and arms the composer', () => {
+    useIDEStore.setState({ activeSidebarView: 'git' });
     const focusBefore = useGolemStore.getState().composerFocusRevision;
 
     commandById('show-golem').run();
 
-    expect(useGolemStore.getState().panelMode).toBe('golem');
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
     expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
-    // Only the right panel: the sidebar is not this command's business.
+    // Only the center pair: the sidebar is not this command's business.
     expect(useIDEStore.getState().activeSidebarView).toBe('git');
-    // Lands on chat, not whatever view was persisted before (e.g. configuration).
-    expect(useGolemStore.getState().golemView).toBe('chat');
   });
 
-  it('leaves an already-expanded right panel open', () => {
-    useIDEStore.setState({ isRightPanelCollapsed: false });
+  it('leaves the Runs dock exactly as the user left it', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true });
 
     showGolem();
 
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
   });
 
   it('selects the named conversation without disturbing the IDE workspace', () => {
@@ -233,7 +229,10 @@ describe('showGolem', () => {
     showGolem('conv-b');
 
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-b');
-    expect(useGolemStore.getState().panelMode).toBe('golem');
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
     expect(useIDEStore.getState().activeWorkspaceId).toBe('frontend');
   });
 
@@ -260,13 +259,11 @@ it('golem-configuration opens and focuses the app-global configuration tab', () 
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
 });
 
-test('showRunProfiles is exported for direct use and switches modes', () => {
-  useGolemStore.setState({ panelMode: 'golem' });
+test('showRunProfiles is exported for direct use and expands the dock', () => {
   useIDEStore.setState({ isRightPanelCollapsed: true });
 
   showRunProfiles();
 
-  expect(useGolemStore.getState().panelMode).toBe('runs');
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
 });
 

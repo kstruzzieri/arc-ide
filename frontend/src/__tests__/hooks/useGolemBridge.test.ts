@@ -216,13 +216,13 @@ describe('subscriptions', () => {
     expect(liveListeners('golem:status-changed')).toBe(1);
   });
 
-  it('keeps its listeners while the panel is collapsed or showing Runs', async () => {
+  it('keeps its listeners while the Golem island is a rail', async () => {
     renderHook(() => useGolemBridge());
     openRepository();
     await settle();
 
     act(() => {
-      useGolemStore.setState({ panelMode: 'runs' });
+      useIDEStore.getState().setGolemPanelCollapsed(true);
     });
     emit('golem:event', eventPayload({ seq: 1 }));
 

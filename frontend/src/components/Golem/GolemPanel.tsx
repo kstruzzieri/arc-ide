@@ -406,7 +406,16 @@ const PIN_SLACK = 4;
 /** Composer auto-grow ceiling, in px, past which the field scrolls. */
 const COMPOSER_MAX_HEIGHT = 160;
 
-export function GolemPanel() {
+interface GolemPanelProps {
+  /**
+   * The shell's *effective* visibility (#271). Not the saved collapse flag: a
+   * saved-open island is still a rail under window pressure, and a hidden mount
+   * must neither steal focus nor try to measure itself.
+   */
+  visible: boolean;
+}
+
+export function GolemPanel({ visible }: GolemPanelProps) {
   const conversations = useGolemStore((state) => state.conversations);
   const selectedConversationId = useGolemStore((state) => state.selectedConversationId);
   const hydratedIdentity = useGolemStore((state) => state.hydratedIdentity);
@@ -558,14 +567,29 @@ export function GolemPanel() {
         : 'Golem is working.'
       : '';
 
-  // Deliberately every mount, not only a changed revision: the panel unmounts
-  // whenever the right panel collapses or shows Runs, so this effect is the
-  // whole of the ⌘⇧I focus path. The cost is that clicking the Golem tab also
-  // moves focus out of the tablist, because `setPanelMode` is the one signal
-  // both paths raise; the shortcut is the one that has to keep working.
+  // The island stays mounted through collapse now (#271), so focus follows an
+  // explicit request rather than a mount: only a *changed* revision arms the
+  // composer, and only the visible host consumes it. A request raised while the
+  // panel is a rail waits here until the panel is shown, so ⌘⇧I still lands;
+  // becoming visible on its own (a widened window, a restore) never does.
+  const consumedFocusRevision = useRef(composerFocusRevision);
   useEffect(() => {
+    if (!visible || consumedFocusRevision.current === composerFocusRevision) return;
+    consumedFocusRevision.current = composerFocusRevision;
     composerRef.current?.focus();
-  }, [composerFocusRevision]);
+  }, [composerFocusRevision, visible]);
+
+  // A hidden pane cannot be measured or scrolled, so becoming visible re-pins
+  // the transcript to the newest row and re-fits the composer — without focus.
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const element = transcriptRef.current;
+    if (element && pinnedRef.current) element.scrollTop = element.scrollHeight;
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = 'auto';
+    composer.style.height = `${Math.min(composer.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  }, [visible]);
 
   // Fires only after the chat view (and its header toggle) has remounted, so
   // the pending flag from `onClose` below survives the unmount in between.

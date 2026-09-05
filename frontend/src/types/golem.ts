@@ -174,7 +174,6 @@ export interface GolemStoreState {
   activityRevision: number;
   lastFailureConversationId: string | null;
   failureRevision: number;
-  panelMode: 'golem' | 'runs'; // initialize to 'runs'
   golemView: 'chat' | 'configuration'; // panel-level view; initialize to 'chat'
   setGolemView(view: GolemStoreState['golemView']): void;
   /**
@@ -189,13 +188,14 @@ export interface GolemStoreState {
   closeConfigTab(): void;
   setConfigTabFocused(focused: boolean): void;
   composerFocusRevision: number;
+  /** Arms the composer of the visible Golem host (replaces setPanelMode's bump). */
+  requestComposerFocus(): void;
   hydrateStatus(status: GolemStatus): void;
   invalidateBinding(): void;
   ingestEvent(value: unknown): void;
   ingestRunStatus(value: unknown): void;
   selectConversation(conversationId: string): void;
   clearConversation(conversationId: string): void;
-  setPanelMode(mode: GolemStoreState['panelMode']): void;
   setDraft(conversationId: string, value: string): void;
   submitTurn(conversationId: string): Promise<void>;
   allowAndSend(conversationId: string): Promise<void>;

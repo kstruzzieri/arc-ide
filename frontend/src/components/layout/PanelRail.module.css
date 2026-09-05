@@ -1,0 +1,95 @@
+/* #271 spec §2.4 — collapsed identity rails. Hue-keyed like the bars:
+   FILES = --files-key (Task A5 adds it; falls back to the go accent literal
+   until then), GOLEM = the pinned project accent. */
+.rail {
+  --rail-key: var(--files-key, #12b5cd);
+  --rail-key-glow: var(--files-key-glow, rgba(18, 181, 205, 0.3));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: var(--panel-rail-width);
+  flex: none;
+  padding: 10px 0;
+  border: 1px solid color-mix(in srgb, var(--rail-key) 35%, transparent);
+  border-radius: var(--panel-radius);
+  background: var(--surface-panel);
+  color: var(--rail-key);
+  cursor: pointer;
+  font: inherit;
+}
+
+.rail[data-panel='golem'] {
+  --rail-key: var(--accent-project);
+  --rail-key-glow: rgba(56, 189, 248, 0.25);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.08);
+}
+
+.rail:hover {
+  background: var(--surface-hover);
+}
+
+.rail:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.glyph {
+  display: flex;
+  width: 20px;
+  height: 20px;
+}
+
+.glyph svg,
+.glyph img {
+  width: 20px;
+  height: 20px;
+}
+
+.rail[data-panel='golem'] .glyph img {
+  filter: drop-shadow(0 0 5px var(--rail-key-glow));
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-project);
+  box-shadow: 0 0 7px var(--accent-project);
+}
+
+.rail[data-attention='approval'] .dot {
+  background: var(--status-warning);
+  box-shadow: 0 0 7px var(--status-warning);
+}
+
+.label {
+  writing-mode: vertical-rl;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  opacity: 0.85;
+}
+
+.chevron {
+  margin-top: auto;
+  display: flex;
+  color: var(--text-secondary);
+}
+
+.chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.rail[data-side='right'] .chevron svg {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail,
+  .dot {
+    transition: none;
+    animation: none;
+  }
+}

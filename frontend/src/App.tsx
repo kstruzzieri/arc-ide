@@ -2,7 +2,8 @@ import './styles/tokens.css';
 import './styles/reset.css';
 import { useCallback, useEffect, useRef } from 'react';
 import { IDEShell } from './components/layout';
-import { RightPanel } from './components/layout/RightPanel';
+import { RunProfiles } from './components/RunProfiles';
+import { GolemPanel } from './components/Golem';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
@@ -61,9 +62,9 @@ function App() {
   // Own run-event capture at the always-mounted App so collapsing the bottom
   // panel (which unmounts Terminal) cannot drop run output or history (#235).
   useRunOutputListener();
-  // Same reason as run output: the Golem chat panel unmounts when the right
-  // panel collapses or switches to Runs, so the event bridge and the repository
-  // binding it owns live at the always-mounted App instead (#226).
+  // The Golem island stays mounted now (#271), but the bridge and the
+  // repository binding it owns still live at the always-mounted App: they are
+  // app-level, not panel-level.
   useGolemBridge();
   useWorkspaceDetection();
   useLSPDocumentSync();
@@ -199,8 +200,9 @@ function App() {
           )
         }
         centerPanel={<Editor />}
+        golemPanel={(visible) => <GolemPanel visible={visible} />}
         bottomPanel={<Terminal />}
-        rightPanel={<RightPanel />}
+        rightPanel={<RunProfiles />}
         statusBar={<StatusBar />}
       />
       <Toast />

@@ -768,8 +768,7 @@ describe('bridge lifecycle and hydration', () => {
     expect(conv().runs[RUN_A].phase).toBe('running');
   });
 
-  it('starts unbound with the Runs panel preserved', () => {
-    expect(store().panelMode).toBe('runs');
+  it('starts unbound with nothing hydrated', () => {
     expect(store().bridgePhase).toBe('unbound');
     expect(store().hydratedIdentity).toBeNull();
     expect(store().conversations).toEqual({});
@@ -1138,15 +1137,20 @@ describe('submitTurn', () => {
     expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
   });
 
-  it('preserves the draft across Runs mode and a collapsed panel', () => {
+  it('preserves the draft across a collapsed panel', () => {
     hydrateReady();
     store().setDraft(CONV, 'still here');
-    useGolemStore.setState({ panelMode: 'runs' });
     expect(conv().draft).toBe('still here');
     const revision = store().composerFocusRevision;
     store().selectConversation(CONV);
     expect(store().composerFocusRevision).toBeGreaterThan(revision);
     expect(conv().draft).toBe('still here');
+  });
+
+  it('requestComposerFocus bumps the revision by exactly one', () => {
+    const revision = store().composerFocusRevision;
+    store().requestComposerFocus();
+    expect(store().composerFocusRevision).toBe(revision + 1);
   });
 });
 

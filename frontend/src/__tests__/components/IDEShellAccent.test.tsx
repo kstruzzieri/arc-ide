@@ -43,6 +43,7 @@ const createShell = (accent?: 'project' | 'general') => (
     sidebar={<div />}
     leftPanel={<div />}
     centerPanel={<div />}
+    golemPanel={() => <div />}
     bottomPanel={<div />}
     rightPanel={<div />}
     statusBar={<div />}
@@ -57,6 +58,7 @@ it('applies data-accent="general"', () => {
       sidebar={<div />}
       leftPanel={<div />}
       centerPanel={<div />}
+      golemPanel={() => <div />}
       bottomPanel={<div />}
       rightPanel={<div />}
       statusBar={<div />}
@@ -72,6 +74,7 @@ it('renders a skip link before the shell chrome and a focusable main target', ()
       sidebar={<div />}
       leftPanel={<div />}
       centerPanel={<div />}
+      golemPanel={() => <div />}
       bottomPanel={<div />}
       rightPanel={<div />}
       statusBar={<div />}

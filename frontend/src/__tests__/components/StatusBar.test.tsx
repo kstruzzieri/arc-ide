@@ -248,9 +248,8 @@ describe('StatusBar Golem segment', () => {
     expect(golemSegment()).toHaveTextContent('Golem: Idle');
   });
 
-  it('stays mounted while the right panel is collapsed and showing Runs', () => {
-    useIDEStore.setState({ isRightPanelCollapsed: true });
-    useGolemStore.setState({ panelMode: 'runs' });
+  it('stays mounted while the Golem island is a rail and the dock is collapsed', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true, isGolemPanelCollapsed: true });
     render(<StatusBar />);
 
     expect(golemSegment()).toBeInTheDocument();
@@ -332,8 +331,10 @@ describe('StatusBar Golem segment', () => {
     fireEvent.click(golemSegment());
 
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-backend');
-    expect(useGolemStore.getState().panelMode).toBe('golem');
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
   });
 
   it('prioritizes canceling, then approval, then running and routes each mixed state', () => {
@@ -479,8 +480,10 @@ describe('StatusBar Golem segment', () => {
 
     fireEvent.click(golemSegment());
 
-    expect(useGolemStore.getState().panelMode).toBe('golem');
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-infra');
   });
 
@@ -524,7 +527,8 @@ describe('StatusBar Golem segment', () => {
     fireEvent.click(golemSegment());
 
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-backend');
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    // The dock is Runs' home now (#271): revealing the chat never touches it.
+    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
   });
 
   it('opens the panel from idle without inventing a conversation', () => {
@@ -533,8 +537,10 @@ describe('StatusBar Golem segment', () => {
 
     fireEvent.click(golemSegment());
 
-    expect(useGolemStore.getState().panelMode).toBe('golem');
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
     expect(useGolemStore.getState().selectedConversationId).toBeNull();
   });
 
