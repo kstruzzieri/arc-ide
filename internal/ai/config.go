@@ -205,9 +205,13 @@ type providerTarget struct {
 var requiredAgentCaps = agent.ModelCallCapabilities(true)
 
 // ResolveAgentTarget resolves the single agent destination from cfg: the
-// "agent" use-case's primary model and provider only. ModelConfig.Fallbacks
-// are ignored completely — there is no fallback walking, so consent decisions
-// bind to exactly one destination. No network or DNS call is made.
+// "agent" use-case's primary model and provider only. The chat run path's
+// caller (fixedModelCaller) is physically single-target — the primary IS
+// that consumer's complete reachable set — so its consent decision binds to
+// exactly one destination. Multi-destination reachability (fallback chains,
+// recommendation routing) is governed by reachableDestinations, the batch
+// apply challenge, the grant-only approval op, and the generator's
+// DestinationPolicy, not here. No network or DNS call is made.
 func ResolveAgentTarget(cfg *config.Config) (providerTarget, error) {
 	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {

@@ -1605,6 +1605,77 @@ func TestServiceConsentRaces(t *testing.T) {
 	})
 }
 
+// TestServiceGrantedPrimaryUngrantedFallback is a tripwire test that verifies
+// the run gate only checks the primary destination, ignoring any configured
+// fallback (which is UNGRANTED). PASS today means the design is correct: the
+// primary IS the consumer's complete reachable set (no fallback walking during
+// runs).
+func TestServiceGrantedPrimaryUngrantedFallback(t *testing.T) {
+	endpoint, _ := startCountingServer(t)
+	h := newServiceHarness(t, endpoint)
+	repoID, _ := h.bind(t)
+	ctx := context.Background()
+
+	// Get the consent challenge for the primary.
+	id := runIdentityFor(repoID, "project")
+	adm, err := h.svc.StartTurn(ctx, turnFor(id))
+	if err != nil || adm.State != "needs_consent" {
+		t.Fatalf("first turn = %+v, %v", adm, err)
+	}
+	chID := adm.ConsentChallenge.ID
+
+	// The challenge destination must be the primary only (hosted/wire-model),
+	// not any fallback (which would be spare/spare-model).
+	if adm.ConsentChallenge.Destination.Provider != "hosted" ||
+		adm.ConsentChallenge.Destination.Model != "wire-model" {
+		t.Fatalf("challenge destination = %+v, want hosted/wire-model",
+			adm.ConsentChallenge.Destination)
+	}
+
+	// Accept the challenge, granting the primary destination.
+	retry := turnFor(id)
+	retry.ConsentChallengeID = chID
+	acc, err := h.svc.StartTurn(ctx, retry)
+	if err != nil || acc.State != "accepted" {
+		t.Fatalf("grant retry = %+v, %v", acc, err)
+	}
+	drainRuns(t, h.svc)
+
+	// Verify the grant persisted.
+	if got := consentGrantCount(t, h.consentPath); got != 1 {
+		t.Fatalf("persisted grants = %d, want 1", got)
+	}
+
+	// Start a new run (different RunID) with the same workspace.
+	// The primary is granted, so no challenge is raised.
+	next := runIdentityFor(repoID, "project")
+	adm2, err := h.svc.StartTurn(ctx, turnFor(next))
+	if err != nil {
+		t.Fatalf("new turn after grant = %+v, %v", adm2, err)
+	}
+	if adm2.State != "accepted" {
+		t.Fatalf("new turn state = %q, want accepted", adm2.State)
+	}
+	if adm2.ConsentChallenge != nil {
+		t.Fatal("new turn raised ConsentChallenge despite granted primary")
+	}
+	drainRuns(t, h.svc)
+
+	// Status must also reflect that consent is no longer needed.
+	st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch,
+		WorkspaceID: "project"})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.NeedsConsent {
+		t.Fatalf("Status.NeedsConsent = true after grant")
+	}
+	if st.ConsentChallenge != nil {
+		t.Fatalf("Status.ConsentChallenge = %+v after grant, want nil",
+			st.ConsentChallenge)
+	}
+}
+
 func TestServiceLocalTargetNoChallenge(t *testing.T) {
 	endpoint, requests := startLocalCountingServer(t)
 	h := newServiceHarness(t, endpoint)
