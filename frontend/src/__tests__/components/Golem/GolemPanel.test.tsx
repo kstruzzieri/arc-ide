@@ -1631,6 +1631,23 @@ describe('configuration view', () => {
       expect(screen.getByRole('button', { name: /^configuration$/i })).toHaveFocus()
     );
   });
+
+  it('keeps a composer focus request alive until a composer exists', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel visible />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
+    await screen.findByRole('heading', { name: /configuration/i });
+
+    // ⌘⇧I with the configuration view showing: there is no composer to focus,
+    // so the request has to wait rather than be consumed and dropped.
+    act(() => useGolemStore.getState().requestComposerFocus());
+
+    await userEvent.click(screen.getByRole('button', { name: /back to chat/i }));
+
+    await waitFor(() => expect(screen.getByLabelText('Message Golem')).toHaveFocus());
+  });
 });
 
 // ── command palette focus interplay ──────────────────────────────────────────

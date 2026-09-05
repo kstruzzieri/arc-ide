@@ -190,10 +190,12 @@ describe('computeCenterLayout', () => {
           preferred,
           collapsed: { left, right },
         });
-        // A user-collapsed side is the only zero; a visible one keeps its minimum.
-        expect(sideWidths.left).toBe(left ? 0 : sideWidths.left);
-        if (!left) expect(sideWidths.left).toBeGreaterThanOrEqual(180);
-        if (!right) expect(sideWidths.right).toBeGreaterThanOrEqual(180);
+        // A user-collapsed side is the only zero; a visible one is clamped to the
+        // 40% cap (409) and, with both visible, jointly shrunk to 358/180.
+        expect(sideWidths).toEqual({
+          left: left ? 0 : right ? 409 : 358,
+          right: right ? 0 : left ? 409 : 180,
+        });
         expect(preferred).toEqual({ left: 600, right: 600 });
 
         for (const centerOrder of ['files-first', 'golem-first'] as const) {
@@ -209,8 +211,14 @@ describe('computeCenterLayout', () => {
             } else {
               expect(available - 40).toBeGreaterThanOrEqual(result.filesCollapsed ? 320 : 360);
             }
-            // The rendered budget never exceeds the window.
-            expect(86 + sideWidths.left + sideWidths.right + available).toBeLessThanOrEqual(1024);
+            // The rendered budget never exceeds the window: chrome + the widths
+            // the allocator returned + what the center actually paints.
+            const renderedCenter = result.seamEnabled
+              ? result.golemWidth + 360
+              : 40 + (result.filesCollapsed ? 320 : 360);
+            expect(86 + sideWidths.left + sideWidths.right + renderedCenter).toBeLessThanOrEqual(
+              1024
+            );
             // A state-only order change cannot move a size.
             expect(prefs).toEqual({
               ...DEFAULT_CENTER_LAYOUT,

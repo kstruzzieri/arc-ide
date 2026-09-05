@@ -98,7 +98,7 @@ export const MIN_SIDE_WIDTH = 180;
 export const MAX_PANEL_PX = 600;
 /** Fraction of the viewport a single side island may occupy. */
 export const MAX_SIDE_FRACTION = 0.4;
-/** One usable center panel (320) plus the other panel's 40px rail. */
+/** A usable Files column (`CENTER_LIMITS.minFiles` 360) plus the other panel's 40px rail. */
 export const CENTER_RESERVE = 400;
 /** Minimum bottom-panel height, and the editor height it may never eat into. */
 export const MIN_BOTTOM_HEIGHT = 100;

@@ -139,11 +139,14 @@ export function IDEShell({
    * The one in-flight gesture (#271). `size` is its live preview, which feeds
    * the budget so peers give way before paint; `peer` is the other side's
    * effective width read at gesture start, so a peer shrinking to make room
-   * cannot feed back into this gesture's own maximum.
+   * cannot feed back into this gesture's own maximum. Only a side gesture has
+   * such a peer — it is null for the bottom and the center seam.
    */
-  const [active, setActive] = useState<{ panel: ResizePanel; size: number; peer: number } | null>(
-    null
-  );
+  const [active, setActive] = useState<{
+    panel: ResizePanel;
+    size: number;
+    peer: number | null;
+  } | null>(null);
   /** Bumped on a cancelled gesture: the CSS var is ahead of the store. */
   const [invalidationRevision, setInvalidationRevision] = useState(0);
 
@@ -177,15 +180,18 @@ export function IDEShell({
 
   const bottom = computeBottomLayout(viewport.height, previewOf('bottom', bottomPanelSize));
 
+  /** The peer width this side's gesture froze at its start, else the live one. */
+  const peerOf = (panel: 'left' | 'right', live: number) =>
+    active?.panel === panel && active.peer !== null ? active.peer : live;
   const maxLeft = computeSideMax(
     viewport.width,
     HORIZONTAL_CHROME,
-    active?.panel === 'left' ? active.peer : sideWidths.right
+    peerOf('left', sideWidths.right)
   );
   const maxRight = computeSideMax(
     viewport.width,
     HORIZONTAL_CHROME,
-    active?.panel === 'right' ? active.peer : sideWidths.left
+    peerOf('right', sideWidths.left)
   );
 
   // Effective sizes reach the CSS variables here, never through the store: a
@@ -202,19 +208,19 @@ export function IDEShell({
     invalidationRevision
   );
 
-  const peers: Record<ResizePanel, number> = {
-    left: sideWidths.right,
-    right: sideWidths.left,
-    bottom: 0,
-    golem: 0,
-  };
-  const peersLeft = peers.left;
-  const peersRight = peers.right;
+  const effectiveLeft = sideWidths.left;
+  const effectiveRight = sideWidths.right;
 
   const resize = useMemo(() => {
     const make = (panel: ResizePanel) => ({
+      // Only a side gesture has a peer whose width bounds it; the bottom and
+      // the center seam are bounded by the viewport alone.
       onResizeStart: (size: number) =>
-        setActive({ panel, size, peer: panel === 'left' ? peersLeft : peersRight }),
+        setActive({
+          panel,
+          size,
+          peer: panel === 'left' ? effectiveRight : panel === 'right' ? effectiveLeft : null,
+        }),
       onResizePreview: (size: number) =>
         setActive((previous) =>
           previous && previous.panel === panel ? { ...previous, size } : previous
@@ -237,7 +243,7 @@ export function IDEShell({
       bottom: make('bottom'),
       golem: make('golem'),
     };
-  }, [peersLeft, peersRight, setPanelSize]);
+  }, [effectiveLeft, effectiveRight, setPanelSize]);
 
   // Everything that redefines the layout underneath an in-flight gesture, and
   // nothing this gesture itself produces.
@@ -303,10 +309,18 @@ export function IDEShell({
     };
 
     // Moving a DOM node drops the focus it held, so a reorder restores the
-    // control the user was on by identity once the move has committed.
+    // control the user was on by identity once the move has committed. Only
+    // the pair's own focus is the pair's to restore: `focusin` never fires when
+    // focus *leaves*, so the recorded element outlives its turn, and a reorder
+    // must not yank focus back out of the dock the user has moved on to.
     if (previous.order !== centerOrder) {
       const held = lastFocusedInPair.current;
-      if (held?.isConnected && document.activeElement !== held) held.focus();
+      const activeElement = document.activeElement;
+      const ours =
+        activeElement === null ||
+        activeElement === document.body ||
+        (activeElement instanceof HTMLElement && pairRef.current?.contains(activeElement) === true);
+      if (ours && held?.isConnected && activeElement !== held) held.focus();
     }
 
     for (const panel of CENTER_PANELS) {
@@ -367,12 +381,12 @@ export function IDEShell({
         ref={filesRootRef}
         className={styles.centerArea}
         data-center-panel="files"
+        role="region"
+        aria-label="Files"
         tabIndex={-1}
         style={center.filesCollapsed ? HIDDEN : undefined}
       >
-        <section className={styles.centerPanel} aria-label="Files">
-          {centerPanel}
-        </section>
+        <section className={styles.centerPanel}>{centerPanel}</section>
         <ResizeHandle
           direction="vertical"
           cssVar="--panel-bottom-height"

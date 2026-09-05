@@ -79,6 +79,10 @@ describe('IDEShell center pair', () => {
     expect(filesColumn()).not.toHaveStyle({ display: 'none' });
     expect(golemIsland()).toHaveStyle({ display: 'none' });
     expect(screen.getByTestId('golem')).toBeInTheDocument(); // mounted, hidden
+    // The Files landmark is the whole column — terminal included, not just the editor.
+    const filesRegion = screen.getByRole('region', { name: 'Files' });
+    expect(filesRegion).toBe(filesColumn());
+    expect(filesRegion).toContainElement(screen.getByTestId('terminal'));
   });
 
   it('reveals Golem, drops the rail, and writes the island width to CSS', () => {
@@ -99,6 +103,34 @@ describe('IDEShell center pair', () => {
     );
     expect(nodes).toEqual(['golem', 'files']);
     expect(screen.getByTestId('editor')).toBe(editorBefore);
+  });
+
+  it('leaves focus alone when a reorder happens while focus sits outside the pair', () => {
+    render(
+      <IDEShell
+        header={() => <div />}
+        sidebar={<div />}
+        leftPanel={<div />}
+        centerPanel={
+          <button type="button" data-testid="editor">
+            Editor action
+          </button>
+        }
+        golemPanel={() => <div data-testid="golem" />}
+        bottomPanel={<div />}
+        rightPanel={<button type="button">Runs action</button>}
+        statusBar={<div />}
+      />
+    );
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    act(() => screen.getByTestId('editor').focus());
+    const dockButton = screen.getByRole('button', { name: 'Runs action' });
+    act(() => dockButton.focus());
+
+    act(() => useIDEStore.getState().swapCenterOrder());
+
+    // The pair moved nodes, but the focus it is allowed to restore is its own.
+    expect(document.activeElement).toBe(dockButton);
   });
 
   it('collapsing Files makes Golem fill and shows the Files rail', () => {

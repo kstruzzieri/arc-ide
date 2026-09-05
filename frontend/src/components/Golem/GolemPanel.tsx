@@ -572,12 +572,16 @@ export function GolemPanel({ visible }: GolemPanelProps) {
   // composer, and only the visible host consumes it. A request raised while the
   // panel is a rail waits here until the panel is shown, so ⌘⇧I still lands;
   // becoming visible on its own (a widened window, a restore) never does.
+  // The request is only spent once a composer actually takes the focus: the
+  // configuration view renders none, and a request must survive that too.
   const consumedFocusRevision = useRef(composerFocusRevision);
   useEffect(() => {
     if (!visible || consumedFocusRevision.current === composerFocusRevision) return;
+    const composer = composerRef.current;
+    if (!composer) return;
     consumedFocusRevision.current = composerFocusRevision;
-    composerRef.current?.focus();
-  }, [composerFocusRevision, visible]);
+    composer.focus();
+  }, [composerFocusRevision, visible, golemView]);
 
   // A hidden pane cannot be measured or scrolled, so becoming visible re-pins
   // the transcript to the newest row and re-fits the composer — without focus.
