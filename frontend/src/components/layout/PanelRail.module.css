@@ -1,9 +1,8 @@
 /* #271 spec §2.4 — collapsed identity rails. Hue-keyed like the bars:
-   FILES = --files-key (Task A5 adds it; falls back to the go accent literal
-   until then), GOLEM = the pinned project accent. */
+   FILES = --files-key, GOLEM = the pinned project accent. */
 .rail {
-  --rail-key: var(--files-key, #12b5cd);
-  --rail-key-glow: var(--files-key-glow, rgba(18, 181, 205, 0.3));
+  --rail-key: var(--files-key);
+  --rail-key-glow: var(--files-key-glow);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -21,7 +20,9 @@
 
 .rail[data-panel='golem'] {
   --rail-key: var(--accent-project);
-  --rail-key-glow: rgba(56, 189, 248, 0.25);
+  --rail-key-glow: var(--accent-glow);
+  /* No token covers this exact alpha (accent-glow is 0.25, accent-dim 0.12) —
+     kept as a literal (#271 A5 carry-forward review). */
   box-shadow: 0 0 18px rgba(56, 189, 248, 0.08);
 }
 

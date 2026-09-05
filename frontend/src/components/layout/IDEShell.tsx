@@ -20,6 +20,7 @@ import {
 } from '../../stores/ideStore';
 import type { WorkspaceAccent } from '../../stores/ideStore';
 import { CommandPalette } from '../CommandPalette';
+import { FilesCommandBar } from './FilesCommandBar';
 import { PanelRail } from './PanelRail';
 import { ResizeHandle } from './ResizeHandle';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
@@ -386,7 +387,10 @@ export function IDEShell({
         tabIndex={-1}
         style={center.filesCollapsed ? HIDDEN : undefined}
       >
-        <section className={styles.centerPanel}>{centerPanel}</section>
+        <section className={styles.centerPanel}>
+          <FilesCommandBar />
+          {centerPanel}
+        </section>
         <ResizeHandle
           direction="vertical"
           cssVar="--panel-bottom-height"

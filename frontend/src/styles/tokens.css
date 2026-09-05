@@ -69,6 +69,14 @@
   --accent-project: #38bdf8;
   --focus-ring: #38bdf8;
 
+  /* #271 center-panel identity key for FILES. Deliberately a literal that
+   * duplicates --accent-go (and Golem's local --golem-teal): the FILES bar
+   * must not restyle when a workspace accent is repointed. GOLEM keys on the
+   * pinned project accent. Both are guarded in __tests__/styles/tokens.test.ts. */
+  --files-key: #12b5cd;
+  --files-key-dim: rgba(18, 181, 205, 0.12);
+  --files-key-glow: rgba(18, 181, 205, 0.3);
+
   /* Active Workspace Accent — change this to swap the entire theme */
   --accent: var(--accent-project);
   --accent-dark: #0284c7; /* sky-600 */
@@ -112,6 +120,7 @@
   --panel-bottom-height: 200px;
   --panel-golem-width: 420px; /* #271 center island preferred width */
   --panel-rail-width: 40px; /* #271 collapsed identity rail */
+  --panel-bar-height: 38px; /* #271 command bar */
   --panel-gap: 6px;
   --panel-radius: 10px;
   --content-padding: 6px;

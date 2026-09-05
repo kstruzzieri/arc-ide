@@ -170,6 +170,38 @@ it('targets the manual merge action semantically instead of by child order', () 
   expect(mergeResolutionCss).not.toContain('.cm-mergeResolution-action:last-child');
 });
 
+it('keeps --files-key perceptually clear of every git and status colour', () => {
+  // The FILES bar key duplicates --accent-go's literal on purpose (it must not
+  // move with a repointed workspace accent), so it needs its own seat in the
+  // semantic guard rather than riding the accent loop above.
+  const key = parseHex(token('files-key'));
+  const nearest = SEMANTIC_TOKENS.map((name) => ({
+    name,
+    distance: deltaE2000(key, parseHex(token(name))),
+  })).sort((a, b) => a.distance - b.distance)[0];
+  expect({ nearest: nearest.name, clear: nearest.distance >= 10 }).toEqual({
+    nearest: nearest.name,
+    clear: true,
+  });
+});
+
+it('holds AA contrast for bar names on the tinted command-bar gradient', () => {
+  // The bar paints its key at 12% over --surface-elevated and sets the name in
+  // the key colour on top of that (PanelCommandBar.module.css). Both keys.
+  const elevated = parseHex(token('surface-elevated'));
+  for (const name of ['files-key', 'accent-project'] as const) {
+    const key = parseHex(token(name));
+    expect(contrast(key, composite(key, elevated, 0.12))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(key, elevated)).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+it('defines the #271 layout tokens', () => {
+  expect(css).toMatch(/--panel-golem-width:\s*420px/);
+  expect(css).toMatch(/--panel-rail-width:\s*40px/);
+  expect(css).toMatch(/--panel-bar-height:\s*38px/);
+});
+
 function token(name: string): string {
   const value = css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})\\b`, 'i'))?.[1];
   if (!value) throw new Error(`Missing hex token --${name}`);
