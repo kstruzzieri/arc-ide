@@ -341,6 +341,28 @@ func agentConfigJSON(endpoint string) string {
 }`, endpoint, svcKeyMarker, svcSpareKeyMarker)
 }
 
+// agentConfigWithUngrantedRemoteFallbackJSON is a valid go-llm config whose
+// "agent" role model carries a REAL fallback chain: agent-m (hosted, the
+// endpoint under test) falls back to fallback-m on a second provider, spare,
+// whose base_url is a remote (non-loopback) host. reachableDestinations,
+// walking Defaults["agent"]'s RoleFallbackChain, resolves both hops to two
+// distinct remote destinations — so a run gate that (wrongly) required every
+// reachable destination to be granted, not just the primary, would find
+// fallback-m ungranted and raise a second consent challenge.
+func agentConfigWithUngrantedRemoteFallbackJSON(endpoint string) string {
+	return fmt.Sprintf(`{
+  "providers": {
+    "hosted": {"base_url": %q, "api_format": "openai-compat", "api_key": %q},
+    "spare": {"base_url": "https://spare.example.com", "api_format": "openai-compat", "api_key": %q}
+  },
+  "models": {
+    "agent-m": {"name": "wire-model", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["fallback-m"]},
+    "fallback-m": {"name": "spare-model", "provider": "spare", "type": "dense", "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "agent-m"}
+}`, endpoint, svcKeyMarker, svcSpareKeyMarker)
+}
+
 // fixtureConfigLoader writes cfg outside any repository and returns a
 // loadConfig replacement resolving it (the normal external-user-config case).
 func fixtureConfigLoader(t *testing.T, cfgJSON string) func() (loadedAgentConfig, error) {
@@ -1606,13 +1628,20 @@ func TestServiceConsentRaces(t *testing.T) {
 }
 
 // TestServiceGrantedPrimaryUngrantedFallback is a tripwire test that verifies
-// the run gate only checks the primary destination, ignoring any configured
-// fallback (which is UNGRANTED). PASS today means the design is correct: the
-// primary IS the consumer's complete reachable set (no fallback walking during
-// runs).
+// the run gate only checks the primary destination, never widening to the
+// agent role's fallback chain. Its fixture
+// (agentConfigWithUngrantedRemoteFallbackJSON) gives agent-m a REAL
+// "fallbacks" entry to fallback-m, which lives on a second provider (spare)
+// with a remote (non-loopback) base_url and is never granted — so
+// reachableDestinations(cfg) resolves two distinct remote destinations here,
+// and a run gate that (wrongly) required every one of them to be granted
+// would trip. PASS today means the design is correct: the primary IS the
+// consumer's complete reachable set for consent purposes (no fallback
+// walking during runs).
 func TestServiceGrantedPrimaryUngrantedFallback(t *testing.T) {
 	endpoint, _ := startCountingServer(t)
 	h := newServiceHarness(t, endpoint)
+	h.svc.loadConfig = fixtureConfigLoader(t, agentConfigWithUngrantedRemoteFallbackJSON(endpoint))
 	repoID, _ := h.bind(t)
 	ctx := context.Background()
 
