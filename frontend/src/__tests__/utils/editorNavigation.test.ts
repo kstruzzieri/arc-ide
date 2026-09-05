@@ -369,3 +369,81 @@ describe('navigateToEditorLocation', () => {
     spy.mockRestore();
   });
 });
+
+describe('center reveal on navigation (#271 §6.3)', () => {
+  const openTestFile = (path: string) =>
+    useIDEStore.getState().openFile({
+      id: path,
+      name: path.split('/').pop()!,
+      path,
+      language: 'typescript',
+      encoding: 'utf-8',
+      lineEndings: 'LF',
+      content: 'const x = 1;',
+      isModified: false,
+    });
+
+  it('reveals Files when the SAME already-open file is selected again', async () => {
+    openTestFile('/test/file.ts');
+    await ensureEditorFileOpen('/test/file.ts');
+    useIDEStore.getState().setFilesPanelCollapsed(true);
+
+    // Same id, same active file: nothing about the editor state changes, so
+    // only the intent itself can carry the reveal.
+    await ensureEditorFileOpen('/test/file.ts');
+
+    expect(useIDEStore.getState()).toMatchObject({
+      isFilesPanelCollapsed: false,
+      centerReveal: 'files',
+    });
+  });
+
+  it('retargets a transient Golem reveal when navigating inside the same file', async () => {
+    openTestFile('/test/file.ts');
+    useIDEStore.getState().revealCenterPanel('golem');
+
+    await navigateToEditorLocation('/test/file.ts', 12, 1);
+
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'files',
+      // No persisted toggle: both saved preferences stay open.
+      isGolemPanelCollapsed: false,
+      isFilesPanelCollapsed: false,
+    });
+  });
+
+  it('reveals Files for a newly opened file', async () => {
+    mockReadFile.mockResolvedValue(createReadFileResult('hello') as never);
+    useIDEStore.getState().setFilesPanelCollapsed(true);
+
+    await ensureEditorFileOpen('/test/new.ts');
+
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(false);
+  });
+
+  it('does not reveal for a stale navigation or a failed read', async () => {
+    openTestFile('/test/file.ts');
+    useIDEStore.getState().setFilesPanelCollapsed(true);
+
+    await ensureEditorFileOpen('/test/file.ts', { shouldApply: () => false });
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(true);
+
+    mockReadFile.mockRejectedValue(new Error('gone'));
+    await ensureEditorFileOpen('/test/missing.ts');
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(true);
+  });
+
+  it('preserves a saved Files collapse while a workspace restore reopens files', async () => {
+    mockReadFile.mockResolvedValue(createReadFileResult('hello') as never);
+    useIDEStore.getState().setFilesPanelCollapsed(true);
+    useIDEStore.getState().setRestoringWorkspace(true);
+
+    await ensureEditorFileOpen('/test/restored.ts');
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(true);
+
+    // Explicit navigation to that same restored file, once restore is done.
+    useIDEStore.getState().setRestoringWorkspace(false);
+    await navigateToEditorLocation('/test/restored.ts', 3, 1);
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(false);
+  });
+});

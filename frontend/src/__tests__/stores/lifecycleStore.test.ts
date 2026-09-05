@@ -18,6 +18,9 @@ beforeEach(() => {
     latestRunInstanceIdByProfile: {},
     activeTerminalTab: 'terminal',
     isBottomPanelCollapsed: false,
+    isFilesPanelCollapsed: false,
+    isGolemPanelCollapsed: true,
+    centerReveal: 'files',
   });
 });
 
@@ -247,6 +250,33 @@ describe('lifecycleStore - focusProfileOutput', () => {
     useIDEStore.setState({ isBottomPanelCollapsed: false });
     focusProfileOutput('profile-2');
     expect(useIDEStore.getState().isBottomPanelCollapsed).toBe(false);
+  });
+
+  // The output dock lives inside the Files column (#271), so focusing a run's
+  // output has to reveal that column too, however it came to be hidden.
+  it('reveals a preference-collapsed Files column', () => {
+    useIDEStore.getState().setFilesPanelCollapsed(true);
+    useIDEStore.getState().focusProfileOutput('profile-1');
+    expect(useIDEStore.getState()).toMatchObject({
+      isFilesPanelCollapsed: false,
+      centerReveal: 'files',
+      activeTerminalTab: 'output',
+      isBottomPanelCollapsed: false,
+    });
+  });
+
+  it('retargets the transient reveal when Files is only responsively hidden', () => {
+    // Saved collapse already false: only the transient target can bring the
+    // column back from a window-pressure rail, and a repeat click must repeat it.
+    useIDEStore.getState().revealCenterPanel('golem');
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(false);
+
+    useIDEStore.getState().focusProfileOutput('profile-1');
+    expect(useIDEStore.getState().centerReveal).toBe('files');
+
+    useIDEStore.getState().revealCenterPanel('golem');
+    useIDEStore.getState().focusProfileOutput('profile-1');
+    expect(useIDEStore.getState().centerReveal).toBe('files');
   });
 });
 

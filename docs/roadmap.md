@@ -123,6 +123,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | P2 | #242 Conflicted-file diagnostics | Collapse per-marker errors into one actionable warning keyed on git's `UU` status; must clear the moment the file is written clean. |
 | P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
 | P2 | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics open as PR #270; Slice B write phases implemented and pending review. |
+| P2 | #271 Golem center panel (Plan A) | Golem moves out of the right dock into a full-height center island beside the Files column: persisted per-repository order/width/collapse, an effective-layout budget that rails the non-requested panel under window pressure, command bars for both panels, drag/keyboard/palette reorder, and Files reveal on every explicit editor, configuration, diff, merge and run-output intent. Implemented on `feature/issue-271-golem-center-panel` pending review; undock follows as Plan B. |
 | P2 | #264 Golem durable multi-conversation | Persist and switch between conversations; the New chat reset shipped with #226 is the in-memory slice of this. |
 | P3 | #265 Golem token and context usage | Blocked: needs go-llm to emit usage on its run events first. |
 | Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |

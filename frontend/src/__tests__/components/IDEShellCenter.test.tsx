@@ -4,6 +4,7 @@ import { IDEShell } from '../../components/layout';
 import { GolemPanel } from '../../components/Golem';
 import { useIDEStore } from '../../stores/ideStore';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
+import { focusEditorSurface } from '../../utils/editorSurface';
 import type { ConversationView } from '../../types/golem';
 
 jest.mock('../../wails/bindings', () => ({ ToggleMaximize: jest.fn() }));
@@ -156,6 +157,50 @@ describe('IDEShell center pair', () => {
     act(() => useIDEStore.getState().revealCenterPanel('golem'));
     expect(screen.getByRole('button', { name: 'Expand Files panel' })).toBeInTheDocument();
     expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(false);
+  });
+
+  // §6.3, rendered rather than flag-deep: an explicit editor intent has to put
+  // the Files column back on screen, whichever way it was hidden.
+  it('brings a railed Files column back on screen for an explicit editor focus', () => {
+    render(shell());
+    act(() => useIDEStore.getState().setFilesPanelCollapsed(true));
+    expect(filesColumn()).toHaveStyle({ display: 'none' });
+
+    act(() => focusEditorSurface('file'));
+
+    expect(filesColumn()).not.toHaveStyle({ display: 'none' });
+    expect(screen.queryByRole('button', { name: 'Expand Files panel' })).not.toBeInTheDocument();
+    // The landmark is back with it, and still names the whole column.
+    expect(screen.getByRole('region', { name: 'Files' })).toContainElement(
+      screen.getByTestId('terminal')
+    );
+  });
+
+  it('recovers a responsively railed Files column for focused run output', () => {
+    setViewport(1024);
+    useIDEStore.getState().setPanelSize('left', 180);
+    useIDEStore.getState().setPanelSize('right', 180);
+    render(shell());
+    // Both preferred open, Golem requested: window pressure rails Files.
+    act(() => useIDEStore.getState().setGolemPanelCollapsed(false));
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    expect(filesColumn()).toHaveStyle({ display: 'none' });
+
+    act(() => useIDEStore.getState().focusProfileOutput('profile-1'));
+
+    expect(filesColumn()).not.toHaveStyle({ display: 'none' });
+    expect(screen.getByTestId('terminal')).toBeVisible();
+    // A transient retarget, not a saved collapse of the chat.
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(false);
+  });
+
+  it('keeps a hidden center root out of the accessibility tree', () => {
+    render(shell());
+    expect(screen.queryByRole('region', { name: 'Golem' })).not.toBeInTheDocument();
+
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+
+    expect(screen.getByRole('region', { name: 'Golem' })).toBe(golemIsland());
   });
 
   it('carries Editor, terminal and chat state through reorder and collapse', () => {

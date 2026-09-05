@@ -429,6 +429,21 @@ function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * The diff and merge surfaces render inside the Files column, which #271 can
+ * reduce to a rail — so publishing one for the user has to ask for that column
+ * (spec §6.3). Called only after this store's own request/epoch/write guards
+ * accepted a focused result, never on a background refresh or a refused open.
+ *
+ * Direct rather than through `utils/editorSurface`: that helper also owns the
+ * git↔configuration focus exclusivity, which these paths set themselves, and
+ * importing it here would loop utils back into the store it builds on.
+ */
+function revealFilesColumn(): void {
+  const ide = useIDEStore.getState();
+  if (!ide.isRestoringWorkspace) ide.revealCenterPanel('files');
+}
+
 export const useGitStore = create<GitStore>()(
   devtools(
     (set, get) => ({
@@ -759,6 +774,11 @@ export const useGitStore = create<GitStore>()(
             false,
             'git/openDiff'
           );
+          // The diff surface lives inside the Files column, so a focused open is
+          // also a request to see that column (#271 §6.3) — every time, since
+          // reopening the same path from another context is still an intent. A
+          // background refresh (focus:false) changes nothing the user asked for.
+          if (focus) revealFilesColumn();
         } catch (err) {
           if (get().epoch === epoch && requestRevision === diffRequestRevision) {
             useIDEStore.getState().showToast(`Diff failed: ${toErrorMessage(err)}`, 'error');
@@ -825,6 +845,7 @@ export const useGitStore = create<GitStore>()(
         const installedSession = get().mergeSession;
         if (installedSession?.path === path) {
           get().setEditorFocus('merge');
+          revealFilesColumn();
           return true;
         }
         if (installedSession) {
@@ -910,6 +931,7 @@ export const useGitStore = create<GitStore>()(
               false,
               'git/openMergeResolution'
             );
+            revealFilesColumn();
             return true;
           }
 
@@ -936,6 +958,7 @@ export const useGitStore = create<GitStore>()(
             false,
             'git/openMergeResolution'
           );
+          revealFilesColumn();
           return true;
         } catch (err) {
           if (isCurrent()) {

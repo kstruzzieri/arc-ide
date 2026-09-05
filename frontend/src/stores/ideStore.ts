@@ -2537,6 +2537,12 @@ export const useIDEStore = create<IDEStore>()(
                 representativeRunInstanceId(state, profileId) ?? compoundRunInstanceId ?? null,
               activeTerminalTab: 'output' as TerminalTab,
               isBottomPanelCollapsed: false,
+              // The output dock is inside the Files column (#271 §6.3), so
+              // un-collapsing the bottom panel is only half the job: the column
+              // itself may be a rail, by preference or by window pressure. Set
+              // in the same object so a repeat click on the same run repeats it.
+              centerReveal: 'files' as CenterPanel,
+              isFilesPanelCollapsed: false,
             };
           },
           false,

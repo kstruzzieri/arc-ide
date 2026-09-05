@@ -101,6 +101,7 @@ test('creates the approved command registry with stable metadata', () => {
     'show-run-profiles',
     'show-golem',
     'golem-configuration',
+    'toggle-golem-panel',
     'swap-center-panels',
     'show-structure',
     'navigate-back',
@@ -136,6 +137,12 @@ test('creates the approved command registry with stable metadata', () => {
       id: 'golem-configuration',
       title: 'Golem: Configuration',
       keywords: ['settings', 'models', 'providers', 'config', 'ai'],
+      shortcut: undefined,
+    },
+    {
+      id: 'toggle-golem-panel',
+      title: 'Toggle Golem panel',
+      keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
       shortcut: undefined,
     },
     {
@@ -438,4 +445,62 @@ test('derives compound command state through the aggregate run instance', () => 
 it('swap-center-panels flips the center order', () => {
   commandById('swap-center-panels').run();
   expect(useIDEStore.getState().centerOrder).toBe('golem-first');
+});
+
+describe('toggle-golem-panel (#271 §7)', () => {
+  const setViewport = (width: number) =>
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+
+  afterEach(() => setViewport(1024));
+
+  it('reveals and focuses the chat from its default-collapsed rail', () => {
+    setViewport(1440);
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
+
+    commandById('toggle-golem-panel').run();
+
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: false,
+      centerReveal: 'golem',
+    });
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
+  });
+
+  it('collapses only while the island is effectively visible, and refocus never toggles', () => {
+    setViewport(1440);
+    commandById('toggle-golem-panel').run();
+    const focusAfterReveal = useGolemStore.getState().composerFocusRevision;
+
+    // Repeat showGolem: refocuses without collapsing.
+    showGolem();
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(false);
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusAfterReveal);
+
+    commandById('toggle-golem-panel').run();
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: true,
+      isFilesPanelCollapsed: false,
+    });
+  });
+
+  it('reveals rather than saving true when window pressure railed a preferred-open island', () => {
+    // Saved open, but the budget rails it at 1024 with Files requested.
+    setViewport(1024);
+    useIDEStore.getState().setPanelSize('left', 180);
+    useIDEStore.getState().setPanelSize('right', 180);
+    useIDEStore.setState({
+      isGolemPanelCollapsed: false,
+      isFilesPanelCollapsed: false,
+      centerReveal: 'files',
+      isLeftPanelCollapsed: false,
+      isRightPanelCollapsed: false,
+    });
+
+    commandById('toggle-golem-panel').run();
+
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: false,
+      centerReveal: 'golem',
+    });
+  });
 });

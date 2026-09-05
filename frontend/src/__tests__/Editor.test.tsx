@@ -4,6 +4,7 @@ import { useGitStore, type DiffSession, type MergeSession } from '../stores/gitS
 import { __resetGolemStore, useGolemStore } from '../stores/golemStore';
 import { showGolemConfiguration } from '../utils/commands';
 import { focusConfigTab } from '../utils/editorSurface';
+import { registerConfigCloseHandler } from '../components/GolemConfig/configCloseGuard';
 
 jest.mock('../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
@@ -437,6 +438,31 @@ describe('Golem configuration tab (#263 Slice B)', () => {
 
     fireEvent.click(configTab());
     expect(screen.getByTestId('golem-config-mock')).toBeVisible();
+  });
+
+  // §6.3: the dialog the guard raises lives inside the configuration pane, and
+  // a pane inside a railed Files column cannot show one.
+  it('reveals a railed Files column when the dirty configuration tab is asked to close', async () => {
+    useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
+    render(<Editor />);
+    act(() => {
+      focusConfigTab();
+    });
+
+    const confirm = jest.fn().mockResolvedValue(false);
+    registerConfigCloseHandler({ hasUnsavedWork: () => true, confirm });
+    try {
+      act(() => useIDEStore.getState().setFilesPanelCollapsed(true));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close Golem Configuration' }));
+
+      expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(false);
+      await waitFor(() => expect(confirm).toHaveBeenCalledWith('close'));
+      // Refused: the tab stays, still selected on the revealed column.
+      expect(configTab()).toHaveAttribute('aria-selected', 'true');
+    } finally {
+      registerConfigCloseHandler(null);
+    }
   });
 
   it('closes cleanly from the tab and from the surface, restoring focus', async () => {

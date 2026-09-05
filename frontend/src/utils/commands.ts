@@ -6,6 +6,12 @@ import {
   type NavigationLocation,
 } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
+import {
+  CENTER_LIMITS,
+  HORIZONTAL_CHROME,
+  computeCenterLayout,
+  computeSideWidths,
+} from './centerLayout';
 import { navigateToEditorLocation } from './editorNavigation';
 import { focusConfigTab } from './editorSurface';
 import { startProfile, restartProfile } from './profileActions';
@@ -99,6 +105,46 @@ export function showGolem(conversationId?: string): void {
   // island (not a rail) is what the budget keeps under window pressure.
   useIDEStore.getState().revealCenterPanel('golem');
   golem.requestComposerFocus();
+}
+
+/**
+ * Toggles the Golem island by what the user can actually see (#271 §7).
+ *
+ * The saved collapse flag alone would answer wrong in both directions: a
+ * preferred-open island the window budget has railed would "collapse" to the
+ * rail it is already showing, and the user's real ask — see the chat — would
+ * need a second invocation. So the effective layout decides, computed from the
+ * same pure budget the shell renders with; nothing is written back but the one
+ * preference (or transient reveal) this command changes.
+ */
+function isGolemEffectivelyVisible(): boolean {
+  const state = useIDEStore.getState();
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  const prefs = {
+    centerOrder: state.centerOrder,
+    golemWidth: state.panelSizes.golem,
+    isGolemPanelCollapsed: state.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: state.isFilesPanelCollapsed,
+  };
+  const sideWidths = computeSideWidths({
+    viewportWidth,
+    chrome: HORIZONTAL_CHROME,
+    preferred: { left: state.panelSizes.left, right: state.panelSizes.right },
+    collapsed: { left: state.isLeftPanelCollapsed, right: state.isRightPanelCollapsed },
+  });
+  return !computeCenterLayout({
+    viewportWidth,
+    chrome: HORIZONTAL_CHROME,
+    sideWidths,
+    prefs,
+    reveal: state.centerReveal,
+    limits: CENTER_LIMITS,
+  }).golemCollapsed;
+}
+
+export function toggleGolemPanel(): void {
+  if (isGolemEffectivelyVisible()) useIDEStore.getState().setGolemPanelCollapsed(true);
+  else showGolem();
 }
 
 /**
@@ -238,6 +284,12 @@ export const createCommands = (openFolder: () => void): Command[] => [
     title: 'Golem: Configuration',
     keywords: ['settings', 'models', 'providers', 'config', 'ai'],
     run: showGolemConfiguration,
+  },
+  {
+    id: 'toggle-golem-panel',
+    title: 'Toggle Golem panel',
+    keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
+    run: toggleGolemPanel,
   },
   {
     id: 'swap-center-panels',
