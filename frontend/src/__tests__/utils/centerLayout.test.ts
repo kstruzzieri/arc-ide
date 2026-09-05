@@ -6,13 +6,17 @@ import {
   DEFAULT_GOLEM_WIDTH,
   HORIZONTAL_CHROME,
   LAYOUT_TOKENS,
+  VERTICAL_CHROME,
   computeBottomLayout,
   computeCenterLayout,
+  computeEffectiveCenter,
   computeSideMax,
   computeSideWidths,
   initialCenterReveal,
   normalizeCenterLayout,
+  viewportSize,
   type CenterBudgetInput,
+  type CenterLayoutState,
 } from '../../utils/centerLayout';
 
 describe('normalizeCenterLayout', () => {
@@ -93,6 +97,8 @@ describe('layout token mirrors', () => {
     expect(tokenValue('--panel-gap')).toBe(`${LAYOUT_TOKENS.panelGap}px`);
     expect(tokenValue('--panel-golem-width')).toBe(`${DEFAULT_GOLEM_WIDTH}px`);
     expect(tokenValue('--panel-rail-width')).toBe(`${LAYOUT_TOKENS.railWidth}px`);
+    expect(tokenValue('--header-height')).toBe(`${LAYOUT_TOKENS.headerHeight}px`);
+    expect(tokenValue('--statusbar-height')).toBe(`${LAYOUT_TOKENS.statusBarHeight}px`);
   });
 
   it('derives the horizontal chrome from those tokens and three seams', () => {
@@ -100,6 +106,16 @@ describe('layout token mirrors', () => {
       LAYOUT_TOKENS.sidebarWidth + LAYOUT_TOKENS.contentPadding * 2 + LAYOUT_TOKENS.panelGap * 3
     );
     expect(HORIZONTAL_CHROME).toBe(86);
+  });
+
+  it('derives the vertical chrome from those tokens and the one vertical seam', () => {
+    expect(VERTICAL_CHROME).toBe(
+      LAYOUT_TOKENS.headerHeight +
+        LAYOUT_TOKENS.statusBarHeight +
+        LAYOUT_TOKENS.contentPadding * 2 +
+        LAYOUT_TOKENS.panelGap
+    );
+    expect(VERTICAL_CHROME).toBe(88);
   });
 
   it('publishes the spec constants as the shell limits', () => {
@@ -283,5 +299,64 @@ describe('computeBottomLayout', () => {
   it('keeps the 100px floor on a very short window and honours a fitting preference', () => {
     expect(computeBottomLayout(200, 900)).toEqual({ height: 100, max: 100 });
     expect(computeBottomLayout(900, 240)).toEqual({ height: 240, max: 600 });
+  });
+});
+
+describe('computeEffectiveCenter', () => {
+  // The shell renders from this and `toggle-golem-panel` decides from it, so
+  // the composition — chrome, side allocation, then the center pair — lives in
+  // exactly one place and neither caller can answer from a different budget.
+  const state = (over: Partial<CenterLayoutState> = {}): CenterLayoutState => ({
+    centerOrder: 'files-first',
+    centerReveal: 'files',
+    isGolemPanelCollapsed: false,
+    isFilesPanelCollapsed: false,
+    isLeftPanelCollapsed: false,
+    isRightPanelCollapsed: false,
+    panelSizes: { left: 260, right: 280, golem: 420 },
+    ...over,
+  });
+
+  it('allocates the sides first and hands the remainder to the center pair', () => {
+    // 1440 - 86 - 540 = 814; ceiling = min(900, 720, 814 - 360) = 454.
+    expect(computeEffectiveCenter(state(), 1440)).toEqual({
+      sideWidths: { left: 260, right: 280 },
+      center: {
+        filesCollapsed: false,
+        golemCollapsed: false,
+        seamEnabled: true,
+        degraded: false,
+        golemWidth: 420,
+        maxGolemWidth: 454,
+      },
+    });
+  });
+
+  it('rails the panel that was not requested once the sides have taken their share', () => {
+    // 1024 - 86 - 400 reserve = 538 for both sides, so Runs gives up 2px;
+    // 400 left for the center cannot hold the 320 + 360 split.
+    expect(computeEffectiveCenter(state(), 1024)).toMatchObject({
+      sideWidths: { left: 260, right: 278 },
+      center: { filesCollapsed: false, golemCollapsed: true, degraded: true, seamEnabled: false },
+    });
+    expect(computeEffectiveCenter(state({ centerReveal: 'golem' }), 1024).center).toMatchObject({
+      filesCollapsed: true,
+      golemCollapsed: false,
+    });
+  });
+
+  it('shrinks the peer rather than the side currently being dragged', () => {
+    expect(computeEffectiveCenter(state(), 1024, 'right').sideWidths).toEqual({
+      left: 258,
+      right: 280,
+    });
+  });
+});
+
+describe('viewportSize', () => {
+  it('measures the real window rather than the import-time fallback', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    expect(viewportSize()).toEqual({ width: 1600, height: 900 });
   });
 });

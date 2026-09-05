@@ -23,11 +23,13 @@
      would repaint GOLEM in the active workspace hue (rust/node/...) if these
      read the --accent-dim / --accent-glow custom properties, which ARE
      overridden per workspace. --accent-project itself is stable (never
-     repointed), so it stays a var(); the dim/glow are literals copied from
-     tokens.css [data-accent='project'] (#271 review, self-pinning fix). */
+     repointed), so it stays a var(); the dim/glow are mixed from it — the
+     house idiom for opacity variants of the pinned accent — rather than
+     copying its literal bytes, which would stop tracking a retuned
+     --accent-project (#271 review round 3). */
   --bar-key: var(--accent-project);
-  --bar-key-dim: rgba(56, 189, 248, 0.12);
-  --bar-key-glow: rgba(56, 189, 248, 0.25);
+  --bar-key-dim: color-mix(in srgb, var(--accent-project) 12%, transparent);
+  --bar-key-glow: color-mix(in srgb, var(--accent-project) 25%, transparent);
 }
 
 .identity {
@@ -83,10 +85,10 @@
   height: 16px;
 }
 
-/* No token covers this exact alpha (accent-glow is 0.25, accent-dim 0.12) —
-   kept as a literal (#271 A5 carry-forward review). */
+/* No token covers this exact alpha (accent-glow is 0.25, accent-dim 0.12), so
+   it is mixed from the pinned project accent at the alpha this halo needs. */
 .bar[data-panel='golem'] .tile {
-  filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.45));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent-project) 45%, transparent));
 }
 
 .name {
@@ -97,9 +99,9 @@
   white-space: nowrap;
 }
 
-/* Same as above: 0.4 has no token equivalent, kept as a literal. */
+/* Same as above: 0.4 has no token equivalent, mixed from the pinned accent. */
 .bar[data-panel='golem'] .name {
-  text-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent-project) 40%, transparent);
 }
 
 .meta {

@@ -314,6 +314,32 @@ describe('IDEShell center pair', () => {
     expect(useIDEStore.getState().panelSizes.golem).toBe(420);
   });
 
+  // Spec §9 acceptance: the seam's polarity follows the order, because the
+  // island it sizes changes sides with it. Dragging the seam left has to widen
+  // a Golem sitting on the right and narrow one sitting on the left.
+  it.each([['files-first', 454] as const, ['golem-first', 380] as const])(
+    'resizes the island with the polarity of the %s order',
+    (order, expected) => {
+      useIDEStore.setState({ panelSizes: { left: 260, right: 280, bottom: 200, golem: 420 } });
+      render(shell());
+      act(() => useIDEStore.getState().revealCenterPanel('golem'));
+      act(() => useIDEStore.getState().setCenterOrder(order));
+      expect(cssVar('--panel-golem-width')).toBe('420px');
+
+      act(() => {
+        fireEvent.mouseDown(separator('Resize panel golem width'), { clientX: 500, clientY: 0 });
+      });
+      act(() => {
+        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 460, clientY: 0 }));
+        jest.advanceTimersByTime(32);
+      });
+
+      // files-first clamps at the 454px ceiling on the way up; golem-first has
+      // room to give the full 40px back.
+      expect(cssVar('--panel-golem-width')).toBe(`${expected}px`);
+    }
+  );
+
   it('cancels an in-flight gesture when a repository restore redefines the layout', () => {
     render(shell());
     act(() => {
@@ -609,6 +635,51 @@ describe('IDEShell layout announcements', () => {
         isGolemPanelCollapsed: false,
         isFilesPanelCollapsed: true,
       });
+    });
+
+    expect(announcer()).toBeEmptyDOMElement();
+    expect(document.activeElement).toBe(runs);
+  });
+
+  // A repository with no saved state file never reaches applyCenterLayout, so
+  // its session lives its whole life at the seed revision. The reset that opens
+  // the *next* restore then reads as a gesture unless it moves the marker too —
+  // announcing a swap and a collapse the user never asked for, and pulling
+  // focus onto the rail mid-restore.
+  it('stays quiet and keeps focus when a switch resets a never-restored session', () => {
+    render(
+      <IDEShell
+        header={() => <div />}
+        sidebar={<div />}
+        leftPanel={<div />}
+        centerPanel={<div data-testid="editor" />}
+        golemPanel={() => (
+          <button type="button" data-testid="golem-action">
+            Golem action
+          </button>
+        )}
+        bottomPanel={<div />}
+        rightPanel={
+          <button type="button" data-testid="runs-action">
+            Runs action
+          </button>
+        }
+        statusBar={<div />}
+      />
+    );
+    // Gestures in repository A, with no restore behind them.
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    act(() => useIDEStore.getState().setCenterOrder('golem-first'));
+    const runs = screen.getByTestId('runs-action');
+    act(() => runs.focus());
+    // Those gestures were announced legitimately; only what follows is at issue.
+    announcer().textContent = '';
+
+    act(() => {
+      useIDEStore.setState({ workspace: { path: '/repo/two' } as never });
+    });
+    act(() => {
+      useIDEStore.getState().resetWorkspaceSession();
     });
 
     expect(announcer()).toBeEmptyDOMElement();

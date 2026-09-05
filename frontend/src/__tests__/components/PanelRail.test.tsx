@@ -3,6 +3,7 @@ import { PanelRail } from '../../components/layout/PanelRail';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 import * as platform from '../../utils/platform';
+import type { PendingConsentTurn } from '../../types/golem';
 
 beforeEach(() => {
   __resetGolemStore();
@@ -51,6 +52,26 @@ it('names the Golem attention state in the accessible label, never colour alone'
   );
   const button = screen.getByRole('button', { name: 'Expand Golem panel — running' });
   expect(button).toHaveAttribute('data-attention', 'running');
+
+  // Amber outranks the running state: a waiting consent challenge is the only
+  // one that needs the user (spec §2.4).
+  act(() =>
+    useGolemStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        c1: {
+          ...state.conversations.c1,
+          // The rail reads the presence of a challenge, never its contents.
+          pendingConsentTurn: {
+            draft: { message: 'go', contextRefs: [] },
+          } as unknown as PendingConsentTurn,
+        },
+      },
+    }))
+  );
+  expect(
+    screen.getByRole('button', { name: 'Expand Golem panel — approval needed' })
+  ).toHaveAttribute('data-attention', 'approval');
 });
 
 it('reorders on the platform chord while collapsed, and ignores a plain arrow', () => {

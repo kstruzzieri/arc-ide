@@ -128,10 +128,10 @@ function createDefaultWorkspaceSessionState() {
     centerOrder: DEFAULT_CENTER_LAYOUT.centerOrder,
     isGolemPanelCollapsed: DEFAULT_CENTER_LAYOUT.isGolemPanelCollapsed,
     isFilesPanelCollapsed: DEFAULT_CENTER_LAYOUT.isFilesPanelCollapsed,
-    // Bumped only by applyCenterLayout, so a consumer can tell a restore from a
-    // change the user just made. Transient: never collected into the persisted
-    // state, never in the save-subscribe list, and reset with the session.
-    centerLayoutRevision: 0,
+    // Deliberately not seeded here: the revision is a monotonic marker, not a
+    // session preference. Resetting it to 0 would let a session that was never
+    // restored (no saved state file) hand the next reset an unchanged marker,
+    // and the shell would read that reset as a gesture.
     centerReveal: 'files' as CenterPanel,
     centerDrag: null as CenterPanel | null,
     openFiles: [] as EditorFile[],
@@ -953,6 +953,10 @@ export const useIDEStore = create<IDEStore>()(
       isLoadingTree: false,
       treeError: null,
       ...createDefaultWorkspaceSessionState(),
+      // Bumped by applyCenterLayout and by every session reset, so a consumer
+      // can tell a restore from a change the user just made. Transient: never
+      // collected into the persisted state and never in the save-subscribe list.
+      centerLayoutRevision: 0,
       toast: null,
       activeTerminalTab: 'terminal',
       terminalSessions: [],
@@ -2606,7 +2610,15 @@ export const useIDEStore = create<IDEStore>()(
         set({ isRestoringWorkspace }, false, 'setRestoringWorkspace'),
 
       resetWorkspaceSession: () =>
-        set(createDefaultWorkspaceSessionState(), false, 'resetWorkspaceSession'),
+        set(
+          (state) => ({
+            ...createDefaultWorkspaceSessionState(),
+            // A reset is the first step of a restore, never a gesture: keep the marker moving.
+            centerLayoutRevision: state.centerLayoutRevision + 1,
+          }),
+          false,
+          'resetWorkspaceSession'
+        ),
 
       // Recent workspaces actions
       setRecentWorkspaces: (recentWorkspaces) =>

@@ -80,6 +80,7 @@ describe('ideStore center layout', () => {
       isGolemPanelCollapsed: false,
       isFilesPanelCollapsed: false,
     });
+    const revisionBefore = useIDEStore.getState().centerLayoutRevision;
     useIDEStore.getState().resetWorkspaceSession();
     expect(useIDEStore.getState()).toMatchObject({
       centerOrder: 'files-first',
@@ -87,5 +88,9 @@ describe('ideStore center layout', () => {
       centerReveal: 'files',
     });
     expect(useIDEStore.getState().panelSizes.golem).toBe(420);
+    // The marker is monotonic across the reset: a reset opens a restore, and a
+    // session that never got one would otherwise hand the next reset an
+    // unchanged revision for the shell to read as a gesture.
+    expect(useIDEStore.getState().centerLayoutRevision).toBe(revisionBefore + 1);
   });
 });

@@ -34,9 +34,9 @@ import {
   MIN_BOTTOM_HEIGHT,
   MIN_SIDE_WIDTH,
   computeBottomLayout,
-  computeCenterLayout,
+  computeEffectiveCenter,
   computeSideMax,
-  computeSideWidths,
+  viewportSize,
   type CenterOrder,
   type CenterPanel,
 } from '../../utils/centerLayout';
@@ -118,17 +118,14 @@ export function IDEShell({
   useKeyboardShortcuts(openFolder, openCommandPalette, isCommandPaletteOpen);
 
   // Track viewport dimensions for dynamic max constraints
-  const [viewport, setViewport] = useState(() => ({
-    width: typeof window !== 'undefined' ? window.innerWidth : 1280,
-    height: typeof window !== 'undefined' ? window.innerHeight : 800,
-  }));
+  const [viewport, setViewport] = useState(viewportSize);
 
   useEffect(() => {
     let rafId: number;
     const handleResize = () => {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        setViewport({ width: window.innerWidth, height: window.innerHeight });
+        setViewport(viewportSize());
       });
     };
     window.addEventListener('resize', handleResize);
@@ -160,30 +157,23 @@ export function IDEShell({
   const previewOf = (panel: ResizePanel, saved: number) =>
     active?.panel === panel ? active.size : saved;
 
-  const sideWidths = computeSideWidths({
-    viewportWidth: viewport.width,
-    chrome: HORIZONTAL_CHROME,
-    preferred: {
-      left: previewOf('left', leftPanelSize),
-      right: previewOf('right', rightPanelSize),
-    },
-    collapsed: { left: isLeftPanelCollapsed, right: isRightPanelCollapsed },
-    active: active?.panel === 'left' || active?.panel === 'right' ? active.panel : undefined,
-  });
-
-  const center = computeCenterLayout({
-    viewportWidth: viewport.width,
-    chrome: HORIZONTAL_CHROME,
-    sideWidths,
-    prefs: {
+  const { sideWidths, center } = computeEffectiveCenter(
+    {
       centerOrder,
-      golemWidth: previewOf('golem', golemPanelSize),
+      centerReveal,
       isGolemPanelCollapsed,
       isFilesPanelCollapsed,
+      isLeftPanelCollapsed,
+      isRightPanelCollapsed,
+      panelSizes: {
+        left: previewOf('left', leftPanelSize),
+        right: previewOf('right', rightPanelSize),
+        golem: previewOf('golem', golemPanelSize),
+      },
     },
-    reveal: centerReveal,
-    limits: CENTER_LIMITS,
-  });
+    viewport.width,
+    active?.panel === 'left' || active?.panel === 'right' ? active.panel : undefined
+  );
 
   const bottom = computeBottomLayout(viewport.height, previewOf('bottom', bottomPanelSize));
 

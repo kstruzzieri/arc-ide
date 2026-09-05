@@ -43,6 +43,11 @@ import {
   hasUnsavedConfigWork,
 } from './components/GolemConfig/configCloseGuard';
 
+// Module scope, not an inline arrow: IDEShell memoizes the Golem island on this
+// callback's identity, and a fresh function per App render would throw that
+// memo away every time App re-renders (sidebar view, workspace, …).
+const renderGolemPanel = (visible: boolean) => <GolemPanel visible={visible} />;
+
 function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
   // collapse into one mis-scoped refetch.
@@ -200,7 +205,7 @@ function App() {
           )
         }
         centerPanel={<Editor />}
-        golemPanel={(visible) => <GolemPanel visible={visible} />}
+        golemPanel={renderGolemPanel}
         bottomPanel={<Terminal />}
         rightPanel={<RunProfiles />}
         statusBar={<StatusBar />}

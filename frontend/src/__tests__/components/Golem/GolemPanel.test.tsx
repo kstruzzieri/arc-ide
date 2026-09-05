@@ -641,7 +641,7 @@ describe('GolemPanel composer', () => {
 // ── draft durability ──────────────────────────────────────────────────────────
 
 describe('GolemPanel draft', () => {
-  it('survives an unmount, which is what collapsing the panel or showing Runs does', () => {
+  it('survives an unmount, so the draft outlives any remount of the panel', () => {
     hydrate();
     selectFocused();
     const { unmount } = render(<GolemPanel visible />);
@@ -1692,7 +1692,15 @@ describe('#271 command bar', () => {
     expect(screen.getByText('Context: prompt only')).not.toBeVisible();
     await userEvent.click(summary);
     expect(screen.getByText('Context: prompt only')).toBeVisible();
-    fireEvent.keyDown(summary, { key: 'Escape' });
+
+    // Escape reaches the disclosure from anywhere inside it, so the assertion
+    // starts from focus that is not already on the summary.
+    summary.blur();
+    fireEvent.keyDown(summary.closest('details') as HTMLElement, { key: 'Escape' });
+
     expect(screen.getByText('Context: prompt only')).not.toBeVisible();
+    // Dismissing a disclosure must hand the keyboard back to the control that
+    // opened it, not drop focus on the document (spec §7).
+    expect(document.activeElement).toBe(summary);
   });
 });

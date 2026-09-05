@@ -6,12 +6,7 @@ import {
   type NavigationLocation,
 } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
-import {
-  CENTER_LIMITS,
-  HORIZONTAL_CHROME,
-  computeCenterLayout,
-  computeSideWidths,
-} from './centerLayout';
+import { computeEffectiveCenter, viewportSize } from './centerLayout';
 import { navigateToEditorLocation } from './editorNavigation';
 import { focusConfigTab } from './editorSurface';
 import { startProfile, restartProfile } from './profileActions';
@@ -118,28 +113,8 @@ export function showGolem(conversationId?: string): void {
  * preference (or transient reveal) this command changes.
  */
 function isGolemEffectivelyVisible(): boolean {
-  const state = useIDEStore.getState();
-  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280;
-  const prefs = {
-    centerOrder: state.centerOrder,
-    golemWidth: state.panelSizes.golem,
-    isGolemPanelCollapsed: state.isGolemPanelCollapsed,
-    isFilesPanelCollapsed: state.isFilesPanelCollapsed,
-  };
-  const sideWidths = computeSideWidths({
-    viewportWidth,
-    chrome: HORIZONTAL_CHROME,
-    preferred: { left: state.panelSizes.left, right: state.panelSizes.right },
-    collapsed: { left: state.isLeftPanelCollapsed, right: state.isRightPanelCollapsed },
-  });
-  return !computeCenterLayout({
-    viewportWidth,
-    chrome: HORIZONTAL_CHROME,
-    sideWidths,
-    prefs,
-    reveal: state.centerReveal,
-    limits: CENTER_LIMITS,
-  }).golemCollapsed;
+  const { center } = computeEffectiveCenter(useIDEStore.getState(), viewportSize().width);
+  return !center.golemCollapsed;
 }
 
 export function toggleGolemPanel(): void {

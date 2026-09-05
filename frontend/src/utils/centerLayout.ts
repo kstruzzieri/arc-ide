@@ -83,6 +83,8 @@ export const LAYOUT_TOKENS = {
   contentPadding: 6,
   panelGap: 6,
   railWidth: 40,
+  headerHeight: 44,
+  statusBarHeight: 26,
 } as const;
 
 /** Sidebar + both content paddings + three horizontal seams (tree, pair, dock). */
@@ -90,7 +92,11 @@ export const HORIZONTAL_CHROME =
   LAYOUT_TOKENS.sidebarWidth + LAYOUT_TOKENS.contentPadding * 2 + LAYOUT_TOKENS.panelGap * 3;
 
 /** Header + status bar + both content paddings + the one vertical seam. */
-export const VERTICAL_CHROME = 44 + 26 + 6 * 2 + 6;
+export const VERTICAL_CHROME =
+  LAYOUT_TOKENS.headerHeight +
+  LAYOUT_TOKENS.statusBarHeight +
+  LAYOUT_TOKENS.contentPadding * 2 +
+  LAYOUT_TOKENS.panelGap;
 
 /** Minimum width of a side island (tree, Runs dock). */
 export const MIN_SIDE_WIDTH = 180;
@@ -243,4 +249,62 @@ export function computeCenterLayout({
       : prefs.golemWidth,
     maxGolemWidth: seamEnabled ? ceiling : 0,
   };
+}
+
+/** The store fields the whole center budget is composed from. */
+export interface CenterLayoutState {
+  centerOrder: CenterOrder;
+  centerReveal: CenterPanel;
+  isGolemPanelCollapsed: boolean;
+  isFilesPanelCollapsed: boolean;
+  isLeftPanelCollapsed: boolean;
+  isRightPanelCollapsed: boolean;
+  panelSizes: { left: number; right: number; golem: number };
+}
+
+/**
+ * The one composition of side widths and center layout (spec §2.3). The shell
+ * renders from it and the Golem toggle command decides from it, so neither can
+ * answer from a budget the other does not share. `activeSide` is the side
+ * island currently under a gesture, whose live preview must survive the shrink.
+ */
+export function computeEffectiveCenter(
+  state: CenterLayoutState,
+  viewportWidth: number,
+  activeSide?: 'left' | 'right'
+): { sideWidths: { left: number; right: number }; center: EffectiveCenterLayout } {
+  const sideWidths = computeSideWidths({
+    viewportWidth,
+    chrome: HORIZONTAL_CHROME,
+    preferred: { left: state.panelSizes.left, right: state.panelSizes.right },
+    collapsed: { left: state.isLeftPanelCollapsed, right: state.isRightPanelCollapsed },
+    active: activeSide,
+  });
+  return {
+    sideWidths,
+    center: computeCenterLayout({
+      viewportWidth,
+      chrome: HORIZONTAL_CHROME,
+      sideWidths,
+      prefs: {
+        centerOrder: state.centerOrder,
+        golemWidth: state.panelSizes.golem,
+        isGolemPanelCollapsed: state.isGolemPanelCollapsed,
+        isFilesPanelCollapsed: state.isFilesPanelCollapsed,
+      },
+      reveal: state.centerReveal,
+      limits: CENTER_LIMITS,
+    }),
+  };
+}
+
+/**
+ * The viewport the budget is measured against. The `window`-less branch is a
+ * dead one in the webview and in jsdom alike — it exists so importing this
+ * module cannot throw — and it lives here rather than at each call site so
+ * every consumer measures against the same fallback.
+ */
+export function viewportSize(): { width: number; height: number } {
+  if (typeof window === 'undefined') return { width: 1280, height: 800 };
+  return { width: window.innerWidth, height: window.innerHeight };
 }

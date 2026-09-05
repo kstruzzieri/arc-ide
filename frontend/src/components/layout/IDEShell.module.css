@@ -131,9 +131,9 @@
   background: var(--surface-panel);
   border: 1px solid color-mix(in srgb, var(--accent-project) 22%, transparent);
   border-radius: var(--panel-radius);
-  /* No token covers this exact alpha (accent-glow is 0.25, accent-dim 0.12) —
-     kept as a literal (#271 A5 carry-forward review). */
-  box-shadow: 0 0 22px rgba(56, 189, 248, 0.06);
+  /* No token covers this exact alpha (accent-glow is 0.25, accent-dim 0.12), so
+     it is mixed from the pinned project accent, like the border above. */
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent-project) 6%, transparent);
   overflow: hidden;
   display: flex;
   flex-direction: column;

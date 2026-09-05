@@ -217,20 +217,19 @@ it('pins the golem rail and bar to the project accent instead of the live worksp
   // data-accent="project" pin. A `var(--accent-dim)` / `var(--accent-glow)`
   // reference there would repaint GOLEM in the rust/node/... workspace hue
   // instead of the pinned project accent, contradicting "GOLEM keys the
-  // pinned project accent" (#271 review). Both files pin with literals instead.
+  // pinned project accent" (#271 review). Both files pin by mixing the alpha
+  // out of --accent-project itself, so a retuned project accent carries the
+  // glow and the dim with it instead of leaving copied bytes behind.
+  const mix = (name: string, alpha: number) =>
+    new RegExp(
+      `${name}:\\s*color-mix\\(in srgb, var\\(--accent-project\\) ${alpha}%, transparent\\)`
+    );
   for (const [source, label, pinned] of [
-    [
-      panelRailCss,
-      'PanelRail.module.css',
-      [/--rail-key-glow:\s*rgba\(56,\s*189,\s*248,\s*0\.25\)/],
-    ],
+    [panelRailCss, 'PanelRail.module.css', [mix('--rail-key-glow', 25)]],
     [
       panelCommandBarCss,
       'PanelCommandBar.module.css',
-      [
-        /--bar-key-dim:\s*rgba\(56,\s*189,\s*248,\s*0\.12\)/,
-        /--bar-key-glow:\s*rgba\(56,\s*189,\s*248,\s*0\.25\)/,
-      ],
+      [mix('--bar-key-dim', 12), mix('--bar-key-glow', 25)],
     ],
   ] as const) {
     const body = rule(source, "[data-panel='golem']");
