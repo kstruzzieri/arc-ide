@@ -24,11 +24,13 @@ export function buildGolemView(state: GolemStoreState): GolemView {
       workspaceLabel: c.workspaceLabel,
       available: c.available,
       needsConsent: c.needsConsent,
-      warnings: c.warnings,
+      // Copied, not aliased: a projection can be in flight while the store
+      // mutates, and a payload must never change under the serializer.
+      warnings: [...c.warnings],
       initError: c.initError,
       destination: c.destination,
       activeRunId: c.activeRunId,
-      queuedTurns: c.queuedTurns,
+      queuedTurns: c.queuedTurns.map((turn) => ({ ...turn, contextRefs: [...turn.contextRefs] })),
       transcript: c.transcript.map((entry) => ({
         id: entry.id,
         runId: entry.runId,

@@ -1,6 +1,7 @@
 import {
   createMainRelayCore,
   createSatelliteCore,
+  RELAY_ACTION_REFUSED,
   type MainRelayCore,
   type SatelliteCore,
 } from '../../golem/relayCore';
@@ -269,11 +270,12 @@ describe('main relay core', () => {
   it('retains the newest snapshot and surfaces a failed post without looping', async () => {
     const onError = jest.fn();
     let fail = true;
+    let focus = 7;
     const sent: GolemWindowMessage[] = [];
     const core = createMainRelayCore({
       instance: 1,
       execute: async () => ({ ok: true }),
-      snapshot: () => ({ ...emptyView, composerFocusRevision: 7 }),
+      snapshot: () => ({ ...emptyView, composerFocusRevision: focus }),
       transport: {
         post: async (message) => {
           if (fail) throw new Error('window gone');
@@ -288,12 +290,104 @@ describe('main relay core', () => {
       await flush();
       expect(onError).toHaveBeenCalledTimes(1);
       expect(sent).toHaveLength(0);
-
-      fail = false;
-      core.publish();
+      // A failed post never retries itself: no spin against a window that died.
       await flush();
-      expect(sent).toHaveLength(1);
-      expect((sent[0].payload as GolemView).composerFocusRevision).toBe(7);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(sent).toHaveLength(0);
+
+      // Recovery takes no further publish(): the core's next flush — here the
+      // one an action's ack forces — carries the newest snapshot, exactly once.
+      fail = false;
+      focus = 9;
+      await core.receive(actionEnvelope(1, { type: 'select', conversationId: 'c1' }));
+      await flush();
+      const views = sent.filter((message) => message.kind === 'view');
+      expect(views).toHaveLength(1);
+      expect((views[0].payload as GolemView).composerFocusRevision).toBe(9);
+      expect(onError).toHaveBeenCalledTimes(1);
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('replays the original refusal when an unparseable action is retried', async () => {
+    const bus = new Bus();
+    const execute = jest.fn();
+    const core = createMainRelayCore({
+      instance: 1,
+      execute,
+      snapshot: () => emptyView,
+      transport: bus.transport('main'),
+      onDrafts: jest.fn(),
+      onError: jest.fn(),
+    });
+    try {
+      const payload = { type: 'patchStore', set: {} };
+      await core.receive(actionEnvelope(1, payload));
+      // A lost ack is retried under the same id and body: the refusal is the
+      // settled answer for that id, never a conflict with a newer sequence.
+      await core.receive(actionEnvelope(1, payload));
+      const acks = bus.sent('main', 'ack');
+      expect(acks).toHaveLength(2);
+      for (const ack of acks)
+        expect(ack.payload).toEqual({ id: 1, ok: false, reason: RELAY_ACTION_REFUSED });
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('ignores an abort and a foreign instance without touching any state', async () => {
+    const bus = new Bus();
+    const execute = jest.fn();
+    const onDrafts = jest.fn();
+    const onError = jest.fn();
+    const core = createMainRelayCore({
+      instance: 1,
+      execute,
+      snapshot: () => emptyView,
+      transport: bus.transport('main'),
+      onDrafts,
+      onError,
+    });
+    try {
+      // B5/B6 own the abort handshake; the relay core has nothing to do with it.
+      await core.receive({
+        from: 'satellite',
+        message: { kind: 'abort', instance: 1, handoff: 2, id: 0, revision: 0, payload: null },
+      });
+      expect(onError).not.toHaveBeenCalled();
+
+      // A message from a previous window instance admits nothing, installs no
+      // drafts and answers nothing; it is only reported as unexpected.
+      const foreign = 2;
+      await core.receive({
+        from: 'satellite',
+        message: {
+          kind: 'action',
+          instance: foreign,
+          handoff: 0,
+          id: 1,
+          revision: 0,
+          payload: { type: 'select', conversationId: 'c1' },
+        },
+      });
+      await core.receive({
+        from: 'satellite',
+        message: {
+          kind: 'drafts',
+          instance: foreign,
+          handoff: 1,
+          id: 1,
+          revision: 0,
+          payload: { c1: 'foreign' },
+        },
+      });
+      await flush();
+      expect(execute).not.toHaveBeenCalled();
+      expect(onDrafts).not.toHaveBeenCalled();
+      expect(bus.posts).toHaveLength(0);
+      expect(onError).toHaveBeenCalledTimes(2);
     } finally {
       core.dispose();
     }
@@ -346,7 +440,9 @@ describe('satellite core', () => {
       expect(onView).toHaveBeenCalledTimes(1);
       // A late bootstrap that predates the live view must not roll it back.
       core.installBootstrap({ ...emptyView, composerFocusRevision: 1 }, 2);
-      core.installBootstrap(null, 0);
+      // Only the null guard can reject this one: its revision outranks the live
+      // view, so it must neither erase the projection nor advance the revision.
+      core.installBootstrap(null, 9);
       core.receive({ from: 'main', message: viewMessage(3) });
       expect(onView).toHaveBeenCalledTimes(1);
 
@@ -431,6 +527,125 @@ describe('satellite core', () => {
     } finally {
       core.dispose();
       jest.useRealTimers();
+    }
+  });
+
+  it('installs a transfer that arrives before the first projection, once, on arrival', async () => {
+    const { bus, core, onDrafts, onError } = makeSatellite();
+    try {
+      const drafts: GolemWindowMessage = {
+        kind: 'drafts',
+        instance: 1,
+        handoff: 2,
+        id: 5,
+        revision: 0,
+        payload: { c1: 'typed before any view' },
+      };
+      // `ready` needs a view revision to quote, so nothing may install yet.
+      core.receive({ from: 'main', message: drafts });
+      expect(onDrafts).not.toHaveBeenCalled();
+
+      // Main's retry of the same transfer must not be answered from an empty
+      // install slot; it simply waits with the first one.
+      core.receive({ from: 'main', message: { ...drafts } });
+      expect(onDrafts).not.toHaveBeenCalled();
+
+      core.receive({ from: 'main', message: viewMessage(1) });
+      expect(onDrafts).toHaveBeenCalledTimes(1);
+      expect(onDrafts).toHaveBeenCalledWith({ c1: 'typed before any view' }, 2, 5);
+
+      await core.ready(2, 5);
+      const readies = bus.sent('satellite', 'ready');
+      expect(readies).toHaveLength(1);
+      expect(readies[0]).toMatchObject({ handoff: 2, id: 5, instance: 1 });
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('settles an action once even when its acknowledgement arrives twice', async () => {
+    const { bus, core, onAdmission, onError } = makeSatellite();
+    try {
+      const pending = core.send({ type: 'send', conversationId: 'c1', text: 'one' });
+      await flush();
+      const head = bus.sent('satellite', 'action')[0];
+      const ack = ackEnvelope(head, { id: head.id, ok: true });
+
+      core.receive(ack);
+      // Main re-acks a replayed action with the same stored message: a delayed
+      // first ack is a healthy exchange, not an unexpected one.
+      core.receive(ack);
+      await expect(pending).resolves.toEqual({ id: head.id, ok: true });
+      expect(onAdmission).toHaveBeenCalledTimes(1);
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('ignores an abort and a foreign instance without touching any state', async () => {
+    const { bus, core, onView, onAdmission, onDrafts, onError } = makeSatellite();
+    try {
+      // B5/B6 own the abort handshake; the relay core has nothing to do with it.
+      core.receive({
+        from: 'main',
+        message: { kind: 'abort', instance: 1, handoff: 3, id: 0, revision: 1, payload: null },
+      });
+      expect(onError).not.toHaveBeenCalled();
+
+      core.receive({
+        from: 'main',
+        message: viewMessage(4, { ...emptyView, composerFocusRevision: 4 }),
+      });
+      expect(onView).toHaveBeenCalledTimes(1);
+
+      // A message from a previous window instance can neither install a view or
+      // a draft map, nor settle a waiter; it is only reported as unexpected.
+      const foreign = 2;
+      core.receive({
+        from: 'main',
+        message: {
+          ...viewMessage(9, { ...emptyView, composerFocusRevision: 9 }),
+          instance: foreign,
+        },
+      });
+      core.receive({
+        from: 'main',
+        message: {
+          kind: 'drafts',
+          instance: foreign,
+          handoff: 1,
+          id: 1,
+          revision: 9,
+          payload: { c1: 'foreign' },
+        },
+      });
+      const pending = core.send({ type: 'send', conversationId: 'c1', text: 'one' });
+      await flush();
+      const head = bus.sent('satellite', 'action')[0];
+      core.receive({
+        from: 'main',
+        message: {
+          kind: 'ack',
+          instance: foreign,
+          handoff: 0,
+          id: head.id,
+          revision: 9,
+          payload: { id: head.id, ok: true },
+        },
+      });
+      await flush();
+      expect(onView).toHaveBeenCalledTimes(1);
+      expect(onDrafts).not.toHaveBeenCalled();
+      expect(onAdmission).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledTimes(3);
+
+      // The live instance still owns the waiter the foreign ack could not take.
+      core.receive(ackEnvelope(head, { id: head.id, ok: true }));
+      await expect(pending).resolves.toEqual({ id: head.id, ok: true });
+    } finally {
+      core.dispose();
     }
   });
 

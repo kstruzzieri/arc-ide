@@ -123,6 +123,9 @@ function seedRichConversation(): ConversationView {
         lastSeq: 0,
         error: 'model refused',
       },
+      // The store's initial/unknown sequence sentinel, which every freshly
+      // admitted run carries until its first event arrives.
+      r3: { identity: { ...runIdentity, runId: 'r3' }, phase: 'admitting', lastSeq: -1 },
     },
     activeRunId: 'r1',
     draft: 'secret typing',
@@ -170,6 +173,7 @@ it('round-trips a rich projection through JSON and its own parser', () => {
   expect(projected.pendingConsentTurn).toEqual({ identity: runIdentity, challenge });
   expect(projected.runs.r1).toEqual({ identity: runIdentity, phase: 'running', lastSeq: 4 });
   expect(projected.runs.r2.error).toBe('model refused');
+  expect(projected.runs.r3.lastSeq).toBe(-1);
   expect(projected.transcript[1]).toEqual({
     id: 'e2',
     runId: 'r1',
@@ -189,6 +193,18 @@ it('round-trips a rich projection through JSON and its own parser', () => {
       userEntryId: 'e9',
     },
   ]);
+});
+
+it('copies the live arrays it carries rather than aliasing store state', () => {
+  const conversation = seedRichConversation();
+  const projected = buildGolemView(useGolemStore.getState()).conversations.c1;
+  // An in-flight payload must not be mutable through the store it came from.
+  expect(projected.warnings).not.toBe(conversation.warnings);
+  expect(projected.warnings).toEqual(conversation.warnings);
+  expect(projected.queuedTurns).not.toBe(conversation.queuedTurns);
+  expect(projected.queuedTurns[0]).not.toBe(conversation.queuedTurns[0]);
+  expect(projected.queuedTurns[1].contextRefs).not.toBe(conversation.queuedTurns[1].contextRefs);
+  expect(projected.queuedTurns).toEqual(conversation.queuedTurns);
 });
 
 type Mutate = (wire: Record<string, never>) => void;
@@ -261,6 +277,20 @@ const corruptions: ReadonlyArray<readonly [string, Mutate]> = [
       ((
         w as never as { conversations: { c1: { runs: Record<string, { phase: string }> } } }
       ).conversations.c1.runs.r1.phase = 'thinking'),
+  ],
+  [
+    'run sequence below the unknown sentinel',
+    (w) =>
+      ((
+        w as never as { conversations: { c1: { runs: Record<string, { lastSeq: number }> } } }
+      ).conversations.c1.runs.r1.lastSeq = -2),
+  ],
+  [
+    'fractional run sequence',
+    (w) =>
+      ((
+        w as never as { conversations: { c1: { runs: Record<string, { lastSeq: number }> } } }
+      ).conversations.c1.runs.r1.lastSeq = 4.5),
   ],
   [
     'run key that disagrees with its identity',

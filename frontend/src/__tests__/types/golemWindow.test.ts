@@ -3,8 +3,11 @@ import {
   parseGolemAck,
   parseGolemDraftMap,
   parseGolemViewAction,
+  parseGolemWindowBootstrap,
   parseGolemWindowEnvelope,
   parseGolemWindowState,
+  type GolemView,
+  type GolemWindowState,
 } from '../../types/golemWindow';
 
 it('parses a window state and rejects unknown modes and phases', () => {
@@ -78,6 +81,45 @@ it('parses every action variant and rejects unknown or malformed ones', () => {
     GolemContractError
   );
   expect(() => parseGolemViewAction({ type: 'patchStore', set: {} })).toThrow(GolemContractError);
+});
+
+const bootstrapState: GolemWindowState = {
+  mode: 'undocked',
+  phase: 'ready',
+  instance: 3,
+  restorePending: false,
+  stateRevision: 4,
+  handoff: 1,
+};
+
+const bootstrapView: GolemView = {
+  bridgePhase: 'ready',
+  bridgeError: null,
+  hydratedIdentity: null,
+  selectedConversationId: null,
+  conversations: {},
+  composerFocusRevision: 0,
+  processedThrough: 0,
+};
+
+it('pairs a bootstrap projection with its revision, both ways', () => {
+  expect(
+    parseGolemWindowBootstrap({ state: bootstrapState, view: bootstrapView, revision: 5 })
+  ).toEqual({ state: bootstrapState, view: bootstrapView, revision: 5 });
+  // Revision zero is the one shape that may carry no projection.
+  expect(parseGolemWindowBootstrap({ state: bootstrapState, view: null, revision: 0 })).toEqual({
+    state: bootstrapState,
+    view: null,
+    revision: 0,
+  });
+  // A revision that names a projection must carry it...
+  expect(() =>
+    parseGolemWindowBootstrap({ state: bootstrapState, view: null, revision: 5 })
+  ).toThrow(GolemContractError);
+  // ...and a projection must carry the revision that identifies it.
+  expect(() =>
+    parseGolemWindowBootstrap({ state: bootstrapState, view: bootstrapView, revision: 0 })
+  ).toThrow(GolemContractError);
 });
 
 it('parses draft maps (empty strings kept) and acks', () => {

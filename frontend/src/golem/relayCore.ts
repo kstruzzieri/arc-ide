@@ -188,16 +188,17 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     return settled;
   }
 
+  const refusalMessage = (id: number, handoff: number, reason: string): GolemWindowMessage => ({
+    kind: 'ack',
+    instance: deps.instance,
+    id,
+    revision,
+    handoff,
+    payload: { id, ok: false, reason },
+  });
+
   async function postRefusal(id: number, handoff: number, reason: string): Promise<void> {
-    const message: GolemWindowMessage = {
-      kind: 'ack',
-      instance: deps.instance,
-      id,
-      revision,
-      handoff,
-      payload: { id, ok: false, reason },
-    };
-    await deps.transport.post(message).catch(report);
+    await deps.transport.post(refusalMessage(id, handoff, reason)).catch(report);
   }
 
   async function receiveAction(message: GolemWindowMessage): Promise<void> {
@@ -223,9 +224,18 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     try {
       action = parseGolemViewAction(message.payload);
     } catch {
-      // Definitive, so the satellite's waiter settles instead of hanging.
-      if (!known) highestActionId = Math.max(highestActionId, id);
-      await postRefusal(id, 0, RELAY_ACTION_REFUSED);
+      // Definitive, so the satellite's waiter settles instead of hanging. The
+      // refusal is recorded like any other settled ack: a lost-ack retry of the
+      // same body must replay it, not collide with the id watermark this branch
+      // just advanced.
+      const settled =
+        settledAcks.get(id) ?? Promise.resolve(refusalMessage(id, 0, RELAY_ACTION_REFUSED));
+      if (!known) {
+        highestActionId = Math.max(highestActionId, id);
+        actionBodies.set(id, body);
+        settledAcks.set(id, settled);
+      }
+      await deps.transport.post(await settled).catch(report);
       return;
     }
     if (!known) {
@@ -305,6 +315,8 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
         return receiveReady(message);
       case 'ack':
         return; // main waits on `ready`, never on a satellite ack
+      case 'abort':
+        return; // a legal kind from either role; B5/B6 own the abort handshake
       default:
         report(RELAY_UNEXPECTED_MESSAGE);
     }
@@ -429,8 +441,17 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
   let viewRevision = 0;
   let highestHandoff = 0;
   const queue: PendingAction[] = [];
+  /** Every action id this window has already settled, for late duplicate acks. */
+  const settledActions = new Set<number>();
   const handoffs = new Map<number, Handoff>();
   const installed = new Map<string, GolemWindowMessage | null>();
+  /**
+   * A transfer that arrived before the first projection. `ready` may not be
+   * posted without a view revision to quote, so the install waits rather than
+   * claiming its key: claiming it would make main's retry replay a response
+   * that does not exist yet, and nothing would ever re-arm `ready`.
+   */
+  let deferredDrafts: GolemWindowMessage | null = null;
 
   const report = (value: unknown): void => {
     if (!disposed) deps.onError(relayError(value));
@@ -515,10 +536,14 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
   function settleAction(ack: GolemAck): void {
     const index = queue.findIndex((entry) => entry.id === ack.id);
     if (index === -1) {
-      report(RELAY_UNEXPECTED_MESSAGE);
+      // Main re-acks a replayed action with the same stored message, so a
+      // first ack that was merely slow arrives after the retry settled the id.
+      // Only an id this window never issued is genuinely unexpected.
+      if (!settledActions.has(ack.id)) report(RELAY_UNEXPECTED_MESSAGE);
       return;
     }
     const [entry] = queue.splice(index, 1);
+    settledActions.add(entry.id);
     clearTimer(entry);
     // The host clears/unlocks its composer before the next action goes out.
     deps.onAdmission(entry.action, ack);
@@ -539,8 +564,13 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
 
   function applyView(view: GolemView, revision: number): void {
     if (disposed || revision <= viewRevision) return;
+    const first = viewRevision === 0;
     viewRevision = revision;
     deps.onView(view);
+    if (!first || deferredDrafts === null) return;
+    const pending = deferredDrafts;
+    deferredDrafts = null;
+    receiveDrafts(pending);
   }
 
   function installBootstrap(view: GolemView | null, revision: number): void {
@@ -670,6 +700,13 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       report(error);
       return;
     }
+    if (viewRevision === 0) {
+      // No projection yet, so `ready` has no revision to quote: hold the
+      // transfer — and its key — until the first view arrives. A retry of the
+      // same transfer simply replaces its own held message.
+      deferredDrafts = message;
+      return;
+    }
     highestHandoff = message.handoff;
     installed.set(key, null);
     deps.onDrafts(map, message.handoff, message.id);
@@ -730,6 +767,8 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       case 'drafts':
         receiveDrafts(message);
         return;
+      case 'abort':
+        return; // a legal kind from either role; B5/B6 own the abort handshake
       default:
         report(RELAY_UNEXPECTED_MESSAGE);
     }

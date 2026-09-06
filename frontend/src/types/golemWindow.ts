@@ -146,6 +146,15 @@ const QUEUE_STATES: readonly QueuedTurn['state'][] = ['queued', 'reopen-required
 const isString = (v: unknown): v is string => typeof v === 'string';
 const isUint = (v: unknown): v is number =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+/**
+ * A run's event sequence. `-1` is the store's initial/unknown sentinel — every
+ * run carries it from admission until its first event lands, and a terminal
+ * status with no sequence restores it — so the wire domain starts one below
+ * zero. It is the only signed counter the projection carries: `repoEpoch` is a
+ * Go `uint64`, and both revisions and the watermark only ever count up from 0.
+ */
+const isSeq = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isSafeInteger(v) && v >= -1;
 const oneOf = <T extends string>(set: readonly T[], v: unknown): v is T => set.includes(v as T);
 const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
 const fail = (): never => {
@@ -246,7 +255,7 @@ function parseRun(runId: string, value: unknown): ProjectedRun {
   if (!isRecord(value)) return fail();
   const identity = readRunIdentity(value.identity);
   if (!identity || !isUint(identity.repoEpoch) || identity.runId !== runId) return fail();
-  if (!oneOf(RUN_PHASES, value.phase) || !isUint(value.lastSeq)) return fail();
+  if (!oneOf(RUN_PHASES, value.phase) || !isSeq(value.lastSeq)) return fail();
   const run: ProjectedRun = { identity, phase: value.phase, lastSeq: value.lastSeq };
   const error = readOptionalString(value.error);
   if (error !== undefined) run.error = error;
