@@ -780,14 +780,25 @@ describe('re-dock', () => {
 
   it('does not reveal Golem when a bootstrap dies before it was ever ready', async () => {
     await start();
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
     const settled = undockGolem().catch((error: unknown) => error);
     emit(MODE_EVENT, phase('bootstrapping', 2));
     await flush();
-    emit(MODE_EVENT, retired(3));
+    const reason = 'bootstrap deadline expired';
+    // Go authorizes the native close for ANY instance whose window was ever
+    // created — including one that dies mid-bootstrap — so `closing` arrives
+    // here too, still carrying `mode: 'docked'` because the window never
+    // reached `ready`. Only a genuine re-dock's `closing` carries `undocked`.
+    emit(MODE_EVENT, withReason({ ...phase('closing', 3, 2), mode: 'docked' }, reason));
+    await flush();
+    emit(MODE_EVENT, withReason(retired(4), reason));
 
-    expect(((await settled) as Error).message).toBe('The Golem window closed before it was ready.');
+    expect(((await settled) as Error).message).toBe(reason);
     expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+    expect(useIDEStore.getState().centerReveal).toBe('files');
     expect(useGolemStore.getState().hostFrozen).toBe(false);
+    // No reveal means no composer-focus bump either (§5.3 ties the two).
+    expect(useGolemStore.getState().composerFocusRevision).toBe(focusBefore);
   });
 });
 

@@ -1052,4 +1052,40 @@ describe('IDEShell center pair, undocked', () => {
 
     expect(announcer().textContent).toBe('');
   });
+
+  it('never renders the undocked rail and stays silent when a bootstrap dies before it was ever ready', () => {
+    render(undockShell());
+    const held = holdFocus();
+
+    windowPhase('bootstrapping', 1);
+    // Go authorizes the native close for this instance too, even though it
+    // never reached `ready` — the snapshot still carries `mode: 'docked'`,
+    // unlike a genuine re-dock's `closing`, which carries `undocked`.
+    act(() =>
+      useGolemStore.getState().setWindowState({
+        mode: 'docked',
+        phase: 'closing',
+        instance: 1,
+        restorePending: false,
+        stateRevision: 2,
+        handoff: 1,
+        reason: 'bootstrap deadline expired',
+      })
+    );
+    act(() =>
+      useGolemStore.getState().setWindowState({
+        mode: 'docked',
+        phase: 'closed',
+        instance: 0,
+        restorePending: false,
+        stateRevision: 3,
+        handoff: 0,
+        reason: 'bootstrap deadline expired',
+      })
+    );
+
+    expect(screen.queryByRole('group', { name: 'Golem window' })).toBeNull();
+    expect(announcer().textContent).toBe('');
+    expect(document.activeElement).toBe(held);
+  });
 });

@@ -110,7 +110,10 @@ export function IDEShell({
   // preference is still bootstrapping, and until the satellite is actually
   // ready the docked content is what the user must keep seeing.
   const golemWindowPhase = useGolemStore((s) => s.windowState.phase);
-  const golemUndocked = golemWindowPhase === 'ready' || golemWindowPhase === 'closing';
+  const golemWindowMode = useGolemStore((s) => s.windowState.mode);
+  const golemUndocked =
+    golemWindowMode === 'undocked' &&
+    (golemWindowPhase === 'ready' || golemWindowPhase === 'closing');
   // Go clears this the moment the restore's open begins, so the flip that ends
   // it is several phases later — the announcer latches it (spec §7).
   const golemRestorePending = useGolemStore((s) => s.windowState.restorePending);

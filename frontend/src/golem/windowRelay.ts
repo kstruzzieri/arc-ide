@@ -561,7 +561,10 @@ function installState(own: Owner, next: GolemWindowState): void {
 
   if (next.phase === 'closed') {
     stopTransfer(own);
-    const redocked = own.closingInstance !== 0 && own.closingInstance === previous.instance;
+    const redocked =
+      own.closingInstance !== 0 &&
+      own.closingInstance === previous.instance &&
+      previous.mode === 'undocked';
     own.closingInstance = 0;
     if (redocked) {
       settleAttempt(own, 'dock');
