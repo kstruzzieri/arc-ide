@@ -6,6 +6,7 @@ import { useIDEStore } from '../../stores/ideStore';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { focusEditorSurface } from '../../utils/editorSurface';
 import type { ConversationView } from '../../types/golem';
+import type { GolemWindowState } from '../../types/golemWindow';
 
 jest.mock('../../wails/bindings', () => ({ ToggleMaximize: jest.fn() }));
 jest.mock('../../wails/runtime', () => ({
@@ -13,6 +14,15 @@ jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 jest.mock('../../utils/editorNavigation', () => ({ navigateToEditorLocation: jest.fn() }));
+// #271 B6: the rail's two actions are bound calls. Their own suite drives the
+// relay; here only the buttons and the geometry around them are under test.
+jest.mock('../../golem/windowRelay', () => ({
+  startMainGolemRelay: () => () => undefined,
+  undockGolem: () => Promise.resolve(),
+  dockGolem: () => Promise.resolve(),
+  focusGolemWindow: () => Promise.resolve(),
+  reportGolemWindowError: jest.fn(),
+}));
 
 const setViewport = (width: number) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
@@ -810,5 +820,177 @@ describe('IDEShell center focus', () => {
 
     act(() => useIDEStore.getState().setGolemPanelCollapsed(true));
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand Golem panel' }));
+  });
+});
+
+// ── #271 B6: the center while the satellite owns the chat ────────────────────
+
+describe('IDEShell center pair, undocked', () => {
+  const windowPhase = (phase: GolemWindowState['phase'], revision: number) =>
+    act(() =>
+      useGolemStore.getState().setWindowState({
+        mode: phase === 'ready' || phase === 'closing' ? 'undocked' : 'docked',
+        phase,
+        instance: phase === 'closed' ? 0 : 1,
+        restorePending: false,
+        stateRevision: revision,
+        handoff: phase === 'closed' ? 0 : 1,
+      })
+    );
+
+  /** Records the effective visibility the shell hands the island's host. */
+  const visibility: boolean[] = [];
+  const undockShell = () => (
+    <IDEShell
+      header={() => <div />}
+      sidebar={<div />}
+      leftPanel={<div />}
+      centerPanel={<div data-testid="editor" />}
+      golemPanel={(visible) => {
+        visibility.push(visible);
+        return <div data-testid="golem" data-visible={String(visible)} />;
+      }}
+      bottomPanel={<div data-testid="terminal" />}
+      rightPanel={<div data-testid="runs" />}
+      statusBar={<div />}
+    />
+  );
+
+  beforeEach(() => {
+    visibility.length = 0;
+  });
+
+  it('keeps the docked content while a saved undocked window is still bootstrapping', () => {
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    render(undockShell());
+    windowPhase('bootstrapping', 1);
+
+    // The satellite does not own the surface yet, so this window still shows it.
+    expect(golemIsland()).not.toHaveStyle({ display: 'none' });
+    expect(screen.queryByRole('group', { name: 'Golem window' })).toBeNull();
+    expect(screen.getByTestId('golem')).toHaveAttribute('data-visible', 'true');
+  });
+
+  it('replaces the island with a two-action rail once the window is ready', () => {
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    render(undockShell());
+    windowPhase('ready', 2);
+
+    const rail = screen.getByRole('group', { name: 'Golem window' });
+    const focus = screen.getByRole('button', { name: 'Focus Golem window' });
+    const dock = screen.getByRole('button', { name: 'Dock Golem panel' });
+    expect(rail).toContainElement(focus);
+    expect(rail).toContainElement(dock);
+    // Two siblings, never a button inside a button.
+    expect(focus.querySelector('button')).toBeNull();
+    expect(dock.querySelector('button')).toBeNull();
+    expect(focus.closest('button')).toBe(focus);
+
+    // The tree stays mounted, but it is neither visible nor focusable-into.
+    expect(golemIsland()).toHaveStyle({ display: 'none' });
+    expect(screen.getByTestId('golem')).toHaveAttribute('data-visible', 'false');
+    expect(visibility.at(-1)).toBe(false);
+    // Files fills the center and cannot be collapsed away from it.
+    expect(filesColumn()).not.toHaveStyle({ display: 'none' });
+    expect(screen.queryByRole('button', { name: 'Collapse Files panel' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Expand Golem panel' })).toBeNull();
+  });
+
+  it('keeps the rail through the re-dock and disables a second transfer request', () => {
+    render(undockShell());
+    windowPhase('ready', 2);
+    expect(screen.getByRole('button', { name: 'Dock Golem panel' })).toBeEnabled();
+
+    windowPhase('closing', 3);
+
+    expect(screen.getByRole('group', { name: 'Golem window' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Dock Golem panel' })).toBeDisabled();
+    // Bringing the window forward is still possible while it hands back.
+    expect(screen.getByRole('button', { name: 'Focus Golem window' })).toBeEnabled();
+  });
+
+  it('restores the saved split when the re-dock completes', () => {
+    useIDEStore.getState().setPanelSize('golem', 520);
+    render(undockShell());
+    windowPhase('ready', 2);
+    windowPhase('closing', 3);
+    expect(cssVar('--panel-golem-width')).toBe('520px');
+
+    // What the relay does on the authoritative `closed`.
+    windowPhase('closed', 4);
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+
+    expect(screen.queryByRole('group', { name: 'Golem window' })).toBeNull();
+    expect(golemIsland()).not.toHaveStyle({ display: 'none' });
+    expect(screen.getByTestId('golem')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByRole('button', { name: 'Collapse Files panel' })).toBeInTheDocument();
+    // Subject to the budget at this moment: the seam is live again, so the
+    // saved 520 is clamped to the ceiling — and the preference is still 520.
+    expect(cssVar('--panel-golem-width')).toBe('454px');
+    expect(useIDEStore.getState().panelSizes.golem).toBe(520);
+  });
+
+  it('leaves oversized saved widths alone at 1024px without railing Files', () => {
+    setViewport(1024);
+    useIDEStore.getState().setPanelSize('left', 600);
+    useIDEStore.getState().setPanelSize('right', 600);
+    useIDEStore.getState().setPanelSize('golem', 880);
+    render(undockShell());
+    windowPhase('ready', 2);
+
+    // Undocked is not degraded: Files is whole, and the sides are still
+    // allocated by the ordinary joint clamp Plan A owns.
+    expect(filesColumn()).not.toHaveStyle({ display: 'none' });
+    expect(screen.queryByRole('button', { name: 'Expand Files panel' })).toBeNull();
+    expect(cssVar('--panel-left-width')).toBe('358px');
+    expect(cssVar('--panel-right-width')).toBe('180px');
+    // The retained preference, not a split width: there is no seam to size.
+    expect(cssVar('--panel-golem-width')).toBe('880px');
+    expect(useIDEStore.getState().panelSizes.golem).toBe(880);
+  });
+
+  it('recovers the split after a re-dock once the window is wide enough again', () => {
+    setViewport(1024);
+    useIDEStore.getState().setPanelSize('golem', 880);
+    render(undockShell());
+    windowPhase('ready', 2);
+
+    windowPhase('closed', 3);
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    // Still too narrow for the pair, so Plan A's degradation rails Files.
+    expect(filesColumn()).toHaveStyle({ display: 'none' });
+
+    act(() => {
+      setViewport(1600);
+      window.dispatchEvent(new Event('resize'));
+    });
+    act(() => jest.advanceTimersByTime(32));
+
+    expect(golemIsland()).not.toHaveStyle({ display: 'none' });
+    expect(filesColumn()).not.toHaveStyle({ display: 'none' });
+    // 1600 - 86 - 540 = 974; ceiling = min(900, 800, 974 - 360) = 614.
+    expect(cssVar('--panel-golem-width')).toBe('614px');
+  });
+
+  it('says nothing and moves no focus when the chat changes windows', () => {
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    render(undockShell());
+    const announcer = screen.getByRole('status', { name: 'Layout changes' });
+    // A real focus target that survives the transition, inside the column that
+    // stays: a bare div is never focused, so it would prove nothing.
+    const held = screen.getByRole('group', { name: 'Files panel header' });
+    act(() => held.focus());
+    expect(document.activeElement).toBe(held);
+
+    windowPhase('ready', 2);
+
+    // A window move is not a collapse: no announcement, and focus stays put.
+    expect(announcer.textContent).toBe('');
+    expect(document.activeElement).toBe(held);
+
+    windowPhase('closed', 3);
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+
+    expect(announcer.textContent).toBe('');
   });
 });

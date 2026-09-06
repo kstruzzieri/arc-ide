@@ -22,6 +22,7 @@ import {
 import type { WorkspaceAccent } from '../../stores/ideStore';
 import { CommandPalette } from '../CommandPalette';
 import { FilesCommandBar } from './FilesCommandBar';
+import { GolemUndockedRail } from './GolemUndockedRail';
 import { PanelRail } from './PanelRail';
 import { ResizeHandle } from './ResizeHandle';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
@@ -101,6 +102,12 @@ export function IDEShell({
   const isGolemPanelCollapsed = useIsGolemPanelCollapsed();
   const isFilesPanelCollapsed = useIsFilesPanelCollapsed();
   const centerLayoutRevision = useIDEStore((s) => s.centerLayoutRevision);
+  // Visual ownership, not the saved mode (#271 B6). A restored `undocked`
+  // preference is still bootstrapping, and until the satellite is actually
+  // ready the docked content is what the user must keep seeing.
+  const golemUndocked = useGolemStore(
+    (s) => s.windowState.phase === 'ready' || s.windowState.phase === 'closing'
+  );
   const workspacePath = useIDEStore((s) => s.workspace?.path ?? null);
   const [isCommandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
@@ -166,7 +173,8 @@ export function IDEShell({
       },
     },
     viewport.width,
-    active?.panel === 'left' || active?.panel === 'right' ? active.panel : undefined
+    active?.panel === 'left' || active?.panel === 'right' ? active.panel : undefined,
+    golemUndocked
   );
 
   const bottom = computeBottomLayout(viewport.height, previewOf('bottom', bottomPanelSize));
@@ -290,6 +298,7 @@ export function IDEShell({
     reveal: centerReveal,
     order: centerOrder,
     revision: centerLayoutRevision,
+    undocked: center.undocked,
   });
 
   useLayoutEffect(() => {
@@ -302,12 +311,17 @@ export function IDEShell({
       reveal: centerReveal,
       order: centerOrder,
       revision: centerLayoutRevision,
+      undocked: center.undocked,
     };
 
     // A restore is not a gesture. It lands a render or more after the
     // repository itself changed — `LoadWorkspaceState` is awaited in between —
     // so the session key has already settled and only the revision marks it.
     if (previous.revision !== centerLayoutRevision) return;
+    // Neither is a window transition (#271 B6): the chat did not collapse, it
+    // moved, and on the way back the relay has already asked the composer for
+    // focus — which is a better target than whatever this pair would pick.
+    if (previous.undocked !== center.undocked) return;
 
     // Moving a DOM node drops the focus it held, so a reorder restores the
     // control the user was on by identity once the move has committed. Only
@@ -365,6 +379,7 @@ export function IDEShell({
     isFilesPanelCollapsed,
     isGolemPanelCollapsed,
     centerLayoutRevision,
+    center.undocked,
     rootOf,
   ]);
 
@@ -500,6 +515,7 @@ export function IDEShell({
     golem: center.golemCollapsed,
     session: sessionKey,
     revision: centerLayoutRevision,
+    undocked: center.undocked,
   });
 
   useEffect(() => {
@@ -510,6 +526,7 @@ export function IDEShell({
       golem: center.golemCollapsed,
       session: sessionKey,
       revision: centerLayoutRevision,
+      undocked: center.undocked,
     };
     announced.current = next;
     // A restore is not a change the user just made — and it lands a render
@@ -517,6 +534,9 @@ export function IDEShell({
     // The initial mount — and StrictMode's replay of it — compares equal to
     // itself and says nothing.
     if (previous.session !== next.session || previous.revision !== next.revision) return;
+    // Nor is moving the chat to its own window: "Golem panel collapsed" would
+    // be a lie, and the rail that replaced it names what actually happened.
+    if (previous.undocked !== next.undocked) return;
     const parts: string[] = [];
     if (previous.order !== next.order) {
       parts.push(`Golem panel moved ${next.order === 'golem-first' ? 'left' : 'right'}.`);
@@ -528,7 +548,14 @@ export function IDEShell({
     if (parts.length && announcerRef.current) {
       announcerRef.current.textContent = parts.join(' ');
     }
-  }, [centerOrder, center.filesCollapsed, center.golemCollapsed, sessionKey, centerLayoutRevision]);
+  }, [
+    centerOrder,
+    center.filesCollapsed,
+    center.golemCollapsed,
+    center.undocked,
+    sessionKey,
+    centerLayoutRevision,
+  ]);
 
   const expandCenter = useCallback((panel: CenterPanel) => {
     useIDEStore.getState().revealCenterPanel(panel);
@@ -598,7 +625,11 @@ export function IDEShell({
       >
         {golemIsland}
       </section>
-      {center.golemCollapsed && <PanelRail panel="golem" onExpand={expandGolem} />}
+      {center.undocked ? (
+        <GolemUndockedRail />
+      ) : (
+        center.golemCollapsed && <PanelRail panel="golem" onExpand={expandGolem} />
+      )}
     </div>
   );
 

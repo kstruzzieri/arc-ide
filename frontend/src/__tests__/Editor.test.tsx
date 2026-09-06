@@ -15,7 +15,11 @@ jest.mock('../wails/bindings', () => ({
 
 const mockWindowSetTitle = jest.fn();
 jest.mock('../wails/runtime', () => ({
-  WindowSetTitle: mockWindowSetTitle,
+  // Indirected, not referenced: `utils/commands` now reaches the runtime
+  // adapter through the #271 window relay, so this factory runs during the
+  // imports above — while `mockWindowSetTitle` is still in its temporal dead
+  // zone. Every other suite in this repo already spells its mocks this way.
+  WindowSetTitle: (...args: unknown[]) => mockWindowSetTitle(...args),
 }));
 
 // The real CodeMirrorEditor drags the full CM6 + LSP extension graph into

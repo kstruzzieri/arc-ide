@@ -1,6 +1,7 @@
 import { useMemo, type KeyboardEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useDraftStore } from '../../golem/draftStore';
+import { reportGolemWindowError, undockGolem } from '../../golem/windowRelay';
 import {
   activeRunOf,
   buildGolemView,
@@ -92,6 +93,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
     }))
   );
   const view = useMemo(() => buildGolemView(slices), [slices]);
+  const windowPhase = useGolemStore((state) => state.windowState.phase);
 
   const conversation = selectedConversation(view);
   const conversationId = conversation?.identity.conversationId ?? null;
@@ -161,6 +163,9 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
     draft === '' &&
     conversation.queuedTurns.length === 0;
   const canClear = conversation !== null && !frozen && !clearBusy && !clearEmpty;
+  // Deliberately not gated on `bridgePhase`: a window is a place to put the
+  // chat, and it opens with no repository bound at all (#271 B6).
+  const canUndock = windowPhase === 'closed' && !frozen;
 
   return (
     // data-accent pins the whole panel to the glacier accent the way
@@ -194,6 +199,21 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
             <>
               <PanelBarButton label="Configuration" onClick={actions.openConfig}>
                 <SettingsIcon aria-hidden="true" />
+              </PanelBarButton>
+              {/* #271 B6. Same predicate as the `golem-undock` command, and the
+                  same error handler: a window already open, opening, or handing
+                  back is not something a second request can help. */}
+              <PanelBarButton
+                label="Undock into a window"
+                title={canUndock ? 'Undock into a window' : 'Golem is already moving windows'}
+                disabled={!canUndock}
+                onClick={() => {
+                  void undockGolem().catch(reportGolemWindowError);
+                }}
+              >
+                <span className={styles.undockGlyph} aria-hidden="true">
+                  ⧉
+                </span>
               </PanelBarButton>
               <PanelBarButton
                 label="New chat"

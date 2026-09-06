@@ -178,6 +178,49 @@ describe('computeCenterLayout', () => {
     });
   });
 
+  // #271 B6: the satellite owns the surface, so the center is one column. The
+  // preferences it displaces are untouched — re-docking must restore the exact
+  // split the user left, subject only to the budget at that moment.
+  it('undocked fills Files without mutating its saved collapse preference', () => {
+    const prefs = {
+      ...DEFAULT_CENTER_LAYOUT,
+      isFilesPanelCollapsed: true,
+      isGolemPanelCollapsed: false,
+    };
+    const out = computeCenterLayout(budget({ golemUndocked: true, prefs }));
+    expect(out).toMatchObject({
+      filesCollapsed: false,
+      golemCollapsed: true,
+      seamEnabled: false,
+      undocked: true,
+      degraded: false,
+    });
+    expect(prefs.isFilesPanelCollapsed).toBe(true);
+    expect(prefs.golemWidth).toBe(DEFAULT_CENTER_LAYOUT.golemWidth);
+  });
+
+  it('reports undocked:false for every ordinary outcome', () => {
+    expect(computeCenterLayout(budget()).undocked).toBe(false);
+    expect(computeCenterLayout(budget({ prefs: { ...DEFAULT_CENTER_LAYOUT } })).undocked).toBe(
+      false
+    );
+    expect(
+      computeCenterLayout(budget({ viewportWidth: 1024, sideWidths: { left: 180, right: 180 } }))
+        .undocked
+    ).toBe(false);
+  });
+
+  // Window pressure is not the reason the island is gone, so `degraded` — which
+  // is what the shell would use to explain a rail the user did not ask for —
+  // stays false even in a window far too narrow for the split.
+  it('stays undocked rather than degraded in a window that could not fit the split', () => {
+    const out = computeCenterLayout(
+      budget({ golemUndocked: true, viewportWidth: 1024, sideWidths: { left: 180, right: 180 } })
+    );
+    expect(out).toMatchObject({ degraded: false, undocked: true, maxGolemWidth: 0 });
+    expect(out.golemWidth).toBe(DEFAULT_CENTER_LAYOUT.golemWidth);
+  });
+
   it('recovers the preferred split when the window widens again', () => {
     const narrow = budget({ viewportWidth: 1024, sideWidths: { left: 180, right: 180 } });
     expect(computeCenterLayout(narrow).degraded).toBe(true);
@@ -333,9 +376,23 @@ describe('computeEffectiveCenter', () => {
         golemCollapsed: false,
         seamEnabled: true,
         degraded: false,
+        undocked: false,
         golemWidth: 420,
         maxGolemWidth: 454,
       },
+    });
+  });
+
+  it('carries the undocked flag into the one composition both callers share', () => {
+    const { sideWidths, center } = computeEffectiveCenter(state(), 1440, undefined, true);
+    // The sides are allocated exactly as before: only the center pair changes.
+    expect(sideWidths).toEqual({ left: 260, right: 280 });
+    expect(center).toMatchObject({
+      filesCollapsed: false,
+      golemCollapsed: true,
+      seamEnabled: false,
+      undocked: true,
+      maxGolemWidth: 0,
     });
   });
 

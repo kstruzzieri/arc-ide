@@ -18,7 +18,13 @@ export interface PanelCommandBarProps {
   meta?: ReactNode;
   /** Right-aligned controls. Siblings of the identity, never inside it (spec §4.1). */
   controls?: ReactNode;
-  onCollapse: () => void;
+  /**
+   * Omitted when this panel cannot be collapsed at all — #271 B6's undocked
+   * layout, where Files is the whole center and the pair invariant would
+   * refuse the collapse anyway. A disabled control would advertise an action
+   * that does not exist here.
+   */
+  onCollapse?: () => void;
 }
 
 /**
@@ -100,9 +106,11 @@ export function PanelCommandBar({
       </div>
       <div className={styles.controls}>
         {controls}
-        <PanelBarButton label={`Collapse ${label} panel`} onClick={onCollapse}>
-          <MinusIcon aria-hidden="true" />
-        </PanelBarButton>
+        {onCollapse && (
+          <PanelBarButton label={`Collapse ${label} panel`} onClick={onCollapse}>
+            <MinusIcon aria-hidden="true" />
+          </PanelBarButton>
+        )}
       </div>
     </div>
   );

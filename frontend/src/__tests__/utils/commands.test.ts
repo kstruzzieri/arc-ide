@@ -2,6 +2,7 @@ import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { parseGolemStatus } from '../../types/golem';
+import type { GolemWindowState } from '../../types/golemWindow';
 import {
   createCommands,
   matchCommands,
@@ -9,6 +10,19 @@ import {
   showRunProfiles,
   type Command,
 } from '../../utils/commands';
+
+const mockUndock = jest.fn();
+const mockDock = jest.fn();
+const mockFocusWindow = jest.fn();
+const mockReportWindowError = jest.fn();
+
+// The relay itself is B6's own suite; here it is the seam the commands call.
+jest.mock('../../golem/windowRelay', () => ({
+  undockGolem: (...args: unknown[]) => mockUndock(...args) as Promise<void>,
+  dockGolem: (...args: unknown[]) => mockDock(...args) as Promise<void>,
+  focusGolemWindow: (...args: unknown[]) => mockFocusWindow(...args) as Promise<void>,
+  reportGolemWindowError: (...args: unknown[]) => mockReportWindowError(...args),
+}));
 
 const mockNavigateToEditorLocation = jest.fn();
 const mockStartProfile = jest.fn().mockResolvedValue(undefined);
@@ -65,7 +79,22 @@ beforeEach(() => {
   useIDEStore.setState(useIDEStore.getInitialState());
   useSearchStore.setState(useSearchStore.getInitialState());
   __resetGolemStore();
+  mockUndock.mockResolvedValue(undefined);
+  mockDock.mockResolvedValue(undefined);
+  mockFocusWindow.mockResolvedValue(undefined);
 });
+
+const windowPhase = (phase: GolemWindowState['phase'], over: Partial<GolemWindowState> = {}) => {
+  useGolemStore.getState().setWindowState({
+    mode: phase === 'ready' || phase === 'closing' ? 'undocked' : 'docked',
+    phase,
+    instance: phase === 'closed' ? 0 : 1,
+    restorePending: false,
+    stateRevision: 1,
+    handoff: phase === 'closed' ? 0 : 1,
+    ...over,
+  });
+};
 
 const commandById = (id: string) => {
   const command = createCommands(jest.fn()).find((item) => item.id === id);
@@ -102,6 +131,8 @@ test('creates the approved command registry with stable metadata', () => {
     'show-golem',
     'golem-configuration',
     'toggle-golem-panel',
+    'golem-undock',
+    'golem-dock',
     'swap-center-panels',
     'show-structure',
     'navigate-back',
@@ -143,6 +174,18 @@ test('creates the approved command registry with stable metadata', () => {
       id: 'toggle-golem-panel',
       title: 'Golem: Toggle Panel',
       keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
+      shortcut: undefined,
+    },
+    {
+      id: 'golem-undock',
+      title: 'Golem: Undock into a Window',
+      keywords: ['window', 'monitor', 'detach'],
+      shortcut: undefined,
+    },
+    {
+      id: 'golem-dock',
+      title: 'Golem: Dock into the Main Window',
+      keywords: ['window', 'attach'],
       shortcut: undefined,
     },
     {
@@ -502,5 +545,92 @@ describe('toggle-golem-panel (#271 §7)', () => {
       isGolemPanelCollapsed: false,
       centerReveal: 'golem',
     });
+  });
+});
+
+describe('window commands (#271 §5.3)', () => {
+  it('offers undock only from a settled docked surface', () => {
+    expect(commandById('golem-undock').enabled!()).toBe(true);
+
+    useGolemStore.getState().setHostFrozen(true);
+    expect(commandById('golem-undock').enabled!()).toBe(false);
+
+    useGolemStore.getState().setHostFrozen(false);
+    windowPhase('bootstrapping');
+    expect(commandById('golem-undock').enabled!()).toBe(false);
+    windowPhase('ready');
+    expect(commandById('golem-undock').enabled!()).toBe(false);
+  });
+
+  it('offers dock only while the satellite is ready', () => {
+    expect(commandById('golem-dock').enabled!()).toBe(false);
+    windowPhase('closing');
+    expect(commandById('golem-dock').enabled!()).toBe(false);
+    windowPhase('ready');
+    expect(commandById('golem-dock').enabled!()).toBe(true);
+  });
+
+  it('reports a refused transition instead of leaving the promise unhandled', async () => {
+    mockUndock.mockRejectedValue(new Error('no display available'));
+    commandById('golem-undock').run();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockReportWindowError).toHaveBeenCalledTimes(1);
+    expect((mockReportWindowError.mock.calls[0][0] as Error).message).toBe('no display available');
+
+    mockDock.mockRejectedValue(new Error('the window is busy'));
+    windowPhase('ready');
+    commandById('golem-dock').run();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockReportWindowError).toHaveBeenCalledTimes(2);
+  });
+
+  it('withdraws the panel toggle for the whole of a transfer', () => {
+    expect(commandById('toggle-golem-panel').enabled!()).toBe(true);
+    for (const phase of ['bootstrapping', 'bootstrapped', 'ready', 'closing'] as const) {
+      windowPhase(phase);
+      expect(commandById('toggle-golem-panel').enabled!()).toBe(false);
+    }
+  });
+});
+
+describe('showGolem across windows', () => {
+  it('focuses the satellite instead of a hidden tree once it owns the chat', () => {
+    windowPhase('ready');
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
+
+    showGolem();
+
+    expect(mockFocusWindow).toHaveBeenCalledTimes(1);
+    // The request still lands: the satellite's own surface consumes it.
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+  });
+
+  it('retains the selection and the focus request through a transfer', () => {
+    useGolemStore.getState().hydrateStatus(golemStatus('conv-a', 'frontend'));
+    useGolemStore.getState().hydrateStatus(golemStatus('conv-b', 'backend'));
+    windowPhase('closing');
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
+
+    showGolem('conv-b');
+
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-b');
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
+    // Neither host is visible mid-transfer, so nothing is revealed or focused.
+    expect(mockFocusWindow).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+  });
+
+  it('surfaces a refused selection rather than dropping it', () => {
+    showGolem('conv-that-never-existed');
+
+    expect(useIDEStore.getState().toast).toEqual({
+      message: 'That Golem conversation is no longer open.',
+      type: 'error',
+    });
+    // The reveal still happens: seeing the chat was the other half of the ask.
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(false);
   });
 });

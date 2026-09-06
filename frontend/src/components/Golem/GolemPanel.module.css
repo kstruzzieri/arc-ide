@@ -64,6 +64,14 @@
   animation: golemBreathe 2s ease-in-out infinite;
 }
 
+/* The undock control's glyph. A character rather than an icon component: it is
+   the standard "open in a new window" mark, and the button's label carries the
+   meaning for anyone who cannot see it. */
+.undockGlyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
 .liveDot {
   width: 9px;
   height: 9px;
@@ -714,20 +722,6 @@
   margin: 0;
   color: var(--text-muted);
   font-size: 10px;
-}
-
-.toolRaw {
-  margin: 4px 0 0;
-  max-height: 200px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background-color: var(--surface-base);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow: auto;
 }
 
 .entryText {

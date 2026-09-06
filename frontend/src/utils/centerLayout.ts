@@ -137,6 +137,13 @@ export interface CenterBudgetInput {
   prefs: CenterLayoutPrefs;
   reveal: CenterPanel;
   limits: CenterLayoutLimits;
+  /**
+   * The satellite window owns the conversation (#271 §5.3). Not a preference
+   * and not a collapse: the island is gone from this window entirely, so the
+   * center is one column and the saved split is left exactly as it was for the
+   * re-dock to restore.
+   */
+  golemUndocked?: boolean;
 }
 
 export interface EffectiveCenterLayout {
@@ -148,6 +155,8 @@ export interface EffectiveCenterLayout {
   seamEnabled: boolean;
   /** True only when window pressure — not a preference — railed a panel. */
   degraded: boolean;
+  /** True only while the satellite window owns the conversation. */
+  undocked: boolean;
 }
 
 export interface SideBudgetInput {
@@ -227,7 +236,22 @@ export function computeCenterLayout({
   prefs,
   reveal,
   limits,
+  golemUndocked = false,
 }: CenterBudgetInput): EffectiveCenterLayout {
+  if (golemUndocked) {
+    // Not `degraded`: nothing about this window's size caused it, so no
+    // recovery affordance is owed and the seam has nothing to size. The
+    // retained `golemWidth` is the preference the re-dock will restore.
+    return {
+      filesCollapsed: false,
+      golemCollapsed: true,
+      golemWidth: prefs.golemWidth,
+      maxGolemWidth: 0,
+      seamEnabled: false,
+      degraded: false,
+      undocked: true,
+    };
+  }
   const available = viewportWidth - chrome - sideWidths.left - sideWidths.right;
   // Not floored at minGolem: `max(min, available)` would conceal a split that
   // does not fit and render a Files column below its own minimum.
@@ -250,6 +274,7 @@ export function computeCenterLayout({
     golemCollapsed,
     seamEnabled,
     degraded,
+    undocked: false,
     golemWidth: seamEnabled
       ? Math.min(ceiling, Math.max(limits.minGolem, prefs.golemWidth))
       : prefs.golemWidth,
@@ -277,7 +302,8 @@ export interface CenterLayoutState {
 export function computeEffectiveCenter(
   state: CenterLayoutState,
   viewportWidth: number,
-  activeSide?: 'left' | 'right'
+  activeSide?: 'left' | 'right',
+  golemUndocked = false
 ): { sideWidths: { left: number; right: number }; center: EffectiveCenterLayout } {
   const sideWidths = computeSideWidths({
     viewportWidth,
@@ -300,6 +326,10 @@ export function computeEffectiveCenter(
       },
       reveal: state.centerReveal,
       limits: CENTER_LIMITS,
+      // Fourth argument rather than a `CenterLayoutState` field: window
+      // ownership lives in the Golem store, not in the IDE layout state this
+      // composition reads, and `commands.ts` passes that store wholesale.
+      golemUndocked,
     }),
   };
 }
