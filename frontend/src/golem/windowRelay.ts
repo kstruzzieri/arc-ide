@@ -97,6 +97,10 @@ interface Attempt {
   resolve(): void;
   reject(error: Error): void;
   settled: boolean;
+  /** Whether the binding that opened this attempt has answered yet. */
+  openSettled: boolean;
+  /** The lifecycle reason held back while that answer is still outstanding. */
+  closedReason: string | null;
 }
 
 type AttemptKind = 'undock' | 'dock';
@@ -188,7 +192,7 @@ function newAttempt(): Attempt {
     resolve = res;
     reject = rej;
   });
-  return { promise, resolve, reject, settled: false };
+  return { promise, resolve, reject, settled: false, openSettled: false, closedReason: null };
 }
 
 function settleAttempt(own: Owner, kind: AttemptKind): void {
@@ -516,6 +520,10 @@ function installState(own: Owner, next: GolemWindowState): void {
       // this, or it would erase the map the satellite just handed back.
       own.clearedInstance = next.instance;
       useDraftStore.getState().installAll({});
+      // §7: an opened window is a window the user is about to type in. The
+      // satellite has no store, so its caret comes from this bump travelling
+      // out with the next projection — once per window, not per state tick.
+      useGolemStore.getState().requestComposerFocus();
     }
     if (own.closingInstance === next.instance) {
       // The re-dock was abandoned: the satellite keeps the conversation.
@@ -538,7 +546,17 @@ function installState(own: Owner, next: GolemWindowState): void {
     } else {
       failAttempt(own, 'dock', own.failure ?? REDOCK_FAILED);
     }
-    failAttempt(own, 'undock', own.failure ?? UNDOCK_FAILED);
+    const opening = own.undock;
+    if (opening !== null && !opening.openSettled) {
+      // `abandonGolemOpen` emits this `closed` *before* `OpenGolemWindow`
+      // returns its error, so failing the attempt now would settle it with a
+      // generic reason and leave the real one — "no display", a superseded
+      // attempt — with nowhere to go. Hold the reason and let the binding's
+      // own answer, which is the one that knows, settle it.
+      opening.closedReason = own.failure ?? UNDOCK_FAILED;
+    } else {
+      failAttempt(own, 'undock', own.failure ?? UNDOCK_FAILED);
+    }
     own.failure = null;
   }
 
@@ -634,6 +652,10 @@ export function undockGolem(): Promise<void> {
   const own = active;
   if (own === null || own.cancelled) return Promise.reject(new Error(NO_OWNER));
   if (own.undock) return own.undock.promise;
+  // Go answers an open on a live window by revealing it and publishing no new
+  // state, so an attempt started here would wait for a `ready` that has already
+  // happened. Same intent, honest call: bring the window forward.
+  if (own.state.phase === 'ready') return focusGolemWindow();
   // Synchronous, before any snapshot is taken: B4 made local admission and
   // draft clearing synchronous, so the barrier and the map the transfer will
   // read cannot disagree about what the user typed.
@@ -644,12 +666,21 @@ export function undockGolem(): Promise<void> {
   const attempt = newAttempt();
   own.undock = attempt;
   void OpenGolemWindow().then(
-    () => undefined,
+    () => {
+      if (own.cancelled || own.undock !== attempt) return;
+      attempt.openSettled = true;
+      // Go accepted the open and then retired the window: it never said why,
+      // so the lifecycle's own reason is all there is.
+      if (attempt.closedReason !== null) failAttempt(own, 'undock', attempt.closedReason);
+    },
     (error: unknown) => {
       if (own.cancelled || own.undock !== attempt) return;
+      attempt.openSettled = true;
+      const retired = attempt.closedReason !== null;
       failAttempt(own, 'undock', boundedGolemMessage(error));
-      // Nothing was ever handed over, so the docked host owns it again.
-      refreshFrozen(own);
+      // Nothing was ever handed over, so the docked host owns it again — unless
+      // the retirement already thawed it, which must not be written twice.
+      if (!retired) refreshFrozen(own);
     }
   );
   return attempt.promise;

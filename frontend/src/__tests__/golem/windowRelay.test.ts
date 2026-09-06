@@ -143,6 +143,26 @@ const golemStatus = (conversationId: string, workspaceId: string) =>
 
 const CONV = 'conv-a';
 
+/**
+ * Counts `setHostFrozen(false)` calls. A redundant thaw is invisible in the
+ * final state but still a second write over a surface the user is looking at,
+ * so it is asserted rather than inferred.
+ */
+const countThaws = () => {
+  const real = useGolemStore.getState().setHostFrozen;
+  let thaws = 0;
+  useGolemStore.setState({
+    setHostFrozen: (frozen: boolean) => {
+      if (!frozen) thaws += 1;
+      real(frozen);
+    },
+  });
+  return {
+    count: () => thaws,
+    restore: () => useGolemStore.setState({ setHostFrozen: real }),
+  };
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -283,6 +303,75 @@ describe('undock', () => {
 
     await expect(undockGolem()).rejects.toThrow('no display available');
     expect(useGolemStore.getState().hostFrozen).toBe(false);
+  });
+
+  it('fails an early close with the reason the open call actually reports', async () => {
+    const gate = deferred<undefined>();
+    openMock.mockReturnValue(gate.promise);
+    await start();
+
+    const thaw = countThaws();
+    try {
+      const settled = undockGolem().catch((error: unknown) => error);
+
+      // Go's `abandonGolemOpen` publishes `closed` *before* `OpenGolemWindow`
+      // returns its error, so failing the attempt here would bury the only
+      // description of what actually went wrong.
+      emit(MODE_EVENT, retired(2));
+      await flush();
+      gate.reject(new Error('display gone'));
+
+      expect(((await settled) as Error).message).toBe('display gone');
+      expect(useGolemStore.getState().hostFrozen).toBe(false);
+      expect(thaw.count()).toBe(1);
+    } finally {
+      thaw.restore();
+    }
+  });
+
+  it('falls back to the generic reason when the open call reports none', async () => {
+    const gate = deferred<undefined>();
+    openMock.mockReturnValue(gate.promise);
+    await start();
+    const settled = undockGolem().catch((error: unknown) => error);
+
+    emit(MODE_EVENT, retired(2));
+    await flush();
+    gate.resolve(undefined);
+
+    expect(((await settled) as Error).message).toBe('The Golem window closed before it was ready.');
+    expect(useGolemStore.getState().hostFrozen).toBe(false);
+  });
+
+  it('focuses the composer once when the window first becomes ready', async () => {
+    await start();
+    const before = useGolemStore.getState().composerFocusRevision;
+
+    emit(MODE_EVENT, phase('bootstrapped', 2));
+    await flush();
+    expect(useGolemStore.getState().composerFocusRevision).toBe(before);
+
+    emit(MODE_EVENT, phase('ready', 3));
+    await flush();
+    const opened = useGolemStore.getState().composerFocusRevision;
+    expect(opened).toBeGreaterThan(before);
+
+    // Every later tick of the same instance is ordinary state, not an open.
+    emit(MODE_EVENT, phase('ready', 4));
+    await flush();
+    expect(useGolemStore.getState().composerFocusRevision).toBe(opened);
+  });
+
+  it('brings a live window forward instead of opening one that cannot settle', async () => {
+    await start();
+    emit(MODE_EVENT, phase('bootstrapped', 2));
+    await flush();
+    emit(MODE_EVENT, phase('ready', 3));
+    await flush();
+
+    await expect(undockGolem()).resolves.toBeUndefined();
+    expect(focusMock).toHaveBeenCalledTimes(1);
+    expect(openMock).not.toHaveBeenCalled();
   });
 
   it('holds the docked text frozen until an unconfirmed transfer is retired', async () => {
@@ -491,6 +580,28 @@ describe('re-dock', () => {
     });
     expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
     expect(useGolemStore.getState().hostFrozen).toBe(false);
+  });
+
+  it('holds a returned map that outran its closing snapshot and installs it once', async () => {
+    await ready();
+    const attempt = dockGolem();
+
+    // The map is relayed over one channel and the `closing` that explains it
+    // over another, so the getter is what places it.
+    stateMock.mockResolvedValue(phase('closing', 4, 2));
+    emit(MESSAGE_EVENT, returnedDrafts(2, 7, { [CONV]: 'typed in the window' }));
+    await flush();
+
+    expect(useGolemStore.getState().windowState).toMatchObject({ phase: 'closing', handoff: 2 });
+    // One ack, so the held envelope was placed exactly once: B2 answers a
+    // duplicate too, and a second delivery would show up as a second ack.
+    expect(acks()).toEqual([{ id: 7, ok: true }]);
+    expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'typed in the window' });
+    expect(useGolemStore.getState().windowError).toBeNull();
+
+    emit(MODE_EVENT, retired(5));
+    await expect(attempt).resolves.toBeUndefined();
+    expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'typed in the window' });
   });
 
   it('keeps satellite ownership when the transition aborts back to ready', async () => {
