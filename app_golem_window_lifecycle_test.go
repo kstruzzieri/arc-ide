@@ -1836,7 +1836,9 @@ func TestPreferenceSaveFailureIsReportedAndDeduplicated(t *testing.T) {
 	var reported []string
 	h.app.emitFn = func(event string, data any) {
 		// Reporting must not hold either lock: frontend work can re-enter App.
-		h.app.golemSaveMu.Lock()
+		if !h.app.golemSaveMu.TryLock() {
+			t.Fatal("preference error emitted while the save lock is held")
+		}
 		h.app.golemSaveMu.Unlock()
 		_ = h.state()
 		if event == "golem:window-preference-error" {
