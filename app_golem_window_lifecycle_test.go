@@ -1951,9 +1951,95 @@ func TestViewErrorRelaysWithoutReplacingBootstrapView(t *testing.T) {
 	if err != nil || boot.Revision != 1 || string(boot.View) != `{"rev":1}` {
 		t.Fatalf("bootstrap after view error = %+v, %v; want the retained revision 1", boot, err)
 	}
+	if boot.ViewError == nil || boot.ViewError.Revision != msg.Revision ||
+		string(boot.ViewError.Payload) != string(msg.Payload) {
+		t.Fatalf("bootstrap view error = %+v, want retained revision %d: %s", boot.ViewError, msg.Revision, msg.Payload)
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), h.viewMessage(2)); err != nil {
+		t.Fatalf("recovery view: %v", err)
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), msg); err != nil {
+		t.Fatalf("delayed view error: %v", err)
+	}
+	boot, err = h.app.BootstrapGolemWindow(h.satCtx())
+	if err != nil || boot.Revision != 2 || boot.ViewError != nil {
+		t.Fatalf("bootstrap after recovery and delayed error = %+v, %v; want revision 2 without an error", boot, err)
+	}
 	msg.Revision = 0
 	if err := h.app.PostGolemWindowMessage(h.mainCtx(), msg); err == nil {
 		t.Fatal("view error without a revision was accepted")
+	}
+}
+
+func TestViewErrorBeforeWindowCreationSurvivesBootstrap(t *testing.T) {
+	h := newGolemHarness(t)
+	const reason = `{"reason":"The conversation could not be displayed."}`
+	h.onNewWindow(func(*fakeNative) {
+		if err := h.app.PostGolemWindowMessage(h.mainCtx(), h.viewMessage(1)); err != nil {
+			t.Fatalf("view before window handle exists: %v", err)
+		}
+		msg := GolemWindowMessage{
+			Kind: "view-error", Instance: h.instance(), Revision: 3,
+			Payload: json.RawMessage(reason),
+		}
+		if err := h.app.PostGolemWindowMessage(h.mainCtx(), msg); err != nil {
+			t.Fatalf("view error before window handle exists: %v", err)
+		}
+		// The caller's payload buffer no longer owns the retained bootstrap.
+		copy(msg.Payload, strings.Repeat(" ", len(msg.Payload)))
+		msg.Revision = 2
+		msg.Payload = json.RawMessage(`{"reason":"An older failure."}`)
+		if err := h.app.PostGolemWindowMessage(h.mainCtx(), msg); err != nil {
+			t.Fatalf("older view error before window handle exists: %v", err)
+		}
+	})
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("OpenGolemWindow: %v", err)
+	}
+	if got := h.satellite().received(); len(got) != 0 {
+		t.Fatalf("events delivered before the window handle existed = %d, want 0", len(got))
+	}
+	boot, err := h.app.BootstrapGolemWindow(h.satCtx())
+	if err != nil || boot.Revision != 1 || string(boot.View) != `{"rev":1}` {
+		t.Fatalf("bootstrap after early view failure = %+v, %v; want retained revision 1", boot, err)
+	}
+	if boot.ViewError == nil || boot.ViewError.Revision != 3 || string(boot.ViewError.Payload) != reason {
+		t.Fatalf("bootstrap after early view failure = %+v, want revision 3 with reason %s", boot.ViewError, reason)
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), h.viewMessage(2)); err != nil {
+		t.Fatalf("view older than retained failure: %v", err)
+	}
+	boot, err = h.app.BootstrapGolemWindow(h.satCtx())
+	if err != nil || boot.Revision != 2 || boot.ViewError == nil || boot.ViewError.Revision != 3 {
+		t.Fatalf("bootstrap after partial recovery = %+v, %v; want revision 2 with failure 3", boot, err)
+	}
+}
+
+func TestViewErrorClearedWhenWindowReopens(t *testing.T) {
+	h := newGolemHarness(t)
+	h.undock()
+	satellite := h.satellite()
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), GolemWindowMessage{
+		Kind: "view-error", Instance: h.instance(), Revision: 2,
+		Payload: json.RawMessage(`{"reason":"The conversation could not be displayed."}`),
+	}); err != nil {
+		t.Fatalf("view error: %v", err)
+	}
+	if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("CloseGolemWindow: %v", err)
+	}
+	h.transferBackToMain(95, true)
+	if err := h.app.ConfirmGolemWindowClose(h.satCtx(), h.instance(), h.handoff()); err != nil {
+		t.Fatalf("ConfirmGolemWindowClose: %v", err)
+	}
+	h.retire(satellite.id)
+	waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("reopen Golem window: %v", err)
+	}
+	boot, err := h.app.BootstrapGolemWindow(h.satCtx())
+	if err != nil || boot.Revision != 0 || len(boot.View) != 0 || boot.ViewError != nil {
+		t.Fatalf("bootstrap after reopening = %+v, %v; want no retained view or error", boot, err)
 	}
 }
 

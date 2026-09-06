@@ -104,6 +104,9 @@ type golemWindowRuntime struct {
 	// view is the latest projection main published, retained for bootstrap.
 	view         json.RawMessage
 	viewRevision uint64
+	// A failed newer projection must also survive events sent before the
+	// satellite subscribes, so its retained view cannot become interactive.
+	viewError *GolemWindowMessage
 
 	// transferID is the draft-map message id recorded for the current handoff
 	// (main's map on undock, the satellite's final map on re-dock);
@@ -207,9 +210,10 @@ type GolemWindowEnvelope struct {
 // GolemWindowBootstrap is the satellite's first read: current state plus the
 // latest projection main published (null before the first publish).
 type GolemWindowBootstrap struct {
-	State    GolemWindowState `json:"state"`
-	View     json.RawMessage  `json:"view"`
-	Revision uint64           `json:"revision"`
+	State     GolemWindowState    `json:"state"`
+	View      json.RawMessage     `json:"view"`
+	Revision  uint64              `json:"revision"`
+	ViewError *GolemWindowMessage `json:"viewError,omitempty"`
 }
 
 // golemWindowKinds maps a kind to the roles allowed to send it.
@@ -640,6 +644,7 @@ func (r *golemWindowRuntime) retireLocked() GolemWindowState {
 	r.restoring = false
 	r.instance, r.handoff = 0, 0
 	r.view, r.viewRevision = nil, 0
+	r.viewError = nil
 	r.transferID, r.transferAcked = 0, false
 	r.closeAuthorized = false
 	r.retiringID, r.retiringInstance, r.retiringHandoff = 0, 0, 0
@@ -1207,6 +1212,24 @@ func (a *App) acceptGolemView(instance uint64, msg GolemWindowMessage) error {
 	}
 	a.golemWin.view = append(json.RawMessage(nil), msg.Payload...)
 	a.golemWin.viewRevision = msg.Revision
+	if a.golemWin.viewError != nil && msg.Revision >= a.golemWin.viewError.Revision {
+		a.golemWin.viewError = nil
+	}
+	return nil
+}
+
+func (a *App) acceptGolemViewError(instance uint64, msg GolemWindowMessage) error {
+	a.golemWinMu.Lock()
+	defer a.golemWinMu.Unlock()
+	if a.golemWin.instance != instance {
+		return fmt.Errorf("golem window: view-error names retired instance %d", instance)
+	}
+	if msg.Revision <= a.golemWin.viewRevision ||
+		(a.golemWin.viewError != nil && msg.Revision <= a.golemWin.viewError.Revision) {
+		return nil
+	}
+	msg.Payload = append(json.RawMessage(nil), msg.Payload...)
+	a.golemWin.viewError = &msg
 	return nil
 }
 
@@ -1458,6 +1481,7 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 	a.golemWin.restoring = a.golemWin.restorePending
 	a.golemWin.restorePending = false
 	a.golemWin.view, a.golemWin.viewRevision = nil, 0
+	a.golemWin.viewError = nil
 	a.golemWin.transferID, a.golemWin.transferAcked = 0, false
 	a.golemWin.retirementFailed = false
 	a.golemWin.reason = ""
@@ -1675,9 +1699,10 @@ func (a *App) BootstrapGolemWindow(ctx context.Context) (GolemWindowBootstrap, e
 		state = a.golemWin.transition()
 	}
 	boot := GolemWindowBootstrap{
-		State:    state,
-		View:     a.golemWin.view,
-		Revision: a.golemWin.viewRevision,
+		State:     state,
+		View:      a.golemWin.view,
+		Revision:  a.golemWin.viewRevision,
+		ViewError: a.golemWin.viewError,
 	}
 	a.golemWinMu.Unlock()
 
@@ -1717,12 +1742,7 @@ func (a *App) PostGolemWindowMessage(ctx context.Context, msg GolemWindowMessage
 	case "view":
 		err = a.acceptGolemView(instance, msg)
 	case "view-error":
-		a.golemWinMu.Lock()
-		current := a.golemWin.instance == instance
-		a.golemWinMu.Unlock()
-		if !current {
-			return fmt.Errorf("golem window: view-error names retired instance %d", instance)
-		}
+		err = a.acceptGolemViewError(instance, msg)
 	case "drafts":
 		err = a.acceptGolemDrafts(instance, role, msg)
 	case "ack":
@@ -1776,10 +1796,9 @@ func (a *App) relayGolemEnvelope(envelope GolemWindowEnvelope) error {
 		target, name = satellite, golemWindowNameGolem
 	}
 	if target == nil {
-		if envelope.Message.Kind == "view" {
-			// Retained by acceptGolemView and served by BootstrapGolemWindow:
-			// a projection that arrives before the handle exists is delivered by
-			// the bootstrap, not lost.
+		if envelope.Message.Kind == "view" || envelope.Message.Kind == "view-error" {
+			// Retained and served by BootstrapGolemWindow: projection state
+			// arriving before the handle exists is delivered by the bootstrap.
 			return nil
 		}
 		return fmt.Errorf("golem window: no live %s window to relay %s to", name, envelope.Message.Kind)

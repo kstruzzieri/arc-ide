@@ -132,6 +132,7 @@ describe('RoutingCard rows', () => {
       'agent',
       'chat',
       'embedding',
+      'planning',
       'summarize',
     ]);
 
@@ -143,7 +144,7 @@ describe('RoutingCard rows', () => {
       models: [model({ routedUseCases: ['chat', 'summarize'] })],
     });
 
-    for (const useCase of ['agent', 'chat', 'embedding', 'summarize']) {
+    for (const useCase of ['agent', 'chat', 'embedding', 'planning', 'summarize']) {
       expect(routeCells(useCase)).toBeInTheDocument();
     }
     // A known use case with no route is an offer, not a defect.

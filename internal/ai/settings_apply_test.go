@@ -72,6 +72,16 @@ func validateDropSets(drops []ChangeDropSet) error {
 	return nil
 }
 
+// maxChallengeProvenanceBytes bounds one rendered provenance hop: at most two
+// bounded identifiers joined by a fixed literal. It lives with the oracle
+// because the oracle is the only thing that consults it — renderHop's inputs
+// are fixed vocabulary today (reachableDestinations only ever builds hops from
+// useCaseAgent), so no production path can exceed it and a constant sitting in
+// settings_apply.go would read as a ceiling nothing enforces. If a hop ever
+// interpolates a configuration-supplied identifier, the bound has to become a
+// real check inside applyDestinations, not just this assertion.
+const maxChallengeProvenanceBytes = 2*maxProjectionIdentifierLen + 32
+
 func validateApplyChallenge(c *ApplyChallenge) error {
 	if c == nil {
 		return fmt.Errorf("challenge missing")
@@ -84,10 +94,26 @@ func validateApplyChallenge(c *ApplyChallenge) error {
 	if c.ExpiresAt < 1 || c.ExpiresAt > 9007199254740991 {
 		return fmt.Errorf("challenge expiresAt = %d", c.ExpiresAt)
 	}
-	d := c.Destination
-	if !validRequestIdentifier(d.Provider) || !validRequestIdentifier(d.Model) ||
-		!validRequestEndpoint(d.Endpoint) || d.Classification != "remote" {
-		return fmt.Errorf("challenge destination = %+v", d)
+	// Every NEW remote destination the write would open. A challenge that
+	// lists none is not a consent question, and a local destination is never
+	// one. The model is ABSENT on a destination reached by upstream's
+	// recommendation route, which names a provider and no model at all.
+	if len(c.Destinations) == 0 || len(c.Destinations) > maxProjectionEntries {
+		return fmt.Errorf("challenge destinations = %d entries", len(c.Destinations))
+	}
+	for i, d := range c.Destinations {
+		if !validRequestIdentifier(d.Provider) || !validRequestEndpoint(d.Endpoint) ||
+			d.Classification != "remote" || (d.Model != "" && !validRequestIdentifier(d.Model)) {
+			return fmt.Errorf("challenge destinations[%d] = %+v", i, d)
+		}
+		if len(d.Provenance) == 0 || len(d.Provenance) > maxProjectionEntries {
+			return fmt.Errorf("challenge destinations[%d].provenance = %d entries", i, len(d.Provenance))
+		}
+		for j, hop := range d.Provenance {
+			if hop == "" || len(hop) > maxChallengeProvenanceBytes || sanitizeIdentifier(hop) != hop {
+				return fmt.Errorf("challenge destinations[%d].provenance[%d] = %q", i, j, hop)
+			}
+		}
 	}
 	return nil
 }
@@ -561,10 +587,11 @@ func TestApplyRequestKeysNeverEscapeInResults(t *testing.T) {
 			Providers: []ProviderProjection{}, Diagnostics: []Diagnostic{},
 		}},
 		{Status: "consent_required", Challenge: &ApplyChallenge{
-			Token: "opaque", ExpiresAt: 1, Destination: ApplyDestination{
+			Token: "opaque", ExpiresAt: 1, Destinations: []ApplyDestination{{
 				Provider: "hosted", Model: "wire-model",
 				Endpoint: "https://api.example.com/v1", Classification: "remote",
-			},
+				Provenance: []string{"agent"},
+			}},
 		}},
 	}
 	for i, result := range results {
@@ -1071,6 +1098,25 @@ func TestPrepareSettingsApply(t *testing.T) {
 					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
 				}
 			},
+		},
+		{
+			// planning is a Firn capability floor (tool-bearing), unlike vision
+			// above: routing it needs no confirmUnknown at all.
+			name:    "planning route satisfies the floor",
+			changes: []Change{routeChange("planning", "ollama", "planning-model", "chat", "stream", "tool_call")},
+			check: func(t *testing.T, cfg *config.Config) {
+				if cfg.Defaults["planning"] != "planning-m" || cfg.Models["planning-m"].Name != "planning-model" {
+					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
+				}
+			},
+		},
+		{
+			// The planning floor requires tool_call; carving it off is refused
+			// before any mutation, same as the agent/chat floor rejections.
+			name:       "planning route below the floor is refused",
+			changes:    []Change{routeChange("planning", "ollama", "planning-model", "chat", "stream")},
+			wantStatus: "diagnostics",
+			wantCodes:  []string{codeEligibilityIneligible},
 		},
 		{
 			// Firn derives the affected defaults outside its floor table; a
@@ -2207,6 +2253,73 @@ func localAgentRoute() Change {
 	return routeChange(useCaseAgent, "ollama", "apply-local-model", "chat", "stream", "tool_call")
 }
 
+// fallbackChainTargetJSON is the write fixture whose agent role reaches two
+// FALLBACKS besides its own model. Both fallback providers are local today,
+// so pointing them at remote endpoints opens two new destinations at once
+// while the agent route itself never moves — the shape a single-destination
+// consent question cannot express, and the only honest way to open a batch
+// (the agent route can never be unbound through apply).
+const fallbackChainTargetJSON = `{
+  "providers": {
+    "ollama": {"base_url": "http://localhost:11434"},
+    "alpha": {"base_url": "http://localhost:11501", "api_format": "openai-compat"},
+    "beta": {"base_url": "http://localhost:11502", "api_format": "openai-compat"}
+  },
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["alpha-m", "beta-m"]},
+    "alpha-m": {"name": "alpha-model", "provider": "alpha", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "beta-m": {"name": "beta-model", "provider": "beta", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "agent-m"}
+}`
+
+const (
+	alphaFallbackEndpoint = "https://alpha.example.com/v1"
+	betaFallbackEndpoint  = "https://beta.example.net/v1"
+)
+
+// remoteFallbackTargetJSON is the same document with both fallbacks ALREADY
+// remote: its reachable set holds two remote destinations the user has never
+// been asked about, which is what makes a set-preserving edit on it the I8
+// case.
+var remoteFallbackTargetJSON = strings.NewReplacer(
+	"http://localhost:11501", alphaFallbackEndpoint,
+	"http://localhost:11502", betaFallbackEndpoint,
+).Replace(fallbackChainTargetJSON)
+
+// remoteFallbackChanges retargets both fallback providers at remote endpoints
+// without touching the agent route or any model.
+func remoteFallbackChanges() []Change {
+	return []Change{
+		{Kind: changeKindProviderUpdate, Name: "alpha", Endpoint: stringPtr(alphaFallbackEndpoint)},
+		{Kind: changeKindProviderUpdate, Name: "beta", Endpoint: stringPtr(betaFallbackEndpoint)},
+	}
+}
+
+// wantFallbackDestinations is the exact challenge listing those changes must
+// produce: both new remotes, DIGEST-sorted, each reached by the plain agent
+// hop.
+func wantFallbackDestinations() []ApplyDestination {
+	alpha := ApplyDestination{Provider: "alpha", Model: "alpha-model", Endpoint: alphaFallbackEndpoint,
+		Classification: "remote", Provenance: []string{"agent"}}
+	beta := ApplyDestination{Provider: "beta", Model: "beta-model", Endpoint: betaFallbackEndpoint,
+		Classification: "remote", Provenance: []string{"agent"}}
+	if destinationDigest("beta", betaFallbackEndpoint) < destinationDigest("alpha", alphaFallbackEndpoint) {
+		return []ApplyDestination{beta, alpha}
+	}
+	return []ApplyDestination{alpha, beta}
+}
+
+func sameApplyDestinations(got, want []ApplyDestination) bool {
+	return slices.EqualFunc(got, want, func(a, b ApplyDestination) bool {
+		return a.Provider == b.Provider && a.Model == b.Model && a.Endpoint == b.Endpoint &&
+			a.Classification == b.Classification && slices.Equal(a.Provenance, b.Provenance)
+	})
+}
+
 type applyHarness struct {
 	svc  *Service
 	rec  *emitRecorder
@@ -2291,7 +2404,7 @@ func (h *applyHarness) confirm(t *testing.T, token string, req SettingsApplyRequ
 }
 
 // pendingRecord reaches into the challenge map so a test can assert what the
-// backend retained — and, for the destination-mismatch row, move it.
+// backend retained.
 func (h *applyHarness) pendingRecord(t *testing.T, token string) *settingsChallengeRecord {
 	t.Helper()
 	h.svc.challengeMu.Lock()
@@ -2437,6 +2550,194 @@ func TestApplySettingsConsentMatrix(t *testing.T) {
 	}
 }
 
+// TestApplySettingsChallengesTheWholeNewRemoteBatch: a write that opens more
+// than one new remote destination asks about ALL of them at once, and the
+// single confirmation commits the whole batch durably. Nothing here unbinds
+// the agent route: what moves is where two of its fallbacks point.
+func TestApplySettingsChallengesTheWholeNewRemoteBatch(t *testing.T) {
+	consentPath := filepath.Join(t.TempDir(), "consent", "grants.json")
+	h := newApplyHarnessWithConsent(t, fallbackChainTargetJSON, consentPath)
+	req := h.request(t, remoteFallbackChanges()...)
+	before := h.targetBytes(t)
+
+	res, err := h.svc.ApplySettings(req)
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if err := validateSettingsApplyResult(res); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+	}
+	if res.Status != "consent_required" {
+		t.Fatalf("status = %q, want consent_required (%+v)", res.Status, res)
+	}
+	if want := wantFallbackDestinations(); !sameApplyDestinations(res.Challenge.Destinations, want) {
+		t.Fatalf("challenge destinations = %+v, want %+v", res.Challenge.Destinations, want)
+	}
+	if !bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("the challenge wrote to the target")
+	}
+	for _, dest := range wantFallbackDestinations() {
+		if h.svc.consent.Has(destinationDigest(dest.Provider, dest.Endpoint)) {
+			t.Fatalf("the challenge granted %s", dest.Provider)
+		}
+	}
+
+	confirmed := h.confirm(t, res.Challenge.Token, req)
+	if confirmed.Status != "applied" {
+		t.Fatalf("confirm = %+v, want applied", confirmed)
+	}
+	if bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("the confirmation published nothing")
+	}
+	// Durable, not merely in memory: only a store reopened from the same file
+	// proves the whole batch survived the write.
+	reopened, err := OpenConsentStore(filesystem.NewOS(), consentPath)
+	if err != nil {
+		t.Fatalf("reopen consent store: %v", err)
+	}
+	for _, dest := range wantFallbackDestinations() {
+		if !reopened.Has(destinationDigest(dest.Provider, dest.Endpoint)) {
+			t.Fatalf("the reopened store holds no grant for %q", dest.Provider)
+		}
+	}
+}
+
+// TestApplySettingsSkipsTheChallengeWhenTheReachableSetIsUnchanged (I8):
+// consent is asked about the SET. An edit that leaves every reachable
+// destination exactly where it was publishes on the first call — even though
+// the set holds remote destinations that carry no grant, because the user has
+// already been living with them.
+func TestApplySettingsSkipsTheChallengeWhenTheReachableSetIsUnchanged(t *testing.T) {
+	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	before := h.targetBytes(t)
+
+	res, err := h.svc.ApplySettings(h.request(t, Change{Kind: changeKindProviderAdd,
+		Name: "extra", Endpoint: stringPtr("http://localhost:11700")}))
+	if err != nil {
+		t.Fatalf("ApplySettings: %v", err)
+	}
+	if err := validateSettingsApplyResult(res); err != nil {
+		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
+	}
+	if res.Status != "applied" || res.Challenge != nil {
+		t.Fatalf("res = %+v, want applied with no challenge", res)
+	}
+	if bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("an applied result left the target unchanged")
+	}
+	for _, dest := range wantFallbackDestinations() {
+		if h.svc.consent.Has(destinationDigest(dest.Provider, dest.Endpoint)) {
+			t.Fatalf("a skipped challenge granted %q anyway", dest.Provider)
+		}
+	}
+}
+
+// TestSettingsWriteChallengeAccompaniesOnlyConsentRequired (§5.6): the
+// challenge is present IFF the status is consent_required, checked against
+// the real service across every terminal status one sweep can reach.
+func TestSettingsWriteChallengeAccompaniesOnlyConsentRequired(t *testing.T) {
+	h := newApplyHarness(t, applyTargetConfigJSON)
+	stale := h.request(t, remoteAgentRoute())
+	stale.TargetRevision = stringPtr(strings.Repeat("0", 64))
+
+	var results []SettingsApplyResult
+	add := func(res SettingsApplyResult, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("settings write: %v", err)
+		}
+		results = append(results, res)
+	}
+	add(h.svc.ApplySettings(h.request(t, remoteAgentRoute()))) // consent_required
+	add(h.svc.ApplySettings(stale))                            // conflict:target
+	add(h.svc.ConfirmSettingsApply(ConfirmSettingsApplyRequest{
+		ChallengeToken: "never-issued", Request: h.request(t, remoteAgentRoute())})) // conflict:challenge
+	add(h.svc.ApplySettings(h.request(t, localAgentRoute()))) // applied
+
+	statuses := map[string]bool{}
+	for i, res := range results {
+		if err := validateSettingsApplyResult(res); err != nil {
+			t.Fatalf("result %d is not contract-valid: %v (%+v)", i, err, res)
+		}
+		if (res.Challenge != nil) != (res.Status == "consent_required") {
+			t.Fatalf("result %d status %q carries challenge=%v", i, res.Status, res.Challenge != nil)
+		}
+		statuses[res.Status] = true
+	}
+	for _, want := range []string{"consent_required", "conflict", "applied"} {
+		if !statuses[want] {
+			t.Fatalf("the sweep never produced a %q result: %v", want, statuses)
+		}
+	}
+}
+
+// TestConfirmSettingsApplyRefusesAGrantOnlyChallenge: a grant-only challenge
+// approves destinations and authorizes no document write, so the settings
+// write path refuses its token outright and consumes it. The malformed row is
+// what pins the refusal to the mode rather than to a later check: the request
+// never reaches validation, so the answer is the §5.2 conflict and not an
+// argument diagnostic.
+func TestConfirmSettingsApplyRefusesAGrantOnlyChallenge(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mangle func(req *SettingsApplyRequest)
+	}{
+		{name: "well-formed resend"},
+		{name: "malformed resend", mangle: func(req *SettingsApplyRequest) { req.Changes = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newApplyHarness(t, applyTargetConfigJSON)
+			req := h.request(t, remoteAgentRoute())
+			if tc.mangle != nil {
+				tc.mangle(&req)
+			}
+			before := h.targetBytes(t)
+			token := h.svc.installSettingsChallenge(&settingsChallengeRecord{
+				expiresAt: h.svc.now().Add(consentChallengeTTL).UnixMilli(),
+				mode:      applyModeGrantOnly,
+			})
+
+			res := h.confirm(t, token, req)
+			if res.Status != "conflict" || res.Conflict != "challenge" ||
+				res.ConsentOutcome != consentUnchanged {
+				t.Fatalf("res = %+v, want conflict:challenge/unchanged", res)
+			}
+			if !bytes.Equal(before, h.targetBytes(t)) {
+				t.Fatal("a grant-only challenge wrote to the target")
+			}
+			if h.svc.consent.Has(remoteApplyDestination().Digest) {
+				t.Fatal("a grant-only challenge granted through the settings path")
+			}
+			h.svc.challengeMu.Lock()
+			_, live := h.svc.pendingApplies[token]
+			h.svc.challengeMu.Unlock()
+			if live {
+				t.Fatal("the refused grant-only token is still live")
+			}
+		})
+	}
+}
+
+// TestCanonicalApplyDigestBindsDestinationSets (F10): the request digest binds
+// the destination SETS themselves — proven directly, because an end-to-end
+// mutation trips revision identity first.
+func TestCanonicalApplyDigestBindsDestinationSets(t *testing.T) {
+	req := SettingsApplyRequest{
+		Source: ApplySource{Kind: applySourceApplied}, Changes: []Change{localAgentRoute()},
+		TargetRevision: stringPtr(strings.Repeat("a", 64)), Keys: map[string]string{},
+	}
+	a := ProviderDestination{Provider: "hosted", Endpoint: "https://api.example.com", Classification: "remote",
+		Digest: destinationDigest("hosted", "https://api.example.com")}
+	b := ProviderDestination{Provider: "backup", Endpoint: "https://alt.example.net", Classification: "remote",
+		Digest: destinationDigest("backup", "https://alt.example.net")}
+	base := canonicalApplyDigest(req, applyModeExisting, "target", []ProviderDestination{a}, []ProviderDestination{a})
+	post := canonicalApplyDigest(req, applyModeExisting, "target", []ProviderDestination{a}, []ProviderDestination{a, b})
+	pre := canonicalApplyDigest(req, applyModeExisting, "target", []ProviderDestination{a, b}, []ProviderDestination{a})
+	if base == post || base == pre || post == pre {
+		t.Fatal("the digest must change when either destination set changes")
+	}
+}
+
 // TestConfirmSettingsApplyPublishes: Call 2 resends the full request, records
 // the grant, publishes, and consumes the token exactly once.
 func TestConfirmSettingsApplyPublishes(t *testing.T) {
@@ -2527,26 +2828,6 @@ func TestConfirmSettingsApplyMismatches(t *testing.T) {
 		}
 		if raw, _ := readTargetBytes(t, moved); !bytes.Equal([]byte(applyTargetConfigJSON), raw) {
 			t.Fatal("a moved target was written anyway")
-		}
-	})
-
-	t.Run("destination", func(t *testing.T) {
-		h := newApplyHarness(t, applyTargetConfigJSON)
-		req := h.request(t, remoteAgentRoute())
-		token := h.challenge(t, req)
-		before := h.targetBytes(t)
-		// The recorded destination is what the user saw; move it and the fresh
-		// resolution no longer matches what was approved.
-		rec := h.pendingRecord(t, token)
-		h.svc.challengeMu.Lock()
-		rec.post.Model = "some-other-model"
-		h.svc.challengeMu.Unlock()
-		res := h.confirm(t, token, req)
-		if res.Status != "conflict" || res.Conflict != "challenge" {
-			t.Fatalf("res = %+v, want conflict:challenge", res)
-		}
-		if !bytes.Equal(before, h.targetBytes(t)) {
-			t.Fatal("a destination mismatch wrote to the target")
 		}
 	})
 
@@ -2684,8 +2965,9 @@ func TestSettingsWriteBusyRetainsTheToken(t *testing.T) {
 }
 
 // TestSettingsChallengeRetainsNothingSecret: the record holds only the token,
-// expiry, operation, two digests, and the two destinations. Key values are
-// outside the consent identity entirely, so a rotated key still confirms.
+// expiry, operation, two digests, and the destinations being granted. Key
+// values are outside the consent identity entirely, so a rotated key still
+// confirms.
 func TestSettingsChallengeRetainsNothingSecret(t *testing.T) {
 	const staged = "sk-staged-secret"
 	h := newApplyHarness(t, applyTargetConfigJSON)
@@ -2712,8 +2994,9 @@ func TestSettingsChallengeRetainsNothingSecret(t *testing.T) {
 		}
 	}
 
-	// The destination identity is deliberately retained (§5.2); a key value,
-	// the request, the document, and the target path are not.
+	// The destination identities being granted are deliberately retained
+	// (§5.2); a key value, the request, the document, and the target path
+	// are not.
 	dump := fmt.Sprintf("%+v", *h.pendingRecord(t, token))
 	for _, forbidden := range []string{staged, "sk-live-secret", h.path, "provider-key-set"} {
 		if strings.Contains(dump, forbidden) {

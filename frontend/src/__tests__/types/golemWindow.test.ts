@@ -164,6 +164,32 @@ it('pairs a bootstrap projection with its revision, both ways', () => {
   ).toThrow(GolemContractError);
 });
 
+it('accepts only a newer projection failure for the bootstrap instance', () => {
+  const bootstrap = { state: bootstrapState, view: bootstrapView, revision: 5 };
+  const viewError = {
+    kind: 'view-error',
+    instance: bootstrapState.instance,
+    id: 0,
+    revision: 6,
+    handoff: 0,
+    payload: { reason: 'Projection unavailable' },
+  };
+  expect(parseGolemWindowBootstrap({ ...bootstrap, viewError }).viewError).toEqual(viewError);
+  for (const invalid of [
+    null,
+    { ...viewError, kind: 'view' },
+    { ...viewError, instance: 4 },
+    { ...viewError, id: 1 },
+    { ...viewError, handoff: 1 },
+    { ...viewError, revision: 5 },
+    { ...viewError, payload: { reason: '' } },
+  ]) {
+    expect(() => parseGolemWindowBootstrap({ ...bootstrap, viewError: invalid })).toThrow(
+      GolemContractError
+    );
+  }
+});
+
 it('parses draft maps (empty strings kept) and acks', () => {
   expect(parseGolemDraftMap({ c1: '', c2: 'text' })).toEqual({ c1: '', c2: 'text' });
   expect(() => parseGolemDraftMap({ c1: 5 })).toThrow(GolemContractError);

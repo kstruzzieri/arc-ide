@@ -17,6 +17,7 @@ export class GolemWindowBootstrap {
     "state": GolemWindowState;
     "view": json$0.RawMessage;
     "revision": number;
+    "viewError"?: GolemWindowMessage | null;
 
     /** Creates a new GolemWindowBootstrap instance. */
     constructor($$source: Partial<GolemWindowBootstrap> = {}) {
@@ -38,9 +39,13 @@ export class GolemWindowBootstrap {
      */
     static createFrom($$source: any = {}): GolemWindowBootstrap {
         const $$createField0_0 = $$createType0;
+        const $$createField3_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("state" in $$parsedSource) {
             $$parsedSource["state"] = $$createField0_0($$parsedSource["state"]);
+        }
+        if ("viewError" in $$parsedSource) {
+            $$parsedSource["viewError"] = $$createField3_0($$parsedSource["viewError"]);
         }
         return new GolemWindowBootstrap($$parsedSource as Partial<GolemWindowBootstrap>);
     }
@@ -198,3 +203,5 @@ export class WorkspaceInfo {
 
 // Private type creation functions
 const $$createType0 = GolemWindowState.createFrom;
+const $$createType1 = GolemWindowMessage.createFrom;
+const $$createType2 = $Create.Nullable($$createType1);

@@ -428,6 +428,9 @@ function runBootstrap(own: Owner): void {
         // Revision-guarded, so a live projection that overtook the response is
         // not replaced by the older snapshot the response carries.
         own.core.installBootstrap(bootstrap.view, bootstrap.revision);
+        if (bootstrap.viewError !== undefined) {
+          own.core.receive({ from: 'main', message: bootstrap.viewError });
+        }
         for (const envelope of own.buffer.splice(0)) deliver(own, envelope);
       },
       (error: unknown) => {

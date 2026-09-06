@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -340,6 +341,28 @@ func agentConfigJSON(endpoint string) string {
 }`, endpoint, svcKeyMarker, svcSpareKeyMarker)
 }
 
+// agentConfigWithUngrantedRemoteFallbackJSON is a valid go-llm config whose
+// "agent" role model carries a REAL fallback chain: agent-m (hosted, the
+// endpoint under test) falls back to fallback-m on a second provider, spare,
+// whose base_url is a remote (non-loopback) host. reachableDestinations,
+// walking Defaults["agent"]'s RoleFallbackChain, resolves both hops to two
+// distinct remote destinations — so a run gate that (wrongly) required every
+// reachable destination to be granted, not just the primary, would find
+// fallback-m ungranted and raise a second consent challenge.
+func agentConfigWithUngrantedRemoteFallbackJSON(endpoint string) string {
+	return fmt.Sprintf(`{
+  "providers": {
+    "hosted": {"base_url": %q, "api_format": "openai-compat", "api_key": %q},
+    "spare": {"base_url": "https://spare.example.com", "api_format": "openai-compat", "api_key": %q}
+  },
+  "models": {
+    "agent-m": {"name": "wire-model", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["fallback-m"]},
+    "fallback-m": {"name": "spare-model", "provider": "spare", "type": "dense", "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "agent-m"}
+}`, endpoint, svcKeyMarker, svcSpareKeyMarker)
+}
+
 // fixtureConfigLoader writes cfg outside any repository and returns a
 // loadConfig replacement resolving it (the normal external-user-config case).
 func fixtureConfigLoader(t *testing.T, cfgJSON string) func() (loadedAgentConfig, error) {
@@ -643,7 +666,7 @@ func TestServiceSanitizeErrorAllowlist(t *testing.T) {
 	}{
 		{"config_missing", fmt.Errorf("%w: %s", ErrAgentConfigMissing, seed), "config_missing", "Golem configuration was not found."},
 		{"config_invalid", fmt.Errorf("%w: %s", ErrAgentConfigInvalid, seed), "config_invalid", "Golem configuration is invalid."},
-		{"consent_unavailable", fmt.Errorf("%w: %s", ErrConsentUnavailable, seed), "consent_unavailable", "Remote consent storage is unavailable."},
+		{"consent_unavailable", fmt.Errorf("%w: %s", ErrConsentUnavailable, seed), "consent_unavailable", "Remote consent storage is unavailable; open Golem configuration for repair steps."},
 		{"request_rejected", fmt.Errorf("%w: epoch for %s", ErrRequestRejected, seed), "request_rejected", "The Golem request is invalid or stale."},
 		{"workspace_unavailable", fmt.Errorf("%w: stat %q: %s", ErrWorkspaceUnavailable, rootMarker, seed), "workspace_unavailable", "The Golem workspace is unavailable."},
 		{"run_failed", fmt.Errorf("%w: dial: %s", ErrRunFailed, seed), "run_failed", "The Golem run failed."},
@@ -1415,7 +1438,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	if code := publicCode(t, err); code != "consent_unavailable" {
 		t.Fatalf("degraded retry code = %q", code)
 	}
-	if err.Error() != "Remote consent storage is unavailable." {
+	if err.Error() != "Remote consent storage is unavailable; open Golem configuration for repair steps." {
 		t.Fatalf("degraded retry message = %q", err.Error())
 	}
 	st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch, WorkspaceID: "project"})
@@ -1427,7 +1450,7 @@ func TestServiceConsentGrantFailureDegradesOnce(t *testing.T) {
 	}
 	degradedWarning := false
 	for _, w := range st.Warnings {
-		if w == "Remote consent storage is unavailable." {
+		if w == "Remote consent storage is unavailable; open Golem configuration for repair steps." {
 			degradedWarning = true
 		}
 	}
@@ -1602,6 +1625,84 @@ func TestServiceConsentRaces(t *testing.T) {
 		releaseOnce()
 		drainRuns(t, h.svc)
 	})
+}
+
+// TestServiceGrantedPrimaryUngrantedFallback is a tripwire test that verifies
+// the run gate only checks the primary destination, never widening to the
+// agent role's fallback chain. Its fixture
+// (agentConfigWithUngrantedRemoteFallbackJSON) gives agent-m a REAL
+// "fallbacks" entry to fallback-m, which lives on a second provider (spare)
+// with a remote (non-loopback) base_url and is never granted — so
+// reachableDestinations(cfg) resolves two distinct remote destinations here,
+// and a run gate that (wrongly) required every one of them to be granted
+// would trip. PASS today means the design is correct: the primary IS the
+// consumer's complete reachable set for consent purposes (no fallback
+// walking during runs).
+func TestServiceGrantedPrimaryUngrantedFallback(t *testing.T) {
+	endpoint, _ := startCountingServer(t)
+	h := newServiceHarness(t, endpoint)
+	h.svc.loadConfig = fixtureConfigLoader(t, agentConfigWithUngrantedRemoteFallbackJSON(endpoint))
+	repoID, _ := h.bind(t)
+	ctx := context.Background()
+
+	// Get the consent challenge for the primary.
+	id := runIdentityFor(repoID, "project")
+	adm, err := h.svc.StartTurn(ctx, turnFor(id))
+	if err != nil || adm.State != "needs_consent" {
+		t.Fatalf("first turn = %+v, %v", adm, err)
+	}
+	chID := adm.ConsentChallenge.ID
+
+	// The challenge destination must be the primary only (hosted/wire-model),
+	// not any fallback (which would be spare/spare-model).
+	if adm.ConsentChallenge.Destination.Provider != "hosted" ||
+		adm.ConsentChallenge.Destination.Model != "wire-model" {
+		t.Fatalf("challenge destination = %+v, want hosted/wire-model",
+			adm.ConsentChallenge.Destination)
+	}
+
+	// Accept the challenge, granting the primary destination.
+	retry := turnFor(id)
+	retry.ConsentChallengeID = chID
+	acc, err := h.svc.StartTurn(ctx, retry)
+	if err != nil || acc.State != "accepted" {
+		t.Fatalf("grant retry = %+v, %v", acc, err)
+	}
+	drainRuns(t, h.svc)
+
+	// Verify the grant persisted.
+	if got := consentGrantCount(t, h.consentPath); got != 1 {
+		t.Fatalf("persisted grants = %d, want 1", got)
+	}
+
+	// Start a new run (different RunID) with the same workspace.
+	// The primary is granted, so no challenge is raised.
+	next := runIdentityFor(repoID, "project")
+	adm2, err := h.svc.StartTurn(ctx, turnFor(next))
+	if err != nil {
+		t.Fatalf("new turn after grant = %+v, %v", adm2, err)
+	}
+	if adm2.State != "accepted" {
+		t.Fatalf("new turn state = %q, want accepted", adm2.State)
+	}
+	if adm2.ConsentChallenge != nil {
+		t.Fatal("new turn raised ConsentChallenge despite granted primary")
+	}
+	drainRuns(t, h.svc)
+
+	// Status must also reflect that consent is no longer needed.
+	st, err := h.svc.Status(StatusRequest{RepoEpoch: repoID.RepoEpoch,
+		WorkspaceID: "project"})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.NeedsConsent {
+		t.Fatalf("Status.NeedsConsent = true after grant")
+	}
+	if st.ConsentChallenge != nil {
+		t.Fatalf("Status.ConsentChallenge = %+v after grant, want nil",
+			st.ConsentChallenge)
+	}
 }
 
 func TestServiceLocalTargetNoChallenge(t *testing.T) {
@@ -4082,4 +4183,416 @@ func TestReloadSettingsVersusClose(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	<-done // reload completed (it held the gate first); no panic, no leak
+}
+
+// ---------------------------------------------------------------------------
+// Grant-only approval of missing destinations (spec D13; I11, I17, I18).
+//
+// The flow writes no document at all: it reads the ACTIVE configuration, asks
+// about every ungranted remote the agent route can reach, and — on
+// confirmation — records exactly those grants.
+// ---------------------------------------------------------------------------
+
+// grantStatuses is the closed status vocabulary of DestinationGrantsResult.
+var grantStatuses = map[string]bool{
+	"none": true, "consent_required": true, "granted": true, "uncertain": true,
+	"conflict": true, "busy": true, "unavailable": true, "config_invalid": true,
+}
+
+// checkGrantsResult enforces the two shape rules every result of either call
+// obeys: the status is one of the eight, and the challenge is present EXACTLY
+// when the status asks for consent. Every assertion below runs through it, so
+// no test can accept a result that would break the union.
+func checkGrantsResult(t *testing.T, what string, res DestinationGrantsResult) {
+	t.Helper()
+	if !grantStatuses[res.Status] {
+		t.Fatalf("%s: status %q is not in the closed vocabulary", what, res.Status)
+	}
+	if (res.Challenge != nil) != (res.Status == "consent_required") {
+		t.Fatalf("%s: status %q carries challenge=%v", what, res.Status, res.Challenge != nil)
+	}
+	if res.Challenge != nil {
+		if err := validateApplyChallenge(res.Challenge); err != nil {
+			t.Fatalf("%s: challenge is not contract-valid: %v (%+v)", what, err, res.Challenge)
+		}
+	}
+}
+
+func (h *applyHarness) prepareGrants(t *testing.T) DestinationGrantsResult {
+	t.Helper()
+	res, err := h.svc.PrepareDestinationGrants()
+	if err != nil {
+		t.Fatalf("PrepareDestinationGrants: %v", err)
+	}
+	checkGrantsResult(t, "prepare", res)
+	return res
+}
+
+func (h *applyHarness) confirmGrants(t *testing.T, token string) DestinationGrantsResult {
+	t.Helper()
+	res, err := h.svc.ConfirmDestinationGrants(token)
+	if err != nil {
+		t.Fatalf("ConfirmDestinationGrants: %v", err)
+	}
+	checkGrantsResult(t, "confirm", res)
+	return res
+}
+
+// grantChallengeToken runs Prepare and returns the issued token, failing the
+// test if the call did anything other than ask for consent.
+func (h *applyHarness) grantChallengeToken(t *testing.T) string {
+	t.Helper()
+	res := h.prepareGrants(t)
+	if res.Status != "consent_required" {
+		t.Fatalf("prepare = %+v, want consent_required", res)
+	}
+	return res.Challenge.Token
+}
+
+// assertGrantDestinations compares a challenge listing against the expected
+// entries in the digest order reachableDestinations produces.
+func assertGrantDestinations(t *testing.T, got []ApplyDestination, want ...ApplyDestination) {
+	t.Helper()
+	sort.Slice(want, func(i, j int) bool {
+		return destinationDigest(want[i].Provider, want[i].Endpoint) <
+			destinationDigest(want[j].Provider, want[j].Endpoint)
+	})
+	if len(got) != len(want) {
+		t.Fatalf("destinations = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		g, w := got[i], want[i]
+		if g.Provider != w.Provider || g.Model != w.Model || g.Endpoint != w.Endpoint ||
+			g.Classification != w.Classification || !slices.Equal(g.Provenance, w.Provenance) {
+			t.Fatalf("destinations[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
+// remoteFallbackAlpha/Beta are the two ungranted remotes remoteFallbackTargetJSON
+// reaches through the agent role's fallback chain; the role's own provider is
+// local and therefore never a consent question.
+func remoteFallbackAlpha() ApplyDestination {
+	return ApplyDestination{Provider: "alpha", Model: "alpha-model", Endpoint: alphaFallbackEndpoint,
+		Classification: "remote", Provenance: []string{"agent"}}
+}
+
+func remoteFallbackBeta() ApplyDestination {
+	return ApplyDestination{Provider: "beta", Model: "beta-model", Endpoint: betaFallbackEndpoint,
+		Classification: "remote", Provenance: []string{"agent"}}
+}
+
+// grantRecommendConfigJSON is an EXTERNALLY authored configuration with no
+// defaults.agent at all: upstream's recommendation route reaches every
+// configured provider, so both remotes are missing destinations reached by a
+// provider hop that names no model (spec D13 / upstream I8).
+const grantRecommendConfigJSON = `{
+  "providers": {
+    "alpha": {"base_url": "https://alpha.example.com/v1", "api_format": "openai-compat"},
+    "beta": {"base_url": "https://beta.example.net/v1", "api_format": "openai-compat"}
+  },
+  "models": {
+    "alpha-m": {"name": "alpha-model", "provider": "alpha", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "beta-m": {"name": "beta-model", "provider": "beta", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {}
+}`
+
+// TestPrepareDestinationGrantsListsEveryMissingRemote: the whole ungranted
+// remote batch of the ACTIVE configuration, digest-sorted, with the provenance
+// that reaches each one — and nothing local.
+func TestPrepareDestinationGrantsListsEveryMissingRemote(t *testing.T) {
+	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	before := h.targetBytes(t)
+
+	res := h.prepareGrants(t)
+	if res.Status != "consent_required" {
+		t.Fatalf("prepare = %+v, want consent_required", res)
+	}
+	assertGrantDestinations(t, res.Challenge.Destinations, remoteFallbackAlpha(), remoteFallbackBeta())
+	if !bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("preparing an approval wrote to the configuration")
+	}
+}
+
+// TestPrepareDestinationGrantsNamesTheRecommendationRoute (D13): a config
+// without defaults.agent reaches every provider through upstream's
+// recommendation route, which names a provider and NO model.
+func TestPrepareDestinationGrantsNamesTheRecommendationRoute(t *testing.T) {
+	h := newApplyHarness(t, grantRecommendConfigJSON)
+
+	res := h.prepareGrants(t)
+	if res.Status != "consent_required" {
+		t.Fatalf("prepare = %+v, want consent_required", res)
+	}
+	assertGrantDestinations(t, res.Challenge.Destinations,
+		ApplyDestination{Provider: "alpha", Endpoint: alphaFallbackEndpoint,
+			Classification: "remote", Provenance: []string{"agent (recommendation)"}},
+		ApplyDestination{Provider: "beta", Endpoint: betaFallbackEndpoint,
+			Classification: "remote", Provenance: []string{"agent (recommendation)"}})
+}
+
+// TestPrepareDestinationGrantsNothingToApprove: there is no consent question
+// when every reachable remote is already granted, when the reachable set is
+// local-only, or when there is no configuration at all. A broken configuration
+// must never read as one of these (see the config_invalid test below).
+func TestPrepareDestinationGrantsNothingToApprove(t *testing.T) {
+	t.Run("already granted", func(t *testing.T) {
+		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		if res := h.confirmGrants(t, h.grantChallengeToken(t)); res.Status != "granted" {
+			t.Fatalf("confirm = %+v, want granted", res)
+		}
+		if res := h.prepareGrants(t); res.Status != "none" {
+			t.Fatalf("prepare after granting = %+v, want none", res)
+		}
+	})
+	t.Run("local only", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		if res := h.prepareGrants(t); res.Status != "none" {
+			t.Fatalf("prepare = %+v, want none", res)
+		}
+	})
+	t.Run("no configuration", func(t *testing.T) {
+		h := newApplyHarness(t, "")
+		if res := h.prepareGrants(t); res.Status != "none" {
+			t.Fatalf("prepare = %+v, want none", res)
+		}
+	})
+}
+
+// TestPrepareDestinationGrantsRefusesABrokenConfiguration (R3): a
+// configuration that cannot be loaded is NOT "nothing to approve". The result
+// carries no detail — the settings projection's own diagnostics already name
+// what is wrong.
+func TestPrepareDestinationGrantsRefusesABrokenConfiguration(t *testing.T) {
+	h := newApplyHarness(t, `{"providers": {`)
+
+	res := h.prepareGrants(t)
+	if res.Status != "config_invalid" {
+		t.Fatalf("prepare = %+v, want config_invalid", res)
+	}
+}
+
+func TestPrepareDestinationGrantsEnforcesResponseBounds(t *testing.T) {
+	const endpoint = "https://example.com/"
+	for _, tc := range []struct {
+		name          string
+		providers     int
+		providerName  string
+		endpoint      string
+		wantStatus    string
+		wantChallenge int
+	}{
+		{"destination count at limit", 256, "", endpoint, "consent_required", 1},
+		{"destination count over limit", 257, "", endpoint, "config_invalid", 0},
+		// Each control byte becomes a three-byte replacement rune in the response.
+		{"sanitized identifier at limit", 1, strings.Repeat("\x01", 85) + "x", endpoint, "consent_required", 1},
+		{"sanitized identifier over limit", 1, strings.Repeat("\x01", 85) + "xx", endpoint, "config_invalid", 0},
+		{"endpoint at limit", 1, "remote", endpoint + strings.Repeat("a", 1024-len(endpoint)), "consent_required", 1},
+		{"endpoint over limit", 1, "remote", endpoint + strings.Repeat("a", 1025-len(endpoint)), "config_invalid", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{Providers: make(map[string]config.ProviderConfig)}
+			for i := 0; i < tc.providers; i++ {
+				name := tc.providerName
+				if name == "" {
+					name = fmt.Sprintf("remote-%03d", i)
+				}
+				cfg.Providers[name] = config.ProviderConfig{BaseURL: tc.endpoint, APIFormat: "openai-compat"}
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatalf("marshal configuration: %v", err)
+			}
+			h := newApplyHarness(t, string(raw))
+			res, err := h.svc.PrepareDestinationGrants()
+			if err != nil {
+				t.Fatalf("PrepareDestinationGrants: %v", err)
+			}
+			if res.Status != tc.wantStatus {
+				t.Errorf("PrepareDestinationGrants status = %q, want %q", res.Status, tc.wantStatus)
+			}
+			h.svc.challengeMu.Lock()
+			pending := len(h.svc.pendingApplies)
+			h.svc.challengeMu.Unlock()
+			if pending != tc.wantChallenge {
+				t.Errorf("PrepareDestinationGrants retained %d challenges, want %d", pending, tc.wantChallenge)
+			}
+			if res.Status == tc.wantStatus {
+				checkGrantsResult(t, "prepare", res)
+			}
+		})
+	}
+}
+
+// TestPrepareDestinationGrantsRefusesAnUnavailableStore (F18): an unavailable
+// store can neither answer "already granted" nor record a new grant, so the
+// flow refuses before issuing a challenge it could never honor.
+func TestPrepareDestinationGrantsRefusesAnUnavailableStore(t *testing.T) {
+	h := newApplyHarnessWithConsent(t, remoteFallbackTargetJSON, "")
+
+	res := h.prepareGrants(t)
+	if res.Status != "unavailable" {
+		t.Fatalf("prepare = %+v, want unavailable", res)
+	}
+}
+
+// TestConfirmDestinationGrantsRefusesForeignTokens: only a live grant-only
+// token this service issued is honored. The settings-write path refuses a
+// grant-only token symmetrically (TestConfirmSettingsApplyRefusesAGrantOnlyChallenge).
+func TestConfirmDestinationGrantsRefusesForeignTokens(t *testing.T) {
+	t.Run("unknown token", func(t *testing.T) {
+		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		if res := h.confirmGrants(t, "never-issued-token"); res.Status != "conflict" {
+			t.Fatalf("confirm = %+v, want conflict", res)
+		}
+	})
+	t.Run("malformed token", func(t *testing.T) {
+		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		if res := h.confirmGrants(t, ""); res.Status != "conflict" {
+			t.Fatalf("confirm = %+v, want conflict", res)
+		}
+	})
+	t.Run("expired token", func(t *testing.T) {
+		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		token := h.grantChallengeToken(t)
+		h.svc.challengeMu.Lock()
+		h.svc.pendingApplies[token].expiresAt = h.svc.now().Add(-time.Minute).UnixMilli()
+		h.svc.challengeMu.Unlock()
+		if res := h.confirmGrants(t, token); res.Status != "conflict" {
+			t.Fatalf("confirm = %+v, want conflict", res)
+		}
+	})
+	t.Run("settings-apply token", func(t *testing.T) {
+		h := newApplyHarness(t, applyTargetConfigJSON)
+		token := h.challenge(t, h.request(t, remoteAgentRoute()))
+		if res := h.confirmGrants(t, token); res.Status != "conflict" {
+			t.Fatalf("confirm = %+v, want conflict", res)
+		}
+		if h.svc.consent.Has(remoteApplyDestination().Digest) {
+			t.Fatal("a settings-apply token granted through the approve path")
+		}
+	})
+}
+
+// TestDestinationGrantsRefuseWhileBusy: busy is the one NONTERMINAL result —
+// nothing is consumed and the same token retries once the turn ends.
+func TestDestinationGrantsRefuseWhileBusy(t *testing.T) {
+	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	token := h.grantChallengeToken(t)
+
+	markConversationBusy(h.svc, "busy-conversation", stateRunning)
+	if res := h.prepareGrants(t); res.Status != "busy" {
+		t.Fatalf("busy prepare = %+v", res)
+	}
+	if res := h.confirmGrants(t, token); res.Status != "busy" {
+		t.Fatalf("busy confirm = %+v", res)
+	}
+	if h.svc.consent.Has(destinationDigest("alpha", alphaFallbackEndpoint)) {
+		t.Fatal("a busy result granted a destination")
+	}
+
+	markConversationBusy(h.svc, "busy-conversation", stateIdle)
+	if res := h.confirmGrants(t, token); res.Status != "granted" {
+		t.Fatalf("confirm after the turn ended = %+v, want granted", res)
+	}
+}
+
+// TestConfirmDestinationGrantsRequiresAFreshTarget (R3/I17/F19): the listing
+// the user approved must still describe the ACTIVE configuration. Both halves
+// of the binding are exercised separately — a rewrite in place moves the
+// revision alone, and repointing the override at byte-identical content moves
+// the target identity alone.
+func TestConfirmDestinationGrantsRequiresAFreshTarget(t *testing.T) {
+	t.Run("revision moved", func(t *testing.T) {
+		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		token := h.grantChallengeToken(t)
+		if err := os.WriteFile(h.path, []byte(strings.Replace(remoteFallbackTargetJSON,
+			`"ollama": {"base_url": "http://localhost:11434"}`,
+			`"ollama": {"base_url": "http://localhost:11434"}, "added": {"base_url": "http://localhost:11999"}`,
+			1)), 0o600); err != nil {
+			t.Fatalf("rewrite target: %v", err)
+		}
+		if res := h.confirmGrants(t, token); res.Status != "conflict" {
+			t.Fatalf("confirm after a rewrite = %+v, want conflict", res)
+		}
+		if h.svc.consent.Has(destinationDigest("alpha", alphaFallbackEndpoint)) {
+			t.Fatal("a stale confirmation granted a destination")
+		}
+	})
+	t.Run("target moved", func(t *testing.T) {
+		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		token := h.grantChallengeToken(t)
+		// Byte-identical content at a different path: the revision still
+		// matches, so only the target identity can refuse this.
+		other := filepath.Join(t.TempDir(), "models.json")
+		if err := os.WriteFile(other, []byte(remoteFallbackTargetJSON), 0o600); err != nil {
+			t.Fatalf("write second target: %v", err)
+		}
+		t.Setenv("GO_LLM_CONFIG", other)
+		if res := h.confirmGrants(t, token); res.Status != "conflict" {
+			t.Fatalf("confirm against a different file = %+v, want conflict", res)
+		}
+		if h.svc.consent.Has(destinationDigest("alpha", alphaFallbackEndpoint)) {
+			t.Fatal("a token issued for one file granted against another")
+		}
+		// Re-preparing against the file that is active NOW works: the refusal
+		// is about staleness, not about a poisoned flow.
+		if res := h.confirmGrants(t, h.grantChallengeToken(t)); res.Status != "granted" {
+			t.Fatalf("confirm after re-preparing = %+v, want granted", res)
+		}
+	})
+}
+
+// TestCancelSettingsApplyInvalidatesAGrantChallenge (R3/I18/F20): cancel is
+// mode-agnostic, so the approve flow needs no cancel operation of its own.
+func TestCancelSettingsApplyInvalidatesAGrantChallenge(t *testing.T) {
+	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	token := h.grantChallengeToken(t)
+
+	if res := h.svc.CancelSettingsApply(token); res.Status != "cancelled" {
+		t.Fatalf("cancel = %+v, want cancelled", res)
+	}
+	if res := h.confirmGrants(t, token); res.Status != "conflict" {
+		t.Fatalf("confirm after cancel = %+v, want conflict", res)
+	}
+	if h.svc.consent.Has(destinationDigest("alpha", alphaFallbackEndpoint)) ||
+		h.svc.consent.Has(destinationDigest("beta", betaFallbackEndpoint)) {
+		t.Fatal("a cancelled challenge granted a destination")
+	}
+}
+
+// TestConfirmDestinationGrantsRecordsTheBatchWithoutWriting: the terminal
+// success records the WHOLE approved batch and leaves the configuration byte
+// for byte as it was — the approve flow is a consent write, never a config one.
+func TestConfirmDestinationGrantsRecordsTheBatchWithoutWriting(t *testing.T) {
+	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	before := h.targetBytes(t)
+	token := h.grantChallengeToken(t)
+	beforeEmits := h.rec.count(EventGolemStatusChanged)
+
+	if res := h.confirmGrants(t, token); res.Status != "granted" {
+		t.Fatalf("confirm = %+v, want granted", res)
+	}
+	for _, d := range []struct{ provider, endpoint string }{
+		{"alpha", alphaFallbackEndpoint}, {"beta", betaFallbackEndpoint},
+	} {
+		if !h.svc.consent.Has(destinationDigest(d.provider, d.endpoint)) {
+			t.Errorf("%s was approved but not granted", d.provider)
+		}
+	}
+	if !bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("the approve flow wrote to the configuration")
+	}
+	// Exactly one announcement: a recorded grant moves the destination
+	// policy, and a cleared degraded flag must not make that two.
+	if got := h.rec.count(EventGolemStatusChanged); got != beforeEmits+1 {
+		t.Errorf("golem:status-changed emitted %d times, want %d", got, beforeEmits+1)
+	}
+	// Single-use: the same token cannot grant twice.
+	if res := h.confirmGrants(t, token); res.Status != "conflict" {
+		t.Fatalf("second confirm = %+v, want conflict", res)
+	}
 }

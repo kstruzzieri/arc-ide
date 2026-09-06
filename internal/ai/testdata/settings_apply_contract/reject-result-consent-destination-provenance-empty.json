@@ -10,11 +10,9 @@
         {
           "provider": "hosted",
           "model": "wire-model",
-          "endpoint": "",
+          "endpoint": "https://api.example.com/v1",
           "classification": "remote",
-          "provenance": [
-            "agent"
-          ]
+          "provenance": []
         }
       ]
     }

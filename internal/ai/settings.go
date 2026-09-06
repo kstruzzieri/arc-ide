@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -120,15 +121,16 @@ var settingsDiagnosticCodes = []string{
 // firnUseCaseFloors is THE Firn capability floor table: the minimum a model
 // must support for a use case Firn itself drives. It is the one Go source of
 // truth (testdata/settings_use_case_floors.json is the same table, shared with
-// the TypeScript mirror), and the agent row is the run path's own constant so
+// the TypeScript mirror), and the agent row is the run path's own value so
 // a write can never accept a model the runtime would then refuse. A use case
 // absent from this table has no Firn requirement — upstream's eligibility gate
 // evaluates it as unknown, and the request must confirm it explicitly
 // (§3.3 confirmUnknownUseCases).
 var firnUseCaseFloors = map[string]provider.Capability{
-	useCaseAgent: requiredAgentCaps,
-	"chat":       provider.CapChat | provider.CapStream,
-	"embedding":  provider.CapEmbed,
+	useCaseAgent:           requiredAgentCaps,
+	"chat":                 agent.ModelCallCapabilities(false),
+	"embedding":            provider.CapEmbed,
+	config.UseCasePlanning: agent.ModelCallCapabilities(true),
 }
 
 // useCaseAgent is the one use case Firn's own run path resolves.

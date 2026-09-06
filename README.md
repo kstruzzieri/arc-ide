@@ -267,6 +267,8 @@ there — those stay with the repository-scoped Golem state.
 - [x] Workspace chat panel (#226 phase 1) — read-only assistant on the embedded `go-llm` runtime, scoped to the bound repository with a sensitive-path floor, consent-gated remote egress with durable per-destination approval, streamed conversations that survive workspace switches, and a persistent status-bar segment (`Cmd/Ctrl+Shift+I`)
 - [x] Git commit messages on the embedded `go-llm` runtime (#165) — the CLI shell-out is gone
 
+If the Golem consent store becomes unavailable — a banner appears, and remote egress is blocked — remove or hand-repair `~/.firn/golem-consent.json`, restart Firn, then re-consent through the chat panel, the settings surface, or the "Approve missing destinations" flow to write a fresh record. The store is opened only at startup, so refreshing configuration or approving again cannot recover it until Firn restarts with the repaired or removed file.
+
 ### Planned
 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)

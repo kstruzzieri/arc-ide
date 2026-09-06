@@ -92,6 +92,8 @@ export interface GolemWindowBootstrap {
   state: GolemWindowState;
   view: GolemView | null;
   revision: number;
+  /** Retained failure when its live event preceded this window's subscription. */
+  viewError?: GolemWindowMessage;
 }
 
 /** Explicit presentation types: no host drafts or owner-only run requests. */
@@ -391,7 +393,20 @@ export function parseGolemWindowBootstrap(value: unknown): GolemWindowBootstrap 
   // Revision zero means "main has never published"; any other revision must
   // carry the projection it names, and a projection must carry its revision.
   if ((view === null) !== (value.revision === 0)) return fail();
-  return { state, view, revision: value.revision };
+  const bootstrap: GolemWindowBootstrap = { state, view, revision: value.revision };
+  if (value.viewError !== undefined) {
+    const { message } = parseGolemWindowEnvelope({ from: 'main', message: value.viewError });
+    if (
+      message.kind !== 'view-error' ||
+      message.instance !== state.instance ||
+      message.id !== 0 ||
+      message.handoff !== 0 ||
+      message.revision <= value.revision
+    )
+      return fail();
+    bootstrap.viewError = { ...message, payload: { reason: parseGolemViewError(message.payload) } };
+  }
+  return bootstrap;
 }
 
 export function parseGolemDraftMap(value: unknown): GolemDraftMap {

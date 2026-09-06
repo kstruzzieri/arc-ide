@@ -269,6 +269,38 @@ describe('startup ordering', () => {
     stop();
   });
 
+  it('retains a projection failure missed before subscription until a newer view arrives', async () => {
+    bootstrapMock.mockResolvedValue({
+      ...bootstrapOf({ view: viewOf(), revision: 1 }),
+      viewError: {
+        kind: 'view-error',
+        instance: 1,
+        id: 0,
+        revision: 2,
+        handoff: 0,
+        payload: { reason: 'The conversation could not be synchronized.' },
+      },
+    });
+    const stop = startGolemSatellite();
+    try {
+      await flush();
+      emitMessage(draftsMessage(3, 1, { 'conv-a': 'held text' }));
+      await flush();
+      expect(posted('ready')).toHaveLength(1);
+      emitMode(stateOf({ phase: 'ready', stateRevision: 3 }));
+      expect(useViewStore.getState()).toMatchObject({
+        projectionError: 'The conversation could not be synchronized.',
+        frozen: true,
+      });
+      expect(useDraftStore.getState().drafts).toEqual({ 'conv-a': 'held text' });
+      emitMessage(viewMessage(3));
+      expect(useViewStore.getState()).toMatchObject({ projectionError: null, frozen: false });
+      expect(useDraftStore.getState().drafts).toEqual({ 'conv-a': 'held text' });
+    } finally {
+      stop();
+    }
+  });
+
   it('does not start a re-dock transfer for a closing that arrives before it was ever ready', async () => {
     bootstrapMock.mockReturnValue(Promise.resolve(bootstrapOf({ view: null, revision: 0 })));
     const stop = startGolemSatellite();

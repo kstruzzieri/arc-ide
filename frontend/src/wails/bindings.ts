@@ -30,7 +30,7 @@ export * as workspace from '../../bindings/firn/internal/workspace/models';
  * `{}`. A malformed payload therefore arrives indistinguishable from a valid
  * one — worst case, a settings document with no `readOnly` key materialises as
  * an EDITABLE surface, and `readOnly` is a fail-closed UI control. So these
- * nine calls are read raw and the wire payload reaches the validators
+ * calls are read raw and the wire payload reaches the validators
  * untouched.
  *
  * IDS: mirrored from the generated bindings, not invented here.
@@ -53,12 +53,14 @@ export const GOLEM_RAW_CALL_IDS = {
   ApplyGolemSettings: 3398837476,
   BootstrapGolemWindow: 3232539019,
   CancelGolemSettingsApply: 3715274072,
+  ConfirmGolemDestinationGrants: 2180243700,
   ConfirmGolemSettingsApply: 4278120228,
   CreateGolemSettings: 649660458,
   GetGolemSettings: 3594143992,
   GetGolemStatus: 107712831,
   GetGolemWindowState: 180649870,
   LoadGolemProfile: 1561429884,
+  PrepareGolemDestinationGrants: 4086758063,
   ReloadGolemSettings: 1366669581,
   RunGolemTurn: 2592072505,
 } as const;
@@ -72,6 +74,19 @@ export const ApplyGolemSettings = (req: SettingsApplyRequest): CancellablePromis
 
 export const CancelGolemSettingsApply = (challengeToken: string): CancellablePromise<unknown> =>
   Call.ByID(GOLEM_RAW_CALL_IDS.CancelGolemSettingsApply, challengeToken);
+
+// The grant-only pair (spec D13). Prepare takes no argument — nothing is
+// staged — and Confirm takes only the opaque token, because the batch it
+// approves lives in the challenge record and never crossed the wire back.
+// Cancelling one is CancelGolemSettingsApply above: the challenge map is
+// mode-blind, so the approve flow needs no cancel binding of its own.
+export const ConfirmGolemDestinationGrants = (
+  challengeToken: string
+): CancellablePromise<unknown> =>
+  Call.ByID(GOLEM_RAW_CALL_IDS.ConfirmGolemDestinationGrants, challengeToken);
+
+export const PrepareGolemDestinationGrants = (): CancellablePromise<unknown> =>
+  Call.ByID(GOLEM_RAW_CALL_IDS.PrepareGolemDestinationGrants);
 
 export const ConfirmGolemSettingsApply = (
   req: ConfirmSettingsApplyRequest
