@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"firn/internal/ai"
+	"firn/internal/appstate"
 	"firn/internal/filesystem"
 	"firn/internal/git"
 	"firn/internal/lsp"
@@ -52,6 +53,7 @@ type App struct {
 	osFS            filesystem.FileSystem
 	workspaceStore  *workspace.Store
 	runHistoryStore *runhistory.Store
+	appStateStore   *appstate.Store
 	lspManager      *lsp.Manager
 	searchManager   *search.Manager
 	gitService      *git.Service
@@ -139,6 +141,7 @@ func NewApp() *App {
 		firnDir:         firnDir,
 		workspaceStore:  workspace.NewStore(osFS, workspaceBaseDir),
 		runHistoryStore: runhistory.NewStore(osFS, firnDir),
+		appStateStore:   appstate.NewStore(osFS, firnDir),
 		searchManager:   search.NewManager(),
 		gitService:      git.NewService(),
 		gitMsgGen:       git.NewMessageGenerator(),
