@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"strings"
 	"testing"
 
@@ -401,5 +402,136 @@ func main() {
 				t.Errorf("scanMainWiring(%q fixture) found no gap, want one", name)
 			}
 		})
+	}
+}
+
+// #271 B6: a menu accelerator is global — on Windows and Linux the satellite
+// carries the same application menu, and on macOS the NSApp menu is live
+// whichever window has focus. So every menu event has to restore, show and
+// focus main BEFORE the frontend is asked to act on it, or Go Back scrolls an
+// editor nobody can see.
+func TestMenuEventFocusesMainBeforeEmitting(t *testing.T) {
+	t.Parallel()
+
+	win := newFakeNative(1, golemWindowNameMain)
+	win.minimised = true
+	app := &App{mainWindow: win}
+	var emitted []string
+	windowCallsAtEmit := -1
+	app.emitFn = func(event string, _ any) {
+		emitted = append(emitted, event)
+		windowCallsAtEmit = len(win.recorded())
+	}
+
+	app.menuEvent("navigate:back")
+
+	if got := fmt.Sprintf("%v", win.recorded()); got != "[unminimise show focus]" {
+		t.Fatalf("menuEvent window calls = %s, want [unminimise show focus]", got)
+	}
+	// Exactly one event, and the window was already forward when it went out.
+	if got := fmt.Sprintf("%v", emitted); got != "[navigate:back]" {
+		t.Fatalf("menuEvent emitted %s, want [navigate:back]", got)
+	}
+	if windowCallsAtEmit != 3 {
+		t.Fatalf("menuEvent emitted after %d window calls, want all 3 first", windowCallsAtEmit)
+	}
+}
+
+// A permitted quit is the one case where nothing may be revealed: the drain is
+// already running and re-showing main would resurrect a window on its way out.
+func TestMenuEventStaysSilentDuringAPermittedQuit(t *testing.T) {
+	t.Parallel()
+
+	win := newFakeNative(1, golemWindowNameMain)
+	app := &App{mainWindow: win}
+	app.closePhase = closePermitted
+	emitted := 0
+	app.emitFn = func(string, any) { emitted++ }
+
+	app.menuEvent("menu:switch-workspace")
+
+	if calls := win.recorded(); len(calls) != 0 {
+		t.Fatalf("menuEvent touched the window during a quit: %v", calls)
+	}
+	// The event still goes out: the frontend decides what a late one means.
+	if emitted != 1 {
+		t.Fatalf("menuEvent emitted %d events, want 1", emitted)
+	}
+}
+
+// menuHandlerBodies returns the body of every OnClick handler registered in the
+// named function of the named file.
+func menuHandlerBodies(t *testing.T, file, fn string) []ast.Node {
+	t.Helper()
+
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatalf("parser.ParseFile(%s) error = %v, want nil", file, err)
+	}
+	var bodies []ast.Node
+	for _, decl := range parsed.Decls {
+		function, ok := decl.(*ast.FuncDecl)
+		if !ok || function.Name.Name != fn || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(n ast.Node) bool {
+			call, isCall := n.(*ast.CallExpr)
+			if !isCall {
+				return true
+			}
+			// The receiver is itself a call (`Add(...).SetAccelerator(...)`), so
+			// `selectorPath` renders "" for the whole chain: match the selector.
+			sel, isSel := call.Fun.(*ast.SelectorExpr)
+			if !isSel || sel.Sel.Name != "OnClick" {
+				return true
+			}
+			if len(call.Args) == 1 {
+				bodies = append(bodies, call.Args[0])
+			}
+			return true
+		})
+	}
+	return bodies
+}
+
+// Structural, because buildAppMenu needs a live application.App: every menu
+// handler must route through the one helper the two tests above pin, and none
+// may emit on its own.
+func TestEveryMenuHandlerRoutesThroughMenuEvent(t *testing.T) {
+	t.Parallel()
+
+	bodies := menuHandlerBodies(t, mainWiringFile, "buildAppMenu")
+
+	if len(bodies) < 3 {
+		t.Fatalf("buildAppMenu registered %d OnClick handlers, want the three menu items", len(bodies))
+	}
+	for i, body := range bodies {
+		if !containsCallTo(body, "app.menuEvent") {
+			t.Errorf("menu handler %d does not call app.menuEvent", i)
+		}
+		if containsCallTo(body, "app.emit") {
+			t.Errorf("menu handler %d emits directly, bypassing the focus helper", i)
+		}
+	}
+}
+
+// The satellite must never own a second copy of these handlers: they are
+// registered once, on the application menu, and the satellite merely displays
+// that menu (golemWindowOptions sets UseApplicationMenu so the accelerators
+// work there at all — which is the whole reason menuEvent focuses main).
+func TestTheSatelliteRegistersNoMenuHandlers(t *testing.T) {
+	t.Parallel()
+
+	if bodies := menuHandlerBodies(t, "app_golem_window.go", "golemWindowOptions"); len(bodies) != 0 {
+		t.Fatalf("golemWindowOptions registered %d menu handlers, want none", len(bodies))
+	}
+	source, err := os.ReadFile("app_golem_window.go")
+	if err != nil {
+		t.Fatalf("ReadFile(app_golem_window.go) error = %v, want nil", err)
+	}
+	for _, forbidden := range []string{"Menu.Set", "AddSubmenu", "buildAppMenu", ".OnClick("} {
+		if strings.Contains(string(source), forbidden) {
+			t.Errorf("app_golem_window.go references %q; the menu has exactly one owner", forbidden)
+		}
 	}
 }

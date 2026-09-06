@@ -12,6 +12,18 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// menuEvent hands a menu accelerator to the frontend with main in front of the
+// user (#271 §5.3). The application menu is global — macOS serves it from the
+// NSApp menu whatever has focus, and the Golem satellite sets
+// UseApplicationMenu so Windows and Linux attach it there too — so Go Back
+// pressed in the satellite would otherwise navigate an editor in a window that
+// is behind it, or minimised. focusMainWindow is a no-op during a permitted
+// quit, which is the one time nothing may be revealed.
+func (a *App) menuEvent(event string) {
+	a.focusMainWindow()
+	a.emit(event, nil)
+}
+
 func buildAppMenu(app *App, wapp *application.App) *application.Menu {
 	menu := wapp.Menu.New()
 
@@ -26,15 +38,15 @@ func buildAppMenu(app *App, wapp *application.App) *application.Menu {
 
 	navigateMenu := menu.AddSubmenu("Navigate")
 	navigateMenu.Add("Go Back").SetAccelerator("CmdOrCtrl+[").OnClick(func(_ *application.Context) {
-		app.emit("navigate:back", nil)
+		app.menuEvent("navigate:back")
 	})
 	navigateMenu.Add("Go Forward").SetAccelerator("CmdOrCtrl+]").OnClick(func(_ *application.Context) {
-		app.emit("navigate:forward", nil)
+		app.menuEvent("navigate:forward")
 	})
 
 	workspaceMenu := menu.AddSubmenu("Workspace")
 	workspaceMenu.Add("Switch Workspace").SetAccelerator("CmdOrCtrl+Shift+.").OnClick(func(_ *application.Context) {
-		app.emit("menu:switch-workspace", nil)
+		app.menuEvent("menu:switch-workspace")
 	})
 
 	return menu
