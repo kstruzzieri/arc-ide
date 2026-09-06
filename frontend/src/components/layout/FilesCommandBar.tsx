@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import { useGolemStore } from '../../stores/golemStore';
+import { selectGolemUndocked, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 import { FilesIcon } from '../icons';
 import { PanelCommandBar } from './PanelCommandBar';
@@ -17,11 +17,10 @@ export function FilesCommandBar() {
   );
   const setFilesPanelCollapsed = useIDEStore((s) => s.setFilesPanelCollapsed);
   // While the satellite owns the chat, Files is the entire center: there is no
-  // second panel for a collapse to reveal, so the control is not offered at all
-  // (#271 B6). The pair invariant would refuse the collapse either way.
-  const golemUndocked = useGolemStore(
-    (s) => s.windowState.phase === 'ready' || s.windowState.phase === 'closing'
-  );
+  // second panel for a collapse to reveal, so the control is not offered at
+  // all. The pair invariant would refuse the collapse either way. The shared
+  // selector keeps this bar and the shell on the same tick.
+  const golemUndocked = useGolemStore(selectGolemUndocked);
   const meta =
     open === 0 ? 'no files open' : `${open} open${modified ? ` · ${modified} modified` : ''}`;
 

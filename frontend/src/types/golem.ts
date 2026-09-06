@@ -192,7 +192,7 @@ export interface GolemStoreState {
   /** Arms the composer of the visible Golem host (replaces setPanelMode's bump). */
   requestComposerFocus(): void;
   /**
-   * The undocked-window lifecycle (#271 Task B6), as Go last published it.
+   * The undocked-window lifecycle (#271 spec §5), as Go last published it.
    *
    * These three are app-scoped: a repository unbind, rebind or status
    * hydration must leave them exactly as they were, because the satellite

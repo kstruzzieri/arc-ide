@@ -26,11 +26,11 @@ import { buildGolemView } from './projection';
 import { createMainRelayCore, type MainRelayCore, type RelayTransport } from './relayCore';
 
 /**
- * The main window's half of the two-window protocol (#271 Task B6).
+ * The main window's half of the two-window protocol (#271 spec §5.2).
  *
  * This is the *owner*: the store, the AI bridge and the executing admission
  * guards all live in this window, and the undocked satellite has none of them.
- * So everything here is integration around B2's tested `createMainRelayCore`,
+ * So everything here is integration around the tested `createMainRelayCore`,
  * not a second relay: bind one core per window instance, publish the
  * projection whenever the presentation state moves, run the draft transfer
  * inside the handoff barrier, execute the actions the satellite asks for, and
@@ -59,7 +59,7 @@ const MESSAGE_EVENT = 'golem:window-message';
 /**
  * The main-side transfer bound.
  *
- * B2's `MainRelayDeps` carries no `ackTimeoutMs`/`maxAttempts`, so
+ * The core's `MainRelayDeps` carries no `ackTimeoutMs`/`maxAttempts`, so
  * `sendDrafts` has no retry of its own: it posts once and resolves when the
  * satellite answers `ready`. Go's 10 s `golemTransitionDeadline` would
  * eventually retire an unanswered bootstrap, but leaning on it alone means a
@@ -161,8 +161,8 @@ export function reportGolemWindowError(error: unknown): void {
  * methods the docked host calls. Deliberately NOT `GolemPanel`'s adapter: that
  * one clears the composer draft on acceptance, and main's draft map is the
  * inactive copy of a window whose user is typing somewhere else. Every branch
- * answers with the store's own synchronous `GolemActionResult`, which B2 stamps
- * onto the acknowledgement.
+ * answers with the store's own synchronous `GolemActionResult`, which the core
+ * stamps onto the acknowledgement.
  */
 function execute(action: GolemViewAction): GolemActionResult {
   const s = useGolemStore.getState();
@@ -282,7 +282,7 @@ function postTransfer(own: Owner, core: MainRelayCore, instance: number, handoff
       return;
     }
     own.transferAttempts += 1;
-    // Same handoff, so B2 reuses the recorded id and message: the satellite
+    // Same handoff, so the core reuses the recorded id and message: the satellite
     // installs once however many copies reach it.
     postTransfer(own, core, instance, handoff);
   }, MAIN_TRANSFER_RETRY_MS);
@@ -358,7 +358,7 @@ function subscribeProjection(own: Owner): () => void {
     const next = projectionSlices();
     if (next.every((value, index) => value === previous[index])) return;
     previous = next;
-    // Coalesced by B2: many mutations in one tick become one post.
+    // Coalesced by the core: many mutations in one tick become one post.
     own.core?.publish();
   });
 }

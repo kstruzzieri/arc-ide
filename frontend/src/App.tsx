@@ -46,7 +46,7 @@ import {
 } from './components/GolemConfig/configCloseGuard';
 
 /**
- * The one place the docked host learns it is not the owner (#271 B6). A
+ * The one place the docked host learns it is not the owner (#271 §5.1). A
  * component rather than a read inside `App`, so the subscription re-renders the
  * island alone — and so the whole tree below stays out of `App`'s render.
  */

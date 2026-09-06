@@ -2068,10 +2068,17 @@ func TestGolemStateCarriesFailureReasons(t *testing.T) {
 			t.Fatalf("GetGolemWindowState = %+v, %v; want the stall reason readable after the fact", got, err)
 		}
 
-		h.retire(satellite.id)
+		// The retry is published: the rail disables Dock again while the fresh
+		// observer runs, instead of offering a retry that looks ignored.
 		if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
 			t.Fatalf("retry CloseGolemWindow: %v", err)
 		}
+		retrying := h.lastModeEvent()
+		if retrying.Phase != golemPhaseClosing || retrying.Reason != "" || retrying.StateRevision <= stalled.StateRevision {
+			t.Fatalf("after the retry request: phase=%s reason=%q revision=%d, want a newer closing with no reason (stalled at %d)",
+				retrying.Phase, retrying.Reason, retrying.StateRevision, stalled.StateRevision)
+		}
+		h.retire(satellite.id)
 		waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
 		if got := h.lastModeEvent(); got.Phase != golemPhaseClosed || got.Reason != "" {
 			t.Fatalf("after the retry: phase=%s reason=%q, want closed with no reason", got.Phase, got.Reason)

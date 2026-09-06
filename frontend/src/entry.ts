@@ -8,7 +8,7 @@ import { createElement, StrictMode, type ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 
 /**
- * Which root this page mounts (#271 Task B5).
+ * Which root this page mounts: the IDE, or the undocked Golem window (#271).
  *
  * Both windows load the same Vite bundle; only the URL differs. Go opens the
  * satellite at `/#/golem-window` (`golemWindowURL` in app_golem_window.go), and

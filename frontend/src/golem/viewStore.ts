@@ -3,7 +3,7 @@ import { devtools } from 'zustand/middleware';
 import type { GolemView, GolemWindowState } from '../types/golemWindow';
 
 /**
- * Everything the undocked Golem window knows (#271 Task B5).
+ * Everything the undocked Golem window knows (#271 spec §5.2).
  *
  * Passive by construction: this file imports no owner, no bridge and no
  * binding, and the store has no actions of its own. `windowSatellite.ts` is the

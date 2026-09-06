@@ -24,7 +24,7 @@ import { createSatelliteCore, type RelayTransport, type SatelliteCore } from './
 import { NO_PENDING_COMPOSERS, useViewStore } from './viewStore';
 
 /**
- * The undocked window's relay client (#271 Task B5).
+ * The undocked window's relay client (#271 spec §5.2).
  *
  * It owns the whole satellite lifecycle: subscribe, bootstrap, install main's
  * draft map, report `ready`, dispatch acknowledged actions, and run the re-dock
@@ -243,6 +243,12 @@ function installState(own: Owner, next: GolemWindowState): void {
     own.core?.abortHandoff(next.handoff, next.reason ?? TRANSFER_ENDED);
   refreshFrozen(own);
   if (!mine) return;
+  // A `closing` that carries a reason is a stalled retirement: Go authorized
+  // the native close and this window never left the manager. It is still on
+  // screen — the user pressed ⌘W here — so the reason is shown here too, and
+  // stays frozen; Retry (retryGolemConnection) is a fresh close request.
+  if (next.phase === 'closing' && next.reason !== undefined)
+    useViewStore.setState({ error: next.reason }, false, 'golem/stalled');
   // Only a window that reached `ready` owns a map to hand back. Go flips
   // `mode` to undocked on ready alone, so an aborted bootstrap's `closing`
   // still says `docked`: there is nothing to transfer, Go has already
@@ -617,6 +623,12 @@ export function retryGolemConnection(): void {
   if (own.core === null) {
     own.generation += 1;
     runBootstrap(own);
+    return;
+  }
+  if (useViewStore.getState().state?.phase === 'closing') {
+    // The transfer is over; it is the native close that stalled. The retry
+    // for that is Go's own re-arm leg, which CloseGolemWindow reaches.
+    void requestReDock();
     return;
   }
   own.core.retryPending();

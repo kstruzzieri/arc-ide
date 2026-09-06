@@ -163,7 +163,13 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     if (previous) return previous;
     const settled = admissionTail
       .then(async () => toAck(id, await deps.execute(action)))
-      .catch((): GolemAck => ({ id, ok: false, reason: RELAY_ACTION_REFUSED }))
+      .catch((error: unknown): GolemAck => {
+        // A throwing store method is a defect in this window, not a refusal
+        // the satellite earned: main hears about it, and the satellite's
+        // waiter settles with the real message rather than hanging.
+        report(error);
+        return { id, ok: false, reason: boundedGolemMessage(error) };
+      })
       .then(async (ack): Promise<GolemWindowMessage> => {
         // Settled either way: the next projection covers this id, so the
         // satellite may drop its pending overlay once it sees the watermark.

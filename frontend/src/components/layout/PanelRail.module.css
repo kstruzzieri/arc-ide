@@ -35,7 +35,7 @@
   box-shadow: 0 0 18px color-mix(in srgb, var(--accent-project) 8%, transparent);
 }
 
-/* #271 B6: the undocked rail is a group of two real buttons, not one big
+/* #271: the undocked rail is a group of two real buttons, not one big
    target, so the container itself is neither clickable nor hoverable — only
    the actions inside it are. */
 .rail[role='group'] {

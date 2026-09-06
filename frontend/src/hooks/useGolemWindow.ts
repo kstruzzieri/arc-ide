@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { startMainGolemRelay } from '../golem/windowRelay';
 
 /**
- * Mounts the main window's Golem relay owner (#271 Task B6).
+ * Mounts the main window's Golem relay owner (#271 spec §5.2).
  *
  * One line, and deliberately so: everything the owner does lives in
  * `golem/windowRelay.ts`, which is testable without React. This exists only to

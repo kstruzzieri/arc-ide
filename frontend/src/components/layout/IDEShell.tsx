@@ -42,7 +42,7 @@ import {
   type CenterPanel,
 } from '../../utils/centerLayout';
 import { CENTER_DRAG_MIME, reorderTargetForDrop } from '../../utils/centerReorder';
-import { useGolemStore } from '../../stores/golemStore';
+import { selectGolemUndocked, useGolemStore } from '../../stores/golemStore';
 import styles from './IDEShell.module.css';
 
 /** Panels whose size is a draggable CSS variable. */
@@ -106,14 +106,11 @@ export function IDEShell({
   const isGolemPanelCollapsed = useIsGolemPanelCollapsed();
   const isFilesPanelCollapsed = useIsFilesPanelCollapsed();
   const centerLayoutRevision = useIDEStore((s) => s.centerLayoutRevision);
-  // Visual ownership, not the saved mode (#271 B6). A restored `undocked`
-  // preference is still bootstrapping, and until the satellite is actually
-  // ready the docked content is what the user must keep seeing.
+  // Visual ownership, not the saved mode: the shared selector, so the shell,
+  // the Files bar and the commands can never disagree about who owns the view.
+  const golemUndocked = useGolemStore(selectGolemUndocked);
+  // The announcer's restore latch releases on `closed` alone (below).
   const golemWindowPhase = useGolemStore((s) => s.windowState.phase);
-  const golemWindowMode = useGolemStore((s) => s.windowState.mode);
-  const golemUndocked =
-    golemWindowMode === 'undocked' &&
-    (golemWindowPhase === 'ready' || golemWindowPhase === 'closing');
   // Go clears this the moment the restore's open begins, so the flip that ends
   // it is several phases later — the announcer latches it (spec §7).
   const golemRestorePending = useGolemStore((s) => s.windowState.restorePending);
@@ -327,7 +324,7 @@ export function IDEShell({
     // repository itself changed — `LoadWorkspaceState` is awaited in between —
     // so the session key has already settled and only the revision marks it.
     if (previous.revision !== centerLayoutRevision) return;
-    // Neither is a window transition (#271 B6): the chat did not collapse, it
+    // Neither is a window transition (#271 §5.3): the chat did not collapse, it
     // moved, and on the way back the relay has already asked the composer for
     // focus — which is a better target than whatever this pair would pick.
     if (previous.undocked !== center.undocked) return;

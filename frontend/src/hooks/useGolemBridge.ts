@@ -74,7 +74,7 @@ export function useGolemBridge(): void {
     const offEvent = EventsOn('golem:event', (payload: unknown) => {
       if (isDeltaEvent(payload)) {
         pending.push(payload);
-        // #271 B6. `requestAnimationFrame` stops firing while the window is
+        // Undocked ingestion (#271). `requestAnimationFrame` stops firing while the window is
         // minimized or hidden, and the undocked Golem window is a separate
         // native window that stays on screen — so main would batch a whole
         // reply into a frame that never runs and publish nothing. While a

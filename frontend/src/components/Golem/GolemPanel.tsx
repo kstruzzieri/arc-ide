@@ -20,7 +20,7 @@ import { GolemSurface, type GolemSurfaceActions } from './GolemSurface';
 import styles from './GolemPanel.module.css';
 
 /**
- * The docked host for the Golem chat (#226 Task B8, #271 Task B4).
+ * The docked host for the Golem chat (#226; docked half of #271 §5.1).
  *
  * Two jobs, and only two: the command bar and connection chips that belong to
  * the IDE's panel chrome, and the *adapter* that turns the passive
@@ -70,8 +70,8 @@ interface GolemPanelProps {
   /**
    * The transfer barrier. True only while a docked/undocked handoff is in
    * flight, during which this window is not the owner and may dispatch nothing.
-   * B6 supplies it from the window lifecycle; docked-only there is no handoff,
-   * so it is absent and the barrier is down.
+   * The window relay supplies it from the lifecycle; docked-only there is no
+   * handoff, so it is absent and the barrier is down.
    */
   frozen?: boolean;
 }
@@ -114,7 +114,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
   /**
    * The docked adapter. Admission is synchronous here — the store is in this
    * window — so an accepted Send drops the draft in the same tick and a refused
-   * one keeps it and explains itself. (B6's satellite holds its lock open until
+   * one keeps it and explains itself. (The satellite holds its lock open until
    * the relay acknowledges instead, and must not run this clearing adapter: an
    * uncertain relay failure has to keep both the draft and the action id.)
    */
@@ -164,7 +164,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
     conversation.queuedTurns.length === 0;
   const canClear = conversation !== null && !frozen && !clearBusy && !clearEmpty;
   // Deliberately not gated on `bridgePhase`: a window is a place to put the
-  // chat, and it opens with no repository bound at all (#271 B6).
+  // chat, and it opens with no repository bound at all (#271 §5.3).
   const canUndock = windowPhase === 'closed' && !frozen;
 
   return (
@@ -200,7 +200,7 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
               <PanelBarButton label="Configuration" onClick={actions.openConfig}>
                 <SettingsIcon aria-hidden="true" />
               </PanelBarButton>
-              {/* #271 B6. Same predicate as the `golem-undock` command, and the
+              {/* Same predicate as the `golem-undock` command, and the
                   same error handler: a window already open, opening, or handing
                   back is not something a second request can help. */}
               <PanelBarButton
@@ -260,6 +260,9 @@ export function GolemPanel({ visible, frozen = false }: GolemPanelProps) {
           </details>
         </div>
       </div>
+
+      {/* Spec §5.3: the frozen host says why its composer is disabled. */}
+      {frozen && <p className={styles.notice}>Moving Golem to its own window…</p>}
 
       <GolemSurface
         view={view}

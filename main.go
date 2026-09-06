@@ -12,6 +12,10 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// firnWindowBackground is the ground every Firn window paints before the
+// frontend does. One source, so the Golem window can never drift from main.
+var firnWindowBackground = application.NewRGB(2, 6, 23)
+
 // menuEvent hands a menu accelerator to the frontend with main in front of the
 // user (#271 §5.3). The application menu is global — macOS serves it from the
 // NSApp menu whatever has focus, and the Golem satellite sets
@@ -125,7 +129,7 @@ func main() {
 		Height:           900,
 		MinWidth:         1024,
 		MinHeight:        600,
-		BackgroundColour: application.NewRGB(2, 6, 23),
+		BackgroundColour: firnWindowBackground,
 		// Windows attaches the global menu to a window only when this is true.
 		// Linux already falls back to the global menu on its own, and macOS
 		// ignores the flag and always uses the NSApp menu.

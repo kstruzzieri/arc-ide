@@ -9,7 +9,7 @@ import type { GolemView, ProjectedConversation, ProjectedRun } from '../types/go
  * submitted `request` across a window boundary. Adding a field to
  * `ConversationView` must therefore be a deliberate decision to project it, not
  * an accident of structure. (Composer text is not among the risks any more —
- * since #271 B4 it lives in the visible host's `draftStore`, so the executing
+ * it lives in the visible host's `draftStore` (#271 §5.1), so the executing
  * owner has nothing to leak — but the enumeration is what keeps that true for
  * the *next* field somebody adds.)
  *
@@ -92,7 +92,7 @@ export function buildGolemView(state: GolemProjectionSource): GolemView {
 
 // ── reading a projection ──────────────────────────────────────────────────────
 // Pure derivations over a `GolemView`, shared by the passive `GolemSurface` and
-// by whichever chrome hosts it (#271 B4). They live beside the builder rather
+// by whichever chrome hosts it, docked or undocked. They live beside the builder rather
 // than in the component so both hosts read a projection the same way, and so a
 // component file keeps exporting only components.
 

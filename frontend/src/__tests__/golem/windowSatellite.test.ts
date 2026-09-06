@@ -672,6 +672,31 @@ describe('re-dock', () => {
     stop();
   });
 
+  it('shows a stalled retirement in this window and makes Retry a fresh close request', async () => {
+    const stop = await startReady();
+    emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
+    await flush();
+    emitMessage(transferAck(posted('drafts')[0].id, 2));
+    await flush();
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+
+    // Go authorized the native close and the window never left the manager:
+    // the phase stays `closing` and the snapshot names why. This window is
+    // still on screen, so the reason has to be shown here, not only in main.
+    const stalled = 'The Golem window has not closed within 2s; the close is still pending.';
+    emitMode(stateOf({ phase: 'closing', stateRevision: 5, handoff: 2, reason: stalled }));
+    await flush();
+    expect(useViewStore.getState().error).toBe(stalled);
+    expect(useViewStore.getState().frozen).toBe(true);
+
+    // Retry is Go's re-arm leg: one CloseGolemWindow, not a relay retry.
+    retryGolemConnection();
+    await flush();
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    expect(useViewStore.getState().error).toBeNull();
+    stop();
+  });
+
   it('runs one transfer per handoff no matter how often the snapshot repeats', async () => {
     const stop = await startReady();
     emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));

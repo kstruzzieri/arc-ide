@@ -22,7 +22,7 @@ import barStyles from '../layout/PanelCommandBar.module.css';
 import styles from './GolemWindowRoot.module.css';
 
 /**
- * The root of the undocked Golem window (#271 Task B5).
+ * The root of the undocked Golem window (#271 spec §5.3).
  *
  * It renders the same `GolemSurface` the docked panel does, over a projection
  * that arrived across the relay, and it owns nothing else: no conversation

@@ -1,7 +1,7 @@
 import { mountFirn } from './entry';
 
 // The root is chosen from the URL before either owner graph is imported, so the
-// undocked Golem window never evaluates the IDE's stores (#271 Task B5).
+// undocked Golem window never evaluates the IDE's stores (#271 spec §5.2).
 void mountFirn().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   const container = document.getElementById('root');

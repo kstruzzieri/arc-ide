@@ -629,6 +629,18 @@ export const DEFAULT_GOLEM_WINDOW_STATE: GolemWindowState = Object.freeze({
   handoff: 0,
 });
 
+/**
+ * Whether the satellite window owns the view: the one definition every docked
+ * host reads (the shell's center pair, the Files bar, the commands). Visual
+ * ownership, not the saved mode alone — a restored `undocked` preference is
+ * still bootstrapping, and not the phase alone either: an aborted bootstrap
+ * closes through `closing` with `mode` still `docked`, and for that tick the
+ * docked pair, with every control it offers, is what the user must keep.
+ */
+export const selectGolemUndocked = (s: { windowState: GolemWindowState }): boolean =>
+  s.windowState.mode === 'undocked' &&
+  (s.windowState.phase === 'ready' || s.windowState.phase === 'closing');
+
 const initialState = () => ({
   conversations: {} as Record<string, ConversationView>,
   runToConversation: {} as Record<string, string>,
@@ -643,7 +655,7 @@ const initialState = () => ({
   configTabOpen: false,
   configTabFocused: false,
   composerFocusRevision: 0,
-  // App-scoped (#271 B6): `invalidateBinding` and `hydrateStatus` write named
+  // App-scoped (#271 §5): `invalidateBinding` and `hydrateStatus` write named
   // fields only, so a repository switch never touches these three. They are
   // here so a fresh store — and the test reset — starts docked.
   windowState: DEFAULT_GOLEM_WINDOW_STATE,
@@ -1184,7 +1196,7 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       set((state) => ({ composerFocusRevision: state.composerFocusRevision + 1 }));
     },
 
-    // #271 B6. Deliberately dumb writes: the ordering rule ("install only a
+    // Window lifecycle (#271). Deliberately dumb writes: the ordering rule ("install only a
     // newer stateRevision") belongs to the one relay that owns the lifetime,
     // not to a setter every caller could reach with a stale snapshot.
     setWindowState(windowState) {

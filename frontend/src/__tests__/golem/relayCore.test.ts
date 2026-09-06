@@ -209,6 +209,33 @@ describe('main relay core', () => {
     }
   });
 
+  it('answers a throwing execute with a refusal that carries the error and reports it', async () => {
+    const bus = new Bus();
+    const onError = jest.fn();
+    const core = createMainRelayCore({
+      instance: 1,
+      execute: () => {
+        throw new Error('submitTurn exploded');
+      },
+      snapshot: () => emptyView,
+      transport: bus.transport('main'),
+      onDrafts: jest.fn(),
+      onError,
+    });
+    try {
+      await core.receive(actionEnvelope(1, { type: 'select', conversationId: 'c1' }));
+      const acks = bus.sent('main', 'ack');
+      expect(acks).toHaveLength(1);
+      expect(acks[0].payload).toEqual({ id: 1, ok: false, reason: 'submitTurn exploded' });
+      // A programming error in main is main's to hear about, not only the
+      // satellite's to display as a refusal.
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect((onError.mock.calls[0][0] as Error).message).toBe('submitTurn exploded');
+    } finally {
+      core.dispose();
+    }
+  });
+
   it('refuses an unparseable action definitively instead of stranding the waiter', async () => {
     const bus = new Bus();
     const execute = jest.fn();

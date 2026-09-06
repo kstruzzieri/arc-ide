@@ -1072,6 +1072,10 @@ describe('IDEShell center pair, undocked', () => {
         reason: 'bootstrap deadline expired',
       })
     );
+    // The shell still shows the docked pair for this tick, so Files keeps its
+    // collapse control: every host reads the one "satellite owns the view"
+    // selector, and none of them unmounts a control the others still offer.
+    expect(screen.getByRole('button', { name: 'Collapse Files panel' })).toBeInTheDocument();
     act(() =>
       useGolemStore.getState().setWindowState({
         mode: 'docked',

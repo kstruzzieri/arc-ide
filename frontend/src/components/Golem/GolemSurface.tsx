@@ -28,7 +28,7 @@ import type {
 import styles from './GolemPanel.module.css';
 
 /**
- * The Golem chat tree, as a passive view (#271 Task B4).
+ * The Golem chat tree, as a passive view shared by both hosts (#271 §5.1).
  *
  * This file has one hard rule, and it is a rule about *imports*, not about
  * style: nothing reachable from here may pull in `golemStore`, `ideStore`, the
@@ -38,7 +38,7 @@ import styles from './GolemPanel.module.css';
  * executing store, the undocked window would quietly grow a second owner of
  * the conversation. `GolemSurface.imports.test.ts` fails if that ever happens.
  *
- * Everything it draws therefore comes from `view` (B2's `GolemView`, which
+ * Everything it draws therefore comes from `view` (the relayed `GolemView`, which
  * carries no host drafts, no raw provider events and no owner-only submitted
  * prompts) and everything it changes goes out through `actions`.
  */
@@ -386,7 +386,7 @@ const PIN_SLACK = 4;
 
 /**
  * Where a composer-focus request goes when the composer cannot take it (#271
- * B7). Everything in the surface a keyboard can land on, matched in DOM order.
+ * §7). Everything in the surface a keyboard can land on, matched in DOM order.
  * The scrollable transcript is deliberately in the list: it is focusable and
  * named, and in a view with no conversation it is the only thing here that is.
  */
@@ -574,7 +574,7 @@ export function GolemSurface({
   // request armed instead of dropping it. That is why `composerLocked` is a
   // dependency: it is what re-enables the textarea.
   const consumedFocusRevision = useRef(focusRevision);
-  // Where an unanswerable request went in the meantime (#271 B7), tracked apart
+  // Where an unanswerable request went in the meantime (#271 §7), tracked apart
   // from the composer's own consumption so the two never cancel each other.
   const divertedFocusRevision = useRef(focusRevision);
   useEffect(() => {

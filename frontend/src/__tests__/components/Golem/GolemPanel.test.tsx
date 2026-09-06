@@ -797,6 +797,9 @@ describe('GolemPanel admission', () => {
     expect(composer()).toBeDisabled();
     expect(sendButton()).toBeDisabled();
     expect(newChatButton()).toBeDisabled();
+    // Spec §5.3: a disabled composer says why, in text, until the window is
+    // ready or the attempt is retired.
+    expect(screen.getByText('Moving Golem to its own window…')).toBeInTheDocument();
 
     // A click or keydown that raced the barrier is refused by the handler too,
     // not only by `disabled` — and the draft is still here for the new owner.
@@ -804,6 +807,9 @@ describe('GolemPanel admission', () => {
     fireEvent.click(sendButton());
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(composer()).toHaveValue('mid-thought');
+
+    rerender(<GolemPanel visible />);
+    expect(screen.queryByText('Moving Golem to its own window…')).toBeNull();
   });
 });
 

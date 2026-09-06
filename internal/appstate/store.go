@@ -106,8 +106,8 @@ func (s *Store) Load() (State, error) {
 		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
 		return Default(), s.writeBlocked
 	}
-	if sf.Version != version {
-		s.writeBlocked = fmt.Errorf("%w: %d", ErrUnknownVersion, sf.Version)
+	if err := checkVersion(sf.Version); err != nil {
+		s.writeBlocked = err
 		return Default(), s.writeBlocked
 	}
 	if sf.State.GolemWindow.Mode != ModeUndocked {
@@ -174,7 +174,20 @@ func (s *Store) probeExistingVersion() {
 		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
 		return
 	}
-	if envelope.Version != version {
-		s.writeBlocked = fmt.Errorf("%w: %d", ErrUnknownVersion, envelope.Version)
+	s.writeBlocked = checkVersion(envelope.Version)
+}
+
+// checkVersion classifies a file's version envelope. Versions start at 1, so
+// a missing, zero or negative one is a corrupt or partial file — never proof
+// of a newer Firn — and is reported as such; only a positive unknown version
+// is ErrUnknownVersion. Both latch writes for the session.
+func checkVersion(v int) error {
+	switch {
+	case v == version:
+		return nil
+	case v < 1:
+		return fmt.Errorf("parsing app state: missing or invalid version %d", v)
+	default:
+		return fmt.Errorf("%w: %d", ErrUnknownVersion, v)
 	}
 }

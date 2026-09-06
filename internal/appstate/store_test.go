@@ -119,6 +119,37 @@ func TestLoadNormalizesInvalidModeAndRejectsUnknownVersion(t *testing.T) {
 	}
 }
 
+// A missing or non-positive version is a corrupt or partial file, not one a
+// newer Firn wrote: the latch is the same, the message must not blame the
+// future.
+func TestLoadTreatsVersionBelowOneAsCorrupt(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"version":0,"state":{}}`, `{"version":-1,"state":{}}`} {
+		fsys, files := newMockFS(t)
+		path := filepath.Join(firnDir, "app.json")
+		files[path] = []byte(raw)
+		s := NewStore(fsys, firnDir)
+		_, err := s.Load()
+		if err == nil || errors.Is(err, ErrUnknownVersion) {
+			t.Fatalf("Load(%s) = %v, want a corrupt-file error that is not ErrUnknownVersion", raw, err)
+		}
+		if !strings.Contains(err.Error(), "version") {
+			t.Fatalf("Load(%s) = %v, want the version named", raw, err)
+		}
+		if saveErr := s.Save(Default()); saveErr == nil || errors.Is(saveErr, ErrUnknownVersion) {
+			t.Fatalf("Save after Load(%s) = %v, want the same corrupt-file latch", raw, saveErr)
+		}
+		if string(files[path]) != raw {
+			t.Fatalf("file %s changed by a blocked Save", raw)
+		}
+
+		// The never-loaded probe reaches the same verdict.
+		fresh := NewStore(fsys, firnDir)
+		if probeErr := fresh.Save(Default()); probeErr == nil || errors.Is(probeErr, ErrUnknownVersion) {
+			t.Fatalf("Save without Load over %s = %v, want the corrupt-file latch", raw, probeErr)
+		}
+	}
+}
+
 func TestSaveDisabledWithoutFirnDir(t *testing.T) {
 	fsys, _ := newMockFS(t)
 	s := NewStore(fsys, "")

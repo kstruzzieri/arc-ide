@@ -41,12 +41,25 @@ const (
 	// golemTransitionDeadline bounds both the undock bootstrap and the re-dock
 	// draft transfer. It is independent of ordinary action completion.
 	golemTransitionDeadline = 10 * time.Second
-	// golemBoundsDebounce coalesces a move/resize burst into one geometry read.
+	// golemBoundsDebounce coalesces a move/resize burst into one geometry read
+	// (spec §5.3 "save normal bounds on debounced move/resize"). Derived from
+	// the two things it sits between: an interactive drag delivers events at
+	// frame rate, so anything under ~100 ms is not a debounce, and the quit
+	// path saves the live frame itself (saveGolemFrameForShutdown), so the only
+	// cost of waiting is one extra native geometry read per burst. 400 ms is
+	// one full burst of moves at drag speed with a margin, and an order of
+	// magnitude inside the 2 s retirement cap this file already accepts as
+	// "quick enough for a user to notice nothing".
 	golemBoundsDebounce = 400 * time.Millisecond
 	// golemRetirementPoll / golemRetirementCap bound the close-only observer.
 	golemRetirementPoll = 20 * time.Millisecond
 	golemRetirementCap  = 2 * time.Second
-	// golemAbortReasonMax bounds the display reason carried by an abort.
+	// golemAbortReasonMax bounds the display reason carried by an abort, in
+	// bytes. Derived from the frontend's own display bound: both hosts cut a
+	// message to MAX_ERROR_CHARS = 200 UTF-16 code units (types/golem.ts), and
+	// 512 bytes holds 200 characters of any two-byte script with room for the
+	// three-byte ones common in CJK prose, while keeping the state Go retains
+	// and re-publishes on every snapshot far below the 4 MiB relay cap.
 	golemAbortReasonMax = 512
 )
 
@@ -475,8 +488,8 @@ func golemWindowOptions(frame appstate.GolemWindow) application.WebviewWindowOpt
 		Height:          frame.Height,
 		MinWidth:        min(golemWindowMinWidth, frame.Width),
 		MinHeight:       min(golemWindowMinHeight, frame.Height),
-		// Same ground and Mac appearance as the main window (main.go).
-		BackgroundColour:   application.NewRGB(2, 6, 23),
+		// The same ground and Mac appearance as the main window (main.go).
+		BackgroundColour:   firnWindowBackground,
 		UseApplicationMenu: true,
 		Mac: application.MacWindow{
 			TitleBar: application.MacTitleBar{
@@ -540,6 +553,13 @@ func (a *App) observeGolemRetirement(ctx context.Context, id uint, instance, han
 		a.golemWinMu.Unlock()
 		return
 	}
+	if quitting {
+		// Wails' shutdown queues every close and then clears its window map, so
+		// absence during a permitted quit proves nothing about a re-dock — and
+		// the drain cancelling this observer is not a stall to report either.
+		a.golemWinMu.Unlock()
+		return
+	}
 	if err != nil {
 		// Published, not only logged: the phase stays closing, and the reason
 		// is what lets main offer the retry (CloseGolemWindow re-arms this
@@ -552,12 +572,6 @@ func (a *App) observeGolemRetirement(ctx context.Context, id uint, instance, han
 		log.Printf("firn: golem window %d has not retired within %s; the close is still pending",
 			id, golemRetirementCap)
 		a.emitGolemState(state)
-		return
-	}
-	if quitting {
-		// Wails' shutdown queues every close and then clears its window map, so
-		// absence during a permitted quit proves nothing about a re-dock.
-		a.golemWinMu.Unlock()
 		return
 	}
 	unhook := a.golemWin.unhook
@@ -931,7 +945,11 @@ func (a *App) requestGolemReDock(instance uint64) error {
 		a.golemWin.observerCancel = cancel
 		id := a.golemWin.retiringID
 		retiringHandoff := a.golemWin.retiringHandoff
+		// Published: a closing with the reason cleared is how both hosts learn
+		// the retry is running, so the rail disables Dock again meanwhile.
+		state := a.golemWin.transition()
 		a.golemWinMu.Unlock()
+		a.emitGolemState(state)
 		go func() {
 			// The stored cancel is for a permitted quit; this one just releases
 			// the context once the observer is done either way.

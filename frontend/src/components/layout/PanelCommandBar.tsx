@@ -19,7 +19,7 @@ export interface PanelCommandBarProps {
   /** Right-aligned controls. Siblings of the identity, never inside it (spec §4.1). */
   controls?: ReactNode;
   /**
-   * Omitted when this panel cannot be collapsed at all — #271 B6's undocked
+   * Omitted when this panel cannot be collapsed at all — the #271 undocked
    * layout, where Files is the whole center and the pair invariant would
    * refuse the collapse anyway. A disabled control would advertise an action
    * that does not exist here.

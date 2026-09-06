@@ -4,7 +4,7 @@ import {
   reportGolemWindowError,
   undockGolem,
 } from '../golem/windowRelay';
-import { useGolemStore } from '../stores/golemStore';
+import { selectGolemUndocked, useGolemStore } from '../stores/golemStore';
 import {
   isLiveRunState,
   representativeRunInstanceId,
@@ -148,11 +148,8 @@ function isGolemEffectivelyVisible(): boolean {
   return !center.golemCollapsed;
 }
 
-/** Visual ownership: a saved undocked mode still bootstrapping is not it. */
-const golemIsUndocked = (): boolean => {
-  const { phase } = useGolemStore.getState().windowState;
-  return phase === 'ready' || phase === 'closing';
-};
+/** Visual ownership, by the same selector the shell and the Files bar read. */
+const golemIsUndocked = (): boolean => selectGolemUndocked(useGolemStore.getState());
 
 export function toggleGolemPanel(): void {
   if (isGolemEffectivelyVisible()) useIDEStore.getState().setGolemPanelCollapsed(true);
