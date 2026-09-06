@@ -43,6 +43,8 @@ export function useGolemBridge(): void {
     // assistant text, and lastSeq stay exactly as the backend emitted them.
     let pending: unknown[] = [];
     let frame: number | null = null;
+    let taskPending = false;
+    let disposed = false;
 
     const flush = () => {
       if (frame !== null) {
@@ -60,7 +62,23 @@ export function useGolemBridge(): void {
     const offEvent = EventsOn('golem:event', (payload: unknown) => {
       if (isDeltaEvent(payload)) {
         pending.push(payload);
-        if (frame === null) {
+        // #271 B6. `requestAnimationFrame` stops firing while the window is
+        // minimized or hidden, and the undocked Golem window is a separate
+        // native window that stays on screen — so main would batch a whole
+        // reply into a frame that never runs and publish nothing. While a
+        // satellite exists in any phase, ingestion runs on a microtask
+        // instead; docked, the frame batching is unchanged, because that is
+        // what keeps a fast token stream from copying the conversation per
+        // token. Never a timer loop: this is event-triggered, not polling.
+        if (useGolemStore.getState().windowState.phase !== 'closed') {
+          if (!taskPending) {
+            taskPending = true;
+            queueMicrotask(() => {
+              taskPending = false;
+              if (!disposed) flush();
+            });
+          }
+        } else if (frame === null) {
           frame = requestAnimationFrame(() => {
             frame = null;
             flush();
@@ -83,7 +101,16 @@ export function useGolemBridge(): void {
       refreshRef.current();
     });
 
+    // A window opening while a frame is already queued would otherwise leave
+    // that batch waiting on a frame the minimized window never produces.
+    const offWindowPhase = useGolemStore.subscribe((state, previous) => {
+      if (state.windowState.phase === previous.windowState.phase) return;
+      if (state.windowState.phase !== 'closed') flush();
+    });
+
     return () => {
+      disposed = true;
+      offWindowPhase();
       flush();
       offEvent?.();
       offRunStatus?.();

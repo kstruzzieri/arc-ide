@@ -24,6 +24,7 @@ import type {
   TurnAdmission,
   TurnDraft,
 } from '../types/golem';
+import type { GolemWindowState } from '../types/golemWindow';
 
 /**
  * Conversation-keyed Golem chat state (#226 Task B7).
@@ -614,6 +615,20 @@ function reduceEvent(
 
 // ── store ─────────────────────────────────────────────────────────────────────
 
+/**
+ * The lifecycle every session starts in: docked, with no satellite window and
+ * no transfer in flight (#271 spec §5.1). Exported because the relay and its
+ * tests both need the exact shape Go's `closed` snapshot carries.
+ */
+export const DEFAULT_GOLEM_WINDOW_STATE: GolemWindowState = Object.freeze({
+  mode: 'docked',
+  phase: 'closed',
+  instance: 0,
+  restorePending: false,
+  stateRevision: 0,
+  handoff: 0,
+});
+
 const initialState = () => ({
   conversations: {} as Record<string, ConversationView>,
   runToConversation: {} as Record<string, string>,
@@ -628,6 +643,12 @@ const initialState = () => ({
   configTabOpen: false,
   configTabFocused: false,
   composerFocusRevision: 0,
+  // App-scoped (#271 B6): `invalidateBinding` and `hydrateStatus` write named
+  // fields only, so a repository switch never touches these three. They are
+  // here so a fresh store — and the test reset — starts docked.
+  windowState: DEFAULT_GOLEM_WINDOW_STATE,
+  hostFrozen: false,
+  windowError: null as string | null,
 });
 
 /**
@@ -1163,6 +1184,21 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       set((state) => ({ composerFocusRevision: state.composerFocusRevision + 1 }));
     },
 
+    // #271 B6. Deliberately dumb writes: the ordering rule ("install only a
+    // newer stateRevision") belongs to the one relay that owns the lifetime,
+    // not to a setter every caller could reach with a stale snapshot.
+    setWindowState(windowState) {
+      set({ windowState });
+    },
+
+    setHostFrozen(hostFrozen) {
+      set({ hostFrozen });
+    },
+
+    setWindowError(windowError) {
+      set({ windowError });
+    },
+
     // One app-global tab: opening an already-open tab only re-focuses it.
     // Reach it through `focusConfigTab` in utils/editorSurface, never directly:
     // selecting this tab must also park the git store's editor focus, or a diff
@@ -1251,10 +1287,6 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     allowAndSend(conversationId: string, runId: string, challengeId: string): GolemActionResult {
       const refusal = sendRefusal(conversationId);
       if (refusal) return refuse(refusal);
-      // Identity first, and before the expiry sweep: an approval dispatched
-      // from a stale view names a challenge that is not the current one, so it
-      // is not entitled to release the current one either — expiring here
-      // would let it clear a challenge the user in front of it never saw.
       // Identity first, and before the expiry sweep: an approval dispatched
       // from a stale view names a challenge that is not the current one, so it
       // is not entitled to release the current one either — expiring here

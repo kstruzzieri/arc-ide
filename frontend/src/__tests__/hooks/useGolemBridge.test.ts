@@ -648,6 +648,60 @@ describe('delta batching', () => {
     expect(conversation().runs[RUN].lastSeq).toBe(1);
   });
 
+  // #271 B6 — a minimized main window stops producing animation frames, but the
+  // satellite that is displaying this stream is still on screen. A publisher
+  // cannot publish data that never entered the store, so while a window exists
+  // ingestion runs on a microtask instead of a frame.
+  it('delivers satellite deltas without advancing an animation frame', async () => {
+    act(() =>
+      useGolemStore.getState().setWindowState({
+        mode: 'undocked',
+        phase: 'ready',
+        instance: 1,
+        restorePending: false,
+        stateRevision: 4,
+        handoff: 1,
+      })
+    );
+    emit('golem:event', delta(1, 'visible'));
+    emit('golem:event', delta(2, ' while minimized'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(conversation().transcript.find((entry) => entry.kind === 'assistant')?.text).toBe(
+      'visible while minimized'
+    );
+    expect(conversation().rawEvents.map((entry) => entry.seq)).toEqual([1, 2]);
+  });
+
+  it('drains an already-queued frame the moment a window starts bootstrapping', async () => {
+    emit('golem:event', delta(1, 'queued while docked'));
+    expect(conversation().rawEvents).toHaveLength(0);
+
+    act(() =>
+      useGolemStore.getState().setWindowState({
+        mode: 'docked',
+        phase: 'bootstrapping',
+        instance: 1,
+        restorePending: false,
+        stateRevision: 2,
+        handoff: 1,
+      })
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Flushed once, without the frame ever running.
+    expect(conversation().rawEvents.map((entry) => entry.seq)).toEqual([1]);
+    expect(conversation().transcript.find((entry) => entry.kind === 'assistant')?.text).toBe(
+      'queued while docked'
+    );
+
+    runFrame();
+    expect(conversation().rawEvents.map((entry) => entry.seq)).toEqual([1]);
+  });
+
   it('flushes pending deltas on unmount rather than dropping them', async () => {
     const { unmount } = renderHook(() => useGolemBridge());
     // Two bridges are mounted in this test, so the delta lands twice; only the

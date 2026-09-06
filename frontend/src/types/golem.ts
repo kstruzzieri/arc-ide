@@ -14,6 +14,9 @@
 
 import { ai } from '../wails/bindings';
 import { GOLEM_UNAVAILABLE } from '../golem/projection';
+// Type-only, so the cycle with `types/golemWindow.ts` (which imports this
+// module's validators at runtime) is erased rather than made circular.
+import type { GolemWindowState } from './golemWindow';
 
 export interface ConversationIdentity {
   repoEpoch: number;
@@ -188,6 +191,32 @@ export interface GolemStoreState {
   composerFocusRevision: number;
   /** Arms the composer of the visible Golem host (replaces setPanelMode's bump). */
   requestComposerFocus(): void;
+  /**
+   * The undocked-window lifecycle (#271 Task B6), as Go last published it.
+   *
+   * These three are app-scoped: a repository unbind, rebind or status
+   * hydration must leave them exactly as they were, because the satellite
+   * window outlives every one of those. Only `golem/windowRelay.ts` writes
+   * them, and only from an authoritative Go snapshot.
+   */
+  windowState: GolemWindowState;
+  /**
+   * The docked host's interaction barrier. True from the moment an undock is
+   * requested until the authoritative transition settles it, so the text a
+   * user is typing can never be edited while ownership is uncertain.
+   * Deliberately not derived from `windowState.phase` alone: the barrier goes
+   * up synchronously, before Go has said anything.
+   */
+  hostFrozen: boolean;
+  /**
+   * The last window failure the user has not been shown past, or null.
+   * Distinct from `bridgeError`: a window that would not open must not make a
+   * working docked AI look broken.
+   */
+  windowError: string | null;
+  setWindowState(state: GolemWindowState): void;
+  setHostFrozen(frozen: boolean): void;
+  setWindowError(error: string | null): void;
   hydrateStatus(status: GolemStatus): void;
   invalidateBinding(): void;
   ingestEvent(value: unknown): void;
