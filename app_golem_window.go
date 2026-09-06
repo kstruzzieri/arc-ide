@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"firn/internal/appstate"
 
@@ -267,44 +268,11 @@ func stopGolemTimer(t golemTimer) {
 	}
 }
 
-// golemDeadline is the bounded transition deadline shared by the undock
-// bootstrap and the re-dock transfer.
-func (a *App) golemDeadline() time.Duration {
-	if a.golemTransitionOverride > 0 {
-		return a.golemTransitionOverride
-	}
-	return golemTransitionDeadline
-}
-
 // golemStateSnapshot reads the live state under the lock.
 func (a *App) golemStateSnapshot() GolemWindowState {
 	a.golemWinMu.Lock()
 	defer a.golemWinMu.Unlock()
 	return a.golemWin.snapshot()
-}
-
-// golemObserving reports whether the bounded retirement observer is running.
-func (a *App) golemObserving() bool {
-	a.golemWinMu.Lock()
-	defer a.golemWinMu.Unlock()
-	return a.golemWin.observing
-}
-
-// golemRetirementFailed reports a close whose captured native id never left the
-// window manager within the bounded wait. The phase stays closing until an
-// explicit recovery request rechecks that same id.
-func (a *App) golemRetirementFailed() bool {
-	a.golemWinMu.Lock()
-	defer a.golemWinMu.Unlock()
-	return a.golemWin.retirementFailed
-}
-
-// golemLastNormalFrame is the most recent non-minimised, non-maximised,
-// non-fullscreen frame held in memory.
-func (a *App) golemLastNormalFrame() appstate.GolemWindow {
-	a.golemWinMu.Lock()
-	defer a.golemWinMu.Unlock()
-	return a.golemWin.lastNormal
 }
 
 // golemCallerRole verifies the runtime caller against the live handles. The
@@ -416,6 +384,12 @@ func placeGolemWindow(saved appstate.GolemWindow, screens []application.Rect, fa
 			}
 		}
 	}
+
+	// §5.3: restore the normal minimums whenever the chosen work area can fit
+	// them, so a frame saved while a display was tiny does not stay cramped on a
+	// display that is not. A smaller work area lowers the minimum to itself.
+	width = max(width, min(golemWindowMinWidth, target.Width))
+	height = max(height, min(golemWindowMinHeight, target.Height))
 
 	// Clamp the size to the chosen work area before positioning, so the frame
 	// and its titlebar controls are always reachable on it.
@@ -886,7 +860,12 @@ func (a *App) requestGolemReDock(instance uint64) error {
 		id := a.golemWin.retiringID
 		retiringHandoff := a.golemWin.retiringHandoff
 		a.golemWinMu.Unlock()
-		go a.observeGolemRetirement(observerCtx, id, instance, retiringHandoff)
+		go func() {
+			// The stored cancel is for a permitted quit; this one just releases
+			// the context once the observer is done either way.
+			defer cancel()
+			a.observeGolemRetirement(observerCtx, id, instance, retiringHandoff)
+		}()
 		return nil
 
 	case golemPhaseBootstrapping, golemPhaseBootstrapped:
@@ -910,7 +889,7 @@ func (a *App) requestGolemReDock(instance uint64) error {
 	a.golemWin.saveTimer = nil
 	stopGolemTimer(a.golemWin.deadline)
 	handoff := a.golemWin.handoff
-	a.golemWin.deadline = a.golemAfter(a.golemDeadline(), func() {
+	a.golemWin.deadline = a.golemAfter(golemTransitionDeadline, func() {
 		a.golemTransitionTimeout(instance, handoff)
 	})
 	state := a.golemWin.transition()
@@ -969,7 +948,12 @@ func (a *App) authorizeGolemClose(instance uint64) error {
 
 	a.emitGolemState(state)
 	handle.Close()
-	go a.observeGolemRetirement(observerCtx, id, instance, retiringHandoff)
+	go func() {
+		// The stored cancel is for a permitted quit; this one just releases the
+		// context once the observer is done either way.
+		defer cancel()
+		a.observeGolemRetirement(observerCtx, id, instance, retiringHandoff)
+	}()
 	return nil
 }
 
@@ -1026,7 +1010,13 @@ func golemAbortReason(payload json.RawMessage) (string, error) {
 		return "", fmt.Errorf("golem window: abort payload carries no reason")
 	}
 	if len(reason) > golemAbortReasonMax {
-		reason = reason[:golemAbortReasonMax]
+		// Same byte bound, but never cut through a multi-byte rune: back up to
+		// the last rune start so the reason stays displayable text.
+		cut := golemAbortReasonMax
+		for cut > 0 && !utf8.RuneStart(reason[cut]) {
+			cut--
+		}
+		reason = reason[:cut]
 	}
 	return reason, nil
 }
@@ -1151,6 +1141,9 @@ func (a *App) acceptGolemReady(instance uint64, msg GolemWindowMessage) error {
 		return fmt.Errorf("golem window: ready names retired instance %d", instance)
 	}
 	if a.golemWin.phase == golemPhaseReady {
+		// A mismatch here is currently unreachable — only a re-dock resets the
+		// transfer id, and that leaves ready — but the check is kept so a future
+		// reset reports the duplicate rather than silently accepting it.
 		recorded := a.golemWin.transferID
 		a.golemWinMu.Unlock()
 		if msg.Revision != recorded {
@@ -1306,7 +1299,7 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 	a.golemWin.handle = window
 	a.golemWin.handleID = id
 	a.golemWin.unhook = unhook
-	a.golemWin.deadline = a.golemAfter(a.golemDeadline(), func() {
+	a.golemWin.deadline = a.golemAfter(golemTransitionDeadline, func() {
 		a.golemTransitionTimeout(instance, handoff)
 	})
 	state := a.golemWin.transition()
@@ -1319,6 +1312,19 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 		a.v3app.Window.Add(window)
 	}
 	window.Run()
+
+	// A close or abort that landed in the gap above found an un-run window:
+	// Close() was a no-op and the manager never knew the id, so the observer
+	// already retired the instance and released the hooks. What ran here is then
+	// an orphan, and only this Close — after Run, with no hooks left to cancel
+	// it — actually destroys it.
+	a.golemWinMu.Lock()
+	retired := a.golemWin.instance != instance || a.golemWin.handle != window
+	a.golemWinMu.Unlock()
+	if retired {
+		window.Close()
+		return fmt.Errorf("golem window: open attempt %d was retired before its window ran", instance)
+	}
 	return nil
 }
 
@@ -1394,15 +1400,13 @@ func (a *App) CloseGolemWindow(ctx context.Context) error {
 	if _, err := a.golemCallerRole(ctx); err != nil {
 		return err
 	}
+	// A retiring instance is still the live one: only a completed retirement
+	// clears it, and that also clears the closing phase this recovers.
 	a.golemWinMu.Lock()
 	instance := a.golemWin.instance
-	retiring := a.golemWin.retiringInstance
 	a.golemWinMu.Unlock()
 	if instance == 0 {
-		if retiring == 0 {
-			return nil
-		}
-		instance = retiring
+		return nil
 	}
 	return a.requestGolemReDock(instance)
 }

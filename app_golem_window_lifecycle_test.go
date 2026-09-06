@@ -45,6 +45,10 @@ type fakeNative struct {
 	maximised  bool
 	fullscreen bool
 	reenter    func()
+	// onRun runs inside Run(), which is where the production code registers and
+	// starts the window. It is the only point a test can act between publishing
+	// the bootstrapping state and OpenGolemWindow returning.
+	onRun func()
 }
 
 func newFakeNative(id uint, name string) *fakeNative {
@@ -86,12 +90,21 @@ func (f *fakeNative) countOf(name string) int {
 func (f *fakeNative) Show() application.Window { f.record("show"); return f }
 func (f *fakeNative) Focus()                   { f.record("focus") }
 func (f *fakeNative) Close()                   { f.record("close") }
-func (f *fakeNative) Run()                     { f.record("run") }
 func (f *fakeNative) UnMinimise()              { f.record("unminimise") }
 func (f *fakeNative) Restore()                 { f.record("restore") }
 func (f *fakeNative) SetSize(w, h int) application.Window {
 	f.record("setSize")
 	return f
+}
+
+func (f *fakeNative) Run() {
+	f.record("run")
+	f.mu.Lock()
+	onRun := f.onRun
+	f.mu.Unlock()
+	if onRun != nil {
+		onRun()
+	}
 }
 
 func (f *fakeNative) IsMinimised() bool {
@@ -250,6 +263,7 @@ type golemHarness struct {
 	nextID   uint
 	failNext bool
 	options  []application.WebviewWindowOptions
+	onCreate func(*fakeNative)
 }
 
 var golemTestFirnDir = filepath.FromSlash("/home/user/.firn")
@@ -337,7 +351,11 @@ func newGolemHarness(t *testing.T) *golemHarness {
 		h.created = append(h.created, window)
 		h.options = append(h.options, options)
 		h.present[id] = true
+		onCreate := h.onCreate
 		h.mu.Unlock()
+		if onCreate != nil {
+			onCreate(window)
+		}
 		return window
 	}
 	app.golemAfterFunc = func(d time.Duration, fn func()) golemTimer {
@@ -394,6 +412,14 @@ func (h *golemHarness) setScreens(screens []application.Rect) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.screens = screens
+}
+
+// onNewWindow installs a callback the fake factory runs on each window it
+// builds, before OpenGolemWindow has installed the handle.
+func (h *golemHarness) onNewWindow(fn func(*fakeNative)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onCreate = fn
 }
 
 func (h *golemHarness) failFactoryOnce() {
@@ -635,6 +661,46 @@ func TestPlaceGolemWindowDefaultsAndDegenerateWorkAreas(t *testing.T) {
 		}
 		if got.Width != 300 || got.Height != 400 {
 			t.Fatalf("size = %dx%d, want the whole 300x400 work area", got.Width, got.Height)
+		}
+	})
+
+	// §5.3: a frame below 380x520 is only permitted while the reachable work
+	// area is itself smaller, so a display that can fit the normal minimums
+	// restores them.
+	t.Run("saved 300x400 on a full display restores 380x520", func(t *testing.T) {
+		got, err := placeGolemWindow(
+			appstate.GolemWindow{X: 100, Y: 100, Width: 300, Height: 400},
+			[]application.Rect{full}, full)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Width != golemWindowMinWidth || got.Height != golemWindowMinHeight {
+			t.Fatalf("size = %dx%d, want the normal minimums %dx%d",
+				got.Width, got.Height, golemWindowMinWidth, golemWindowMinHeight)
+		}
+		options := golemWindowOptions(got)
+		if options.MinWidth != golemWindowMinWidth || options.MinHeight != golemWindowMinHeight {
+			t.Fatalf("options minimums = %dx%d, want %dx%d",
+				options.MinWidth, options.MinHeight, golemWindowMinWidth, golemWindowMinHeight)
+		}
+	})
+
+	t.Run("saved 300x400 on a 320x460 work area stays small", func(t *testing.T) {
+		small := application.Rect{X: 0, Y: 0, Width: 320, Height: 460}
+		got, err := placeGolemWindow(
+			appstate.GolemWindow{X: 0, Y: 0, Width: 300, Height: 400},
+			[]application.Rect{small}, small)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Width != small.Width || got.Height != small.Height {
+			t.Fatalf("size = %dx%d, want the whole %dx%d work area",
+				got.Width, got.Height, small.Width, small.Height)
+		}
+		options := golemWindowOptions(got)
+		if options.MinWidth != small.Width || options.MinHeight != small.Height {
+			t.Fatalf("options minimums = %dx%d, want the work area %dx%d",
+				options.MinWidth, options.MinHeight, small.Width, small.Height)
 		}
 	})
 
@@ -899,6 +965,40 @@ func TestRejectedTransitionLeavesStateUntouched(t *testing.T) {
 		})
 	}
 
+	// An action before readiness needs its own hidden bootstrap, so it runs
+	// against a fresh harness rather than the undocked one above.
+	t.Run("action before ready", func(t *testing.T) {
+		fresh := newGolemHarness(t)
+		if err := fresh.app.OpenGolemWindow(fresh.mainCtx()); err != nil {
+			t.Fatalf("OpenGolemWindow: %v", err)
+		}
+		if _, err := fresh.app.BootstrapGolemWindow(fresh.satCtx()); err != nil {
+			t.Fatalf("BootstrapGolemWindow: %v", err)
+		}
+		if fresh.phase() != golemPhaseBootstrapped {
+			t.Fatalf("phase = %s, want %s", fresh.phase(), golemPhaseBootstrapped)
+		}
+		untouched := fresh.state()
+
+		err := fresh.app.PostGolemWindowMessage(fresh.satCtx(), GolemWindowMessage{
+			Kind: "action", Instance: fresh.instance(), ID: 1,
+			Payload: json.RawMessage(`{"type":"select"}`),
+		})
+
+		if err == nil {
+			t.Fatal("an action was accepted before the window was ready")
+		}
+		if got := fresh.state(); got != untouched {
+			t.Fatalf("state = %+v, want unchanged %+v", got, untouched)
+		}
+		if len(fresh.relayed()) != 0 {
+			t.Fatalf("relayed %d messages, want none", len(fresh.relayed()))
+		}
+		if fresh.satellite().countOf("show") != 0 {
+			t.Fatal("a rejected action revealed the hidden window")
+		}
+	})
+
 	// A newer view is retained; the older one above never replaced it.
 	if err := h.app.PostGolemWindowMessage(h.mainCtx(), h.viewMessage(4)); err != nil {
 		t.Fatalf("newer view: %v", err)
@@ -977,6 +1077,51 @@ func TestBootstrapTimeoutAndAbort(t *testing.T) {
 		// Another attempt is permitted.
 		if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
 			t.Fatalf("reopen after abort: %v", err)
+		}
+	})
+
+	// The window is published as bootstrapping before it is registered and run,
+	// so a close landing in that gap finds an un-run window: Close() is a no-op,
+	// the manager never knew the id, and the observer retires the instance and
+	// releases the hooks while OpenGolemWindow is still inside Run(). Open must
+	// notice on its way out and destroy what it started.
+	t.Run("a close before registration leaves no orphan window", func(t *testing.T) {
+		h := newGolemHarness(t)
+		h.onNewWindow(func(window *fakeNative) {
+			window.onRun = func() {
+				// Absent from the manager: exactly what an un-run window is.
+				h.retire(window.id)
+				if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+					t.Errorf("CloseGolemWindow during bootstrap: %v", err)
+				}
+				waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+			}
+		})
+
+		err := h.app.OpenGolemWindow(h.mainCtx())
+
+		if err == nil {
+			t.Fatal("OpenGolemWindow returned nil after its attempt was retired")
+		}
+		satellite := h.satellite()
+		if satellite.countOf("close") != 2 {
+			t.Fatalf("close calls = %d, want the aborted close plus the orphan destroy",
+				satellite.countOf("close"))
+		}
+		if h.createdCount() != 1 {
+			t.Fatalf("created %d windows, want 1", h.createdCount())
+		}
+		if h.phase() != golemPhaseClosed || h.mode() != appstate.ModeDocked {
+			t.Fatalf("phase/mode = %s/%s, want closed/docked", h.phase(), h.mode())
+		}
+		closed := 0
+		for _, state := range h.modeEvents() {
+			if state.Phase == golemPhaseClosed {
+				closed++
+			}
+		}
+		if closed != 1 {
+			t.Fatalf("emitted %d closed transitions, want 1", closed)
 		}
 	})
 
@@ -1484,6 +1629,34 @@ func TestLoadGolemWindowPreferenceMarksRestorePending(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// The three readers below exist only for these tests, so they live here rather
+// than widening the production surface. They take the same lock the state
+// machine does and make no native call.
+
+// golemObserving reports whether the bounded retirement observer is running.
+func (a *App) golemObserving() bool {
+	a.golemWinMu.Lock()
+	defer a.golemWinMu.Unlock()
+	return a.golemWin.observing
+}
+
+// golemRetirementFailed reports a close whose captured native id never left the
+// window manager within the bounded wait. The phase stays closing until an
+// explicit recovery request rechecks that same id.
+func (a *App) golemRetirementFailed() bool {
+	a.golemWinMu.Lock()
+	defer a.golemWinMu.Unlock()
+	return a.golemWin.retirementFailed
+}
+
+// golemLastNormalFrame is the most recent non-minimised, non-maximised,
+// non-fullscreen frame held in memory.
+func (a *App) golemLastNormalFrame() appstate.GolemWindow {
+	a.golemWinMu.Lock()
+	defer a.golemWinMu.Unlock()
+	return a.golemWin.lastNormal
+}
 
 // waitForGolem polls an in-process condition the bounded observer settles
 // asynchronously. It never sleeps on wall-clock behaviour under test: the

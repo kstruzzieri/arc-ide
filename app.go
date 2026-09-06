@@ -98,10 +98,9 @@ type App struct {
 	golemWindowFactory func(application.WebviewWindowOptions) application.Window
 	screenBounds       func() []application.Rect
 	golemWindowPresent func(uint) bool
-	// golemAfterFunc and golemTransitionOverride are test seams for the bounded
-	// transition timers. Zero values mean the production clock and deadline.
-	golemAfterFunc          func(time.Duration, func()) golemTimer
-	golemTransitionOverride time.Duration
+	// golemAfterFunc is the test seam for the bounded transition timers. A nil
+	// value means the production clock.
+	golemAfterFunc func(time.Duration, func()) golemTimer
 }
 
 // closeState is the spec §5.5 app-close state machine. The first OS close

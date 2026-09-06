@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"strings"
 	"testing"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // main() is the one place the App is joined to the v3 runtime, and none of
@@ -272,6 +275,64 @@ func TestMainWiresTheAppIntoTheV3Runtime(t *testing.T) {
 
 	if len(missing) > 0 {
 		t.Fatalf("main() wiring gaps:\n%s", strings.Join(missing, "\n"))
+	}
+}
+
+// screenWindow is a main window that reports which display it is on.
+type screenWindow struct {
+	fakeWindow
+	screen *application.Screen
+	err    error
+}
+
+func (w *screenWindow) GetScreen() (*application.Screen, error) { return w.screen, w.err }
+
+// §5.3 centres a satellite whose saved display is gone on main's screen, and
+// placement treats the first work area as that fallback. So main's screen has
+// to lead, with the primary next for when main reports no screen at all.
+func TestGolemScreenAreasPutMainsScreenFirst(t *testing.T) {
+	t.Parallel()
+
+	primary := application.Rect{X: 0, Y: 0, Width: 2560, Height: 1440}
+	secondary := application.Rect{X: -1440, Y: 0, Width: 1440, Height: 900}
+	tertiary := application.Rect{X: 2560, Y: 0, Width: 1920, Height: 1080}
+	mains := application.Rect{X: 4480, Y: 0, Width: 1280, Height: 800}
+	screens := []*application.Screen{
+		{WorkArea: secondary},
+		{WorkArea: primary, IsPrimary: true},
+		nil,
+		{WorkArea: tertiary},
+	}
+	named := func(rects []application.Rect) string { return fmt.Sprintf("%+v", rects) }
+
+	for _, tc := range []struct {
+		name       string
+		mainWindow application.Window
+		want       []application.Rect
+	}{
+		{
+			name:       "main's screen leads, then the primary, then the rest",
+			mainWindow: &screenWindow{fakeWindow: fakeWindow{id: 1, name: golemWindowNameMain}, screen: &application.Screen{WorkArea: mains}},
+			want:       []application.Rect{mains, primary, secondary, tertiary},
+		},
+		{
+			name:       "no main window falls back to the primary",
+			mainWindow: nil,
+			want:       []application.Rect{primary, secondary, tertiary},
+		},
+		{
+			name:       "an unreported screen falls back to the primary",
+			mainWindow: &screenWindow{fakeWindow: fakeWindow{id: 1, name: golemWindowNameMain}, err: fmt.Errorf("no screen")},
+			want:       []application.Rect{primary, secondary, tertiary},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := golemScreenAreas(screens, tc.mainWindow)
+
+			if named(got) != named(tc.want) {
+				t.Fatalf("golemScreenAreas = %s, want %s", named(got), named(tc.want))
+			}
+		})
 	}
 }
 

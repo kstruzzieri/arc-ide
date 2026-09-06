@@ -40,6 +40,32 @@ func buildAppMenu(app *App, wapp *application.App) *application.Menu {
 	return menu
 }
 
+// golemScreenAreas orders the display work areas #271's placement sees. The
+// first area is the fallback a satellite is centred on when its saved display
+// is gone.
+func golemScreenAreas(screens []*application.Screen, mainWindow application.Window) []application.Rect {
+	areas := make([]application.Rect, 0, len(screens)+1)
+	for _, screen := range screens {
+		if screen == nil {
+			continue
+		}
+		if screen.IsPrimary {
+			areas = append([]application.Rect{screen.WorkArea}, areas...)
+			continue
+		}
+		areas = append(areas, screen.WorkArea)
+	}
+	// Main's own screen leads: §5.3 centres a satellite whose saved display is
+	// gone on main's screen, not on the primary. The primary stays next, so it
+	// still leads when main reports no screen at all.
+	if window := asLiveWindow(mainWindow); window != nil {
+		if screen, err := window.GetScreen(); err == nil && screen != nil {
+			areas = append([]application.Rect{screen.WorkArea}, areas...)
+		}
+	}
+	return areas
+}
+
 func main() {
 	app := NewApp()
 
@@ -70,19 +96,7 @@ func main() {
 		return application.NewWindow(options)
 	}
 	app.screenBounds = func() []application.Rect {
-		screens := wapp.Screen.GetAll()
-		areas := make([]application.Rect, 0, len(screens))
-		for _, screen := range screens {
-			if screen == nil {
-				continue
-			}
-			if screen.IsPrimary {
-				areas = append([]application.Rect{screen.WorkArea}, areas...)
-				continue
-			}
-			areas = append(areas, screen.WorkArea)
-		}
-		return areas
+		return golemScreenAreas(wapp.Screen.GetAll(), app.mainWindow)
 	}
 	app.golemWindowPresent = func(id uint) bool {
 		_, present := wapp.Window.GetByID(id)
