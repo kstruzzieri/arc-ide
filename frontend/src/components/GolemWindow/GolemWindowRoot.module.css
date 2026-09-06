@@ -49,12 +49,17 @@
   --wails-draggable: no-drag;
 }
 
+/* Shrinks to nothing before the controls give up a pixel: Go's floor for this
+   window is 380px wide (golemWindowMinWidth), and at that width the identity is
+   the only thing that can yield. Without `overflow: hidden` a flex item that has
+   run out of room draws over its neighbours instead of being clipped. */
 .wordmark {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .name {
@@ -62,6 +67,7 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .wordmark img {
@@ -74,6 +80,8 @@
 .dock {
   display: flex;
   align-items: center;
+  flex: none;
+  white-space: nowrap;
   height: 24px;
   padding: 0 10px;
   border: 1px solid var(--surface-border);

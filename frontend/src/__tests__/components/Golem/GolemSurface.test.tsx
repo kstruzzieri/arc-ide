@@ -436,4 +436,51 @@ describe('GolemSurface visibility', () => {
     rerender(<Harness view={view} actions={actions} focusRevision={2} />);
     expect(document.activeElement).toBe(composer());
   });
+
+  // #271 B7. A view with no conversation cannot answer a focus request with the
+  // composer, and the projection cannot say whether one is still coming: the
+  // pre-bind state and "no repository open" are the same state. So the request
+  // is diverted to a real control now *and* kept for the composer.
+  it('lands a focus request on the first available control when the composer is disabled', () => {
+    const actions = actionsMock();
+    const view = baseView({ selectedConversationId: null, conversations: {} });
+    const { rerender } = render(<Harness view={view} actions={actions} focusRevision={0} />);
+    const textarea = composer();
+    expect(textarea).toBeDisabled();
+
+    rerender(<Harness view={view} actions={actions} focusRevision={1} />);
+    expect(document.activeElement).not.toBe(textarea);
+    // The only named, reachable thing this view offers.
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Golem transcript' }));
+
+    // Diverted once per revision: a later unrelated render must not pull the
+    // focus back off wherever the user has since moved it.
+    (document.activeElement as HTMLElement).blur();
+    rerender(<Harness view={view} actions={actions} focusRevision={1} />);
+    expect(document.activeElement).toBe(document.body);
+
+    // Still the composer's request, though: a conversation arriving on the same
+    // revision claims it, which is what makes an unbound window's ⌘⇧I land.
+    rerender(<Harness view={baseView()} actions={actions} focusRevision={1} />);
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it('prefers a real control over the transcript when the view offers one', () => {
+    const actions = actionsMock();
+    const view = baseView({
+      selectedConversationId: null,
+      conversations: {
+        [identity.conversationId]: baseView().conversations[identity.conversationId],
+        [other.conversationId]: {
+          ...baseView().conversations[identity.conversationId],
+          identity: other,
+          workspaceLabel: 'Backend',
+        },
+      },
+    });
+    const { rerender } = render(<Harness view={view} actions={actions} focusRevision={0} />);
+    rerender(<Harness view={view} actions={actions} focusRevision={1} />);
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Frontend' }));
+  });
 });

@@ -384,6 +384,15 @@ function groupTranscript(transcript: ProjectedTranscript[]): TranscriptItem[] {
 /** Slack, in px, for treating a scroll position as "at the newest row". */
 const PIN_SLACK = 4;
 
+/**
+ * Where a composer-focus request goes when the composer cannot take it (#271
+ * B7). Everything in the surface a keyboard can land on, matched in DOM order.
+ * The scrollable transcript is deliberately in the list: it is focusable and
+ * named, and in a view with no conversation it is the only thing here that is.
+ */
+const SURFACE_FOCUSABLE =
+  'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]';
+
 /** Composer auto-grow ceiling, in px, past which the field scrolls. */
 const COMPOSER_MAX_HEIGHT = 160;
 
@@ -565,13 +574,39 @@ export function GolemSurface({
   // request armed instead of dropping it. That is why `composerLocked` is a
   // dependency: it is what re-enables the textarea.
   const consumedFocusRevision = useRef(focusRevision);
+  // Where an unanswerable request went in the meantime (#271 B7), tracked apart
+  // from the composer's own consumption so the two never cancel each other.
+  const divertedFocusRevision = useRef(focusRevision);
   useEffect(() => {
     if (!visible || frozen || composerPending) return;
     if (consumedFocusRevision.current === focusRevision) return;
     const composer = composerRef.current;
     if (!composer) return;
     composer.focus();
-    if (document.activeElement === composer) consumedFocusRevision.current = focusRevision;
+    if (document.activeElement === composer) {
+      consumedFocusRevision.current = focusRevision;
+      return;
+    }
+    // Something else holds the focus and the composer could have taken it:
+    // leave the request armed rather than fighting the user for the caret.
+    if (!composer.disabled) return;
+    // The composer is disabled because this view has no conversation to type
+    // into — a bind that has not landed, or no repository at all. Which of
+    // those it is cannot be told from the projection, so the request is *both*
+    // answered now and kept: the first control this surface actually offers
+    // takes the focus so the keyboard user who asked for the chat is not left
+    // nowhere, and the request stays armed for the composer in case a
+    // conversation does turn up. Diverting happens once per revision, so a
+    // later unrelated render never pulls the focus back.
+    if (divertedFocusRevision.current === focusRevision) return;
+    // `parentElement` is the host's own container: this component renders a
+    // fragment, so every row it draws is a sibling of the transcript, in the
+    // order they are read.
+    const fallback =
+      transcriptRef.current?.parentElement?.querySelector<HTMLElement>(SURFACE_FOCUSABLE) ?? null;
+    if (!fallback) return;
+    fallback.focus();
+    if (document.activeElement === fallback) divertedFocusRevision.current = focusRevision;
   }, [focusRevision, visible, frozen, composerPending, composerLocked]);
 
   // A hidden pane cannot be measured or scrolled, so becoming visible re-pins
