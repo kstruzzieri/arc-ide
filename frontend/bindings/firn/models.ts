@@ -118,6 +118,13 @@ export class GolemWindowState {
     "stateRevision": number;
     "handoff": number;
 
+    /**
+     * Reason is Go's own text for the failure that produced this state: a
+     * deadline, a relayed abort, or a retirement that stalled after the close
+     * was authorized. Empty on every successful transition.
+     */
+    "reason"?: string;
+
     /** Creates a new GolemWindowState instance. */
     constructor($$source: Partial<GolemWindowState> = {}) {
         if (!("mode" in $$source)) {

@@ -100,8 +100,9 @@ func main() {
 
 	// #271: the native seams the Golem window state machine needs, installed
 	// once here so no bound call ever mutates a function field concurrently.
-	// The primary screen leads, because it is the placement fallback when a
-	// saved window's display is gone.
+	// golemScreenAreas orders the work areas: main's own screen first (the
+	// placement fallback when a saved window's display is gone), then the
+	// primary, then the rest.
 	app.golemWindowFactory = func(options application.WebviewWindowOptions) application.Window {
 		// Unstarted: main.go's own handle and hooks are installed before the
 		// window is registered and run, so a bootstrap cannot race them.

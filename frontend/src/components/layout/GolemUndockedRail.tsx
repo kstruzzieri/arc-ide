@@ -27,11 +27,15 @@ const ATTENTION_TEXT: Record<NonNullable<GolemAttention>, string> = {
 export function GolemUndockedRail() {
   const attention = useGolemStore(golemAttention);
   const phase = useGolemStore((s) => s.windowState.phase);
+  const reason = useGolemStore((s) => s.windowState.reason ?? '');
   const order = useCenterOrder();
   const side = order === 'files-first' ? 'right' : 'left';
   // A re-dock is already in flight: a second request would open nothing and
-  // only make the transfer look repeatable.
-  const closing = phase === 'closing';
+  // only make the transfer look repeatable. A `closing` that carries Go's
+  // reason is the exception — the window never retired within Go's cap, and
+  // Dock is the retry (CloseGolemWindow re-arms the retirement observer).
+  const stalled = phase === 'closing' && reason !== '';
+  const closing = phase === 'closing' && !stalled;
 
   return (
     <div
@@ -77,7 +81,13 @@ export function GolemUndockedRail() {
         type="button"
         className={styles.railAction}
         aria-label="Dock Golem panel"
-        title={closing ? 'Docking the Golem panel…' : 'Dock Golem panel'}
+        title={
+          closing
+            ? 'Docking the Golem panel…'
+            : stalled
+              ? 'Retry docking the Golem panel'
+              : 'Dock Golem panel'
+        }
         disabled={closing}
         onClick={() => {
           void dockGolem().catch(reportGolemWindowError);

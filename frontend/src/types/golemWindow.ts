@@ -1,4 +1,5 @@
 import {
+  boundedGolemMessage,
   GolemContractError,
   isRecord,
   readConsentChallenge,
@@ -34,6 +35,12 @@ export interface GolemWindowState {
   restorePending: boolean;
   stateRevision: number; // strictly increasing Go lifecycle revision
   handoff: number; // current transfer attempt, including repeated closes
+  /**
+   * Go's own text for the failure that produced this state — a deadline, a
+   * relayed abort, a retirement that stalled after the close was authorized.
+   * Absent on every successful transition (`omitempty` on the wire).
+   */
+  reason?: string;
 }
 
 export type GolemWindowKind = 'view' | 'drafts' | 'action' | 'ack' | 'ready' | 'abort';
@@ -186,7 +193,7 @@ export function parseGolemWindowState(value: unknown): GolemWindowState {
     return fail();
   if (typeof value.restorePending !== 'boolean' || !isUint(value.stateRevision)) return fail();
   if (!isUint(value.handoff)) return fail();
-  return {
+  const state: GolemWindowState = {
     mode: value.mode,
     phase: value.phase,
     instance: value.instance,
@@ -194,6 +201,10 @@ export function parseGolemWindowState(value: unknown): GolemWindowState {
     stateRevision: value.stateRevision,
     handoff: value.handoff,
   };
+  const reason = readOptionalString(value.reason);
+  // Bounded like every other display message; blank means "no reason".
+  if (reason !== undefined && reason.trim() !== '') state.reason = boundedGolemMessage(reason);
+  return state;
 }
 
 export function parseGolemWindowEnvelope(value: unknown): GolemWindowEnvelope {

@@ -21,6 +21,14 @@ import { boundedGolemMessage, parseGolemStatus, toStatusRequest } from '../types
 
 const NOOP = () => {};
 
+/**
+ * One display frame at 60 Hz. While the Golem window is undocked, streamed
+ * deltas are batched on a one-shot timer of this length instead of a frame:
+ * `requestAnimationFrame` stops while main is minimized, and a microtask would
+ * publish a full projection per token.
+ */
+const UNDOCKED_INGEST_MS = 16;
+
 const isDeltaEvent = (payload: unknown): boolean =>
   typeof payload === 'object' &&
   payload !== null &&
@@ -43,13 +51,17 @@ export function useGolemBridge(): void {
     // assistant text, and lastSeq stay exactly as the backend emitted them.
     let pending: unknown[] = [];
     let frame: number | null = null;
-    let taskPending = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
 
     const flush = () => {
       if (frame !== null) {
         cancelAnimationFrame(frame);
         frame = null;
+      }
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
       }
       if (pending.length === 0) return;
       const batch = pending;
@@ -66,17 +78,18 @@ export function useGolemBridge(): void {
         // minimized or hidden, and the undocked Golem window is a separate
         // native window that stays on screen — so main would batch a whole
         // reply into a frame that never runs and publish nothing. While a
-        // satellite exists in any phase, ingestion runs on a microtask
-        // instead; docked, the frame batching is unchanged, because that is
-        // what keeps a fast token stream from copying the conversation per
-        // token. Never a timer loop: this is event-triggered, not polling.
+        // satellite exists in any phase, ingestion runs on a one-shot timer of
+        // one display frame instead: it fires while minimized, and every
+        // delta inside that frame still becomes one store mutation — and so
+        // one projection — rather than one per token. Docked, the frame
+        // batching is unchanged. Never a timer loop: this is event-triggered,
+        // armed only by a delta and cleared by every flush, not polling.
         if (useGolemStore.getState().windowState.phase !== 'closed') {
-          if (!taskPending) {
-            taskPending = true;
-            queueMicrotask(() => {
-              taskPending = false;
+          if (timer === null) {
+            timer = setTimeout(() => {
+              timer = null;
               if (!disposed) flush();
-            });
+            }, UNDOCKED_INGEST_MS);
           }
         } else if (frame === null) {
           frame = requestAnimationFrame(() => {

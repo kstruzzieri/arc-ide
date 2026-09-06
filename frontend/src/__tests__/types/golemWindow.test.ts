@@ -50,6 +50,28 @@ it('parses a window state and rejects unknown modes and phases', () => {
   ).toThrow(GolemContractError);
 });
 
+it('carries Go’s failure reason only when it is a non-blank string', () => {
+  const base = {
+    mode: 'undocked',
+    phase: 'ready',
+    instance: 3,
+    restorePending: false,
+    stateRevision: 4,
+    handoff: 1,
+  };
+  expect(parseGolemWindowState({ ...base, reason: 'draft transfer deadline expired' })).toEqual({
+    ...base,
+    reason: 'draft transfer deadline expired',
+  });
+  // `omitempty` on the wire: absent and blank both mean "no reason".
+  expect(parseGolemWindowState(base)).not.toHaveProperty('reason');
+  expect(parseGolemWindowState({ ...base, reason: '   ' })).not.toHaveProperty('reason');
+  // Bounded like every other display message.
+  expect(parseGolemWindowState({ ...base, reason: 'x'.repeat(1000) }).reason!.length).toBe(200);
+  expect(() => parseGolemWindowState({ ...base, reason: 7 })).toThrow(GolemContractError);
+  expect(() => parseGolemWindowState({ ...base, reason: null })).toThrow(GolemContractError);
+});
+
 it('parses an envelope but leaves the payload untyped', () => {
   const env = parseGolemWindowEnvelope({
     from: 'satellite',

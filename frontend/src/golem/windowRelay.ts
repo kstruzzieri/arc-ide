@@ -508,8 +508,28 @@ function installState(own: Owner, next: GolemWindowState): void {
   useGolemStore.getState().setWindowState(next);
   bindCore(own, next);
   refreshFrozen(own);
+  // Go's own text for a failed transition; the local fallbacks below are for
+  // a snapshot that carries none.
+  const reason = next.reason ?? null;
 
-  if (next.phase === 'closing' && next.instance !== 0) own.closingInstance = next.instance;
+  if (next.phase === 'closing' && next.instance !== 0) {
+    if (
+      reason !== null &&
+      previous.phase === 'closing' &&
+      previous.instance === next.instance &&
+      own.closingInstance === next.instance
+    ) {
+      // Go authorized the native close and the window never left the manager
+      // within its cap: the phase stays `closing`, so the reason is the only
+      // retry affordance there is. Settle the attempt with it (once per
+      // stalled snapshot, since a repeat carries a newer revision), which
+      // re-enables the rail's Dock button; the next dockGolem() re-issues
+      // CloseGolemWindow, and Go re-arms its retirement observer on that.
+      if (own.dock !== null) failAttempt(own, 'dock', reason);
+      else reportGolemWindowError(reason);
+    }
+    own.closingInstance = next.instance;
+  }
   if (next.phase === 'bootstrapped') startTransfer(own, next);
 
   if (next.phase === 'ready' && next.instance !== 0) {
@@ -528,7 +548,7 @@ function installState(own: Owner, next: GolemWindowState): void {
     if (own.closingInstance === next.instance) {
       // The re-dock was abandoned: the satellite keeps the conversation.
       own.closingInstance = 0;
-      failAttempt(own, 'dock', own.failure ?? REDOCK_FAILED);
+      failAttempt(own, 'dock', own.failure ?? reason ?? REDOCK_FAILED);
       own.failure = null;
       // §5.1 restores the source interaction on failure, and the source here is
       // the window the user is still looking at. Clearing `closingInstance`
@@ -549,7 +569,7 @@ function installState(own: Owner, next: GolemWindowState): void {
       useIDEStore.getState().revealCenterPanel('golem');
       useGolemStore.getState().requestComposerFocus();
     } else {
-      failAttempt(own, 'dock', own.failure ?? REDOCK_FAILED);
+      failAttempt(own, 'dock', own.failure ?? reason ?? REDOCK_FAILED);
     }
     const opening = own.undock;
     if (opening !== null && !opening.openSettled) {
@@ -558,9 +578,9 @@ function installState(own: Owner, next: GolemWindowState): void {
       // generic reason and leave the real one — "no display", a superseded
       // attempt — with nowhere to go. Hold the reason and let the binding's
       // own answer, which is the one that knows, settle it.
-      opening.closedReason = own.failure ?? UNDOCK_FAILED;
+      opening.closedReason = own.failure ?? reason ?? UNDOCK_FAILED;
     } else {
-      failAttempt(own, 'undock', own.failure ?? UNDOCK_FAILED);
+      failAttempt(own, 'undock', own.failure ?? reason ?? UNDOCK_FAILED);
     }
     own.failure = null;
   }

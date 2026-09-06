@@ -68,6 +68,9 @@ type golemWindowRuntime struct {
 	handoff        uint64
 	stateRevision  uint64
 	restorePending bool
+	// reason explains the most recent failed transition (a deadline, an abort,
+	// a stalled retirement) to both hosts; the next attempt clears it.
+	reason string
 
 	// instanceSeq and handoffSeq only ever increase, so a retired attempt's
 	// number can never be handed to a replacement.
@@ -127,6 +130,7 @@ func (r *golemWindowRuntime) snapshot() GolemWindowState {
 		RestorePending: r.restorePending,
 		StateRevision:  r.stateRevision,
 		Handoff:        r.handoff,
+		Reason:         r.reason,
 	}
 }
 
@@ -157,6 +161,10 @@ type GolemWindowState struct {
 	RestorePending bool             `json:"restorePending"`
 	StateRevision  uint64           `json:"stateRevision"`
 	Handoff        uint64           `json:"handoff"`
+	// Reason is Go's own text for the failure that produced this state: a
+	// deadline, a relayed abort, or a retirement that stalled after the close
+	// was authorized. Empty on every successful transition.
+	Reason string `json:"reason,omitempty"`
 }
 
 // GolemWindowMessage is one relayed message. Kind fixes the payload type on
@@ -519,10 +527,17 @@ func (a *App) observeGolemRetirement(ctx context.Context, id uint, instance, han
 		return
 	}
 	if err != nil {
+		// Published, not only logged: the phase stays closing, and the reason
+		// is what lets main offer the retry (CloseGolemWindow re-arms this
+		// observer) instead of a Dock button that is disabled for good.
 		a.golemWin.retirementFailed = true
+		a.golemWin.reason = fmt.Sprintf("The Golem window has not closed within %s; the close is still pending.",
+			golemRetirementCap)
+		state := a.golemWin.transition()
 		a.golemWinMu.Unlock()
 		log.Printf("firn: golem window %d has not retired within %s; the close is still pending",
 			id, golemRetirementCap)
+		a.emitGolemState(state)
 		return
 	}
 	if quitting {
@@ -800,6 +815,9 @@ func (a *App) abortGolemAttempt(instance, handoff uint64, reason string) error {
 		a.golemWinMu.Unlock()
 		return fmt.Errorf("golem window: abort is not allowed in phase %s (%s)", phase, reason)
 	}
+	// Carried by the closing and closed states this abort produces, so main
+	// reports the real cause rather than a generic "closed before ready".
+	a.golemWin.reason = reason
 	a.golemWinMu.Unlock()
 
 	log.Printf("firn: golem window bootstrap aborted: %s", reason)
@@ -820,6 +838,7 @@ func (a *App) restoreGolemReady(instance, handoff uint64, reason string) error {
 	}
 	a.golemWin.phase = golemPhaseReady
 	a.golemWin.transferID, a.golemWin.transferAcked = 0, false
+	a.golemWin.reason = reason
 	stopGolemTimer(a.golemWin.deadline)
 	a.golemWin.deadline = nil
 	state := a.golemWin.transition()
@@ -854,6 +873,7 @@ func (a *App) requestGolemReDock(instance uint64) error {
 			return nil
 		}
 		a.golemWin.retirementFailed = false
+		a.golemWin.reason = ""
 		a.golemWin.observing = true
 		observerCtx, cancel := context.WithCancel(context.Background())
 		a.golemWin.observerCancel = cancel
@@ -885,6 +905,7 @@ func (a *App) requestGolemReDock(instance uint64) error {
 	a.golemWin.handoffSeq++
 	a.golemWin.handoff = a.golemWin.handoffSeq
 	a.golemWin.transferID, a.golemWin.transferAcked = 0, false
+	a.golemWin.reason = ""
 	stopGolemTimer(a.golemWin.saveTimer)
 	a.golemWin.saveTimer = nil
 	stopGolemTimer(a.golemWin.deadline)
@@ -1276,11 +1297,12 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 	a.golemWin.view, a.golemWin.viewRevision = nil, 0
 	a.golemWin.transferID, a.golemWin.transferAcked = 0, false
 	a.golemWin.retirementFailed = false
+	a.golemWin.reason = ""
 	instance, handoff := a.golemWin.instance, a.golemWin.handoff
 	saved := a.golemWin.lastNormal
 	a.golemWinMu.Unlock()
 
-	window, err := a.createGolemWindow(saved, instance)
+	window, frame, err := a.createGolemWindow(saved, instance)
 	if err != nil {
 		a.abandonGolemOpen(instance)
 		return err
@@ -1299,6 +1321,10 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 	a.golemWin.handle = window
 	a.golemWin.handleID = id
 	a.golemWin.unhook = unhook
+	// The placed frame is the window's real geometry until a move or resize
+	// reads a live one, so the first save after a fresh undock never persists
+	// an empty frame.
+	a.golemWin.lastNormal = frame
 	a.golemWin.deadline = a.golemAfter(golemTransitionDeadline, func() {
 		a.golemTransitionTimeout(instance, handoff)
 	})
@@ -1328,11 +1354,12 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 	return nil
 }
 
-// createGolemWindow resolves the placement and builds the unstarted window.
-// Every call here is native, so none of it runs under golemWinMu.
-func (a *App) createGolemWindow(saved appstate.GolemWindow, instance uint64) (application.Window, error) {
+// createGolemWindow resolves the placement and builds the unstarted window,
+// answering with the frame it was placed at. Every call here is native, so
+// none of it runs under golemWinMu.
+func (a *App) createGolemWindow(saved appstate.GolemWindow, instance uint64) (application.Window, appstate.GolemWindow, error) {
 	if a.golemWindowFactory == nil {
-		return nil, fmt.Errorf("golem window: no window factory is installed")
+		return nil, appstate.GolemWindow{}, fmt.Errorf("golem window: no window factory is installed")
 	}
 	var screens []application.Rect
 	if a.screenBounds != nil {
@@ -1344,13 +1371,13 @@ func (a *App) createGolemWindow(saved appstate.GolemWindow, instance uint64) (ap
 	}
 	frame, err := placeGolemWindow(saved, screens, fallback)
 	if err != nil {
-		return nil, err
+		return nil, appstate.GolemWindow{}, err
 	}
 	window := asLiveWindow(a.golemWindowFactory(golemWindowOptions(frame)))
 	if window == nil {
-		return nil, fmt.Errorf("golem window: the window factory produced no window for attempt %d", instance)
+		return nil, appstate.GolemWindow{}, fmt.Errorf("golem window: the window factory produced no window for attempt %d", instance)
 	}
-	return window, nil
+	return window, frame, nil
 }
 
 // abandonGolemOpen rolls a reservation back to closed when creation failed

@@ -651,7 +651,7 @@ describe('delta batching', () => {
   // #271 B6 — a minimized main window stops producing animation frames, but the
   // satellite that is displaying this stream is still on screen. A publisher
   // cannot publish data that never entered the store, so while a window exists
-  // ingestion runs on a microtask instead of a frame.
+  // ingestion runs on a one-shot timer of one display frame instead of a frame.
   it('delivers satellite deltas without advancing an animation frame', async () => {
     act(() =>
       useGolemStore.getState().setWindowState({
@@ -666,12 +666,54 @@ describe('delta batching', () => {
     emit('golem:event', delta(1, 'visible'));
     emit('golem:event', delta(2, ' while minimized'));
     await act(async () => {
-      await Promise.resolve();
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
     });
+    expect(frameQueue).toHaveLength(0);
     expect(conversation().transcript.find((entry) => entry.kind === 'assistant')?.text).toBe(
       'visible while minimized'
     );
     expect(conversation().rawEvents.map((entry) => entry.seq)).toEqual([1, 2]);
+  });
+
+  // Undocked, every ingestion is also a full projection over the relay, so the
+  // batching floor matters even more than it does docked: N deltas inside one
+  // display frame (16 ms) must become one store mutation, not N.
+  it('coalesces undocked deltas within one display frame into a single ingestion', () => {
+    jest.useFakeTimers();
+    let notifications = 0;
+    const unsubscribe = useGolemStore.subscribe(() => {
+      notifications += 1;
+    });
+    try {
+      act(() =>
+        useGolemStore.getState().setWindowState({
+          mode: 'undocked',
+          phase: 'ready',
+          instance: 1,
+          restorePending: false,
+          stateRevision: 4,
+          handoff: 1,
+        })
+      );
+      notifications = 0;
+      for (let seq = 1; seq <= 5; seq += 1) {
+        emit('golem:event', delta(seq, `t${seq}`));
+        act(() => jest.advanceTimersByTime(2));
+      }
+      expect(notifications).toBe(0);
+      expect(conversation().rawEvents).toHaveLength(0);
+
+      act(() => jest.advanceTimersByTime(16));
+      expect(notifications).toBe(1);
+      expect(conversation().rawEvents.map((entry) => entry.seq)).toEqual([1, 2, 3, 4, 5]);
+      expect(conversation().transcript.find((entry) => entry.kind === 'assistant')?.text).toBe(
+        't1t2t3t4t5'
+      );
+      expect(frameQueue).toHaveLength(0);
+    } finally {
+      unsubscribe();
+      jest.useRealTimers();
+    }
   });
 
   it('drains an already-queued frame the moment a window starts bootstrapping', async () => {

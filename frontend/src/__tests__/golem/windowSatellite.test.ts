@@ -630,6 +630,28 @@ describe('re-dock', () => {
     stop();
   });
 
+  it('shows Go’s own reason when its deadline hands the window back', async () => {
+    const stop = await startReady();
+    emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
+    await flush();
+    expect(posted('drafts')).toHaveLength(1);
+
+    emitMode(
+      stateOf({
+        phase: 'ready',
+        stateRevision: 5,
+        handoff: 2,
+        reason: 'draft transfer deadline expired',
+      })
+    );
+    await flush();
+
+    expect(useViewStore.getState().error).toBe('draft transfer deadline expired');
+    expect(useViewStore.getState().frozen).toBe(false);
+    expect(posted('abort')).toHaveLength(0);
+    stop();
+  });
+
   it('runs one transfer per handoff no matter how often the snapshot repeats', async () => {
     const stop = await startReady();
     emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));

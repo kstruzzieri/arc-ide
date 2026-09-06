@@ -38,6 +38,7 @@ import {
   MAIN_TRANSFER_RETRY_MS,
   dockGolem,
   focusGolemWindow,
+  reportGolemWindowError,
   startMainGolemRelay,
   undockGolem,
 } from '../../golem/windowRelay';
@@ -108,6 +109,12 @@ const phase = (
 const retired = (revision: number): GolemWindowState => ({
   ...closed,
   stateRevision: revision,
+});
+
+/** The same snapshot with Go's own text for the failure that produced it. */
+const withReason = (state: GolemWindowState, reason: string): GolemWindowState => ({
+  ...state,
+  reason,
 });
 
 const message = (over: Partial<GolemWindowMessage>): GolemWindowMessage => ({
@@ -698,6 +705,77 @@ describe('re-dock', () => {
     expect(useGolemStore.getState().windowError).toBe(
       'Golem received an unexpected window message.'
     );
+  });
+
+  it('reports Go’s own reason when the transition falls back to ready', async () => {
+    await ready();
+    const settled = dockGolem().catch((error: unknown) => {
+      reportGolemWindowError(error);
+      return error;
+    });
+    emit(MODE_EVENT, phase('closing', 4, 2));
+    await flush();
+    // Go's deadline, not an abort: no envelope explains it, only the snapshot.
+    emit(MODE_EVENT, withReason(phase('ready', 5, 2), 'draft transfer deadline expired'));
+    await flush();
+
+    expect(((await settled) as Error).message).toBe('draft transfer deadline expired');
+    expect(useGolemStore.getState().windowError).toBe('draft transfer deadline expired');
+    expect(useGolemStore.getState().hostFrozen).toBe(true);
+  });
+
+  it('reports Go’s own reason when a bootstrap is retired on its deadline', async () => {
+    await start();
+    const settled = undockGolem().catch((error: unknown) => {
+      reportGolemWindowError(error);
+      return error;
+    });
+    emit(MODE_EVENT, phase('bootstrapping', 2));
+    await flush();
+    emit(MODE_EVENT, withReason(retired(3), 'bootstrap deadline expired'));
+
+    expect(((await settled) as Error).message).toBe('bootstrap deadline expired');
+    expect(useGolemStore.getState().windowError).toBe('bootstrap deadline expired');
+    expect(useGolemStore.getState().hostFrozen).toBe(false);
+  });
+
+  it('settles a stalled retirement with Go’s reason and lets the next dock retry it', async () => {
+    await ready();
+    const stalled = 'The Golem window has not closed within 2s; the close is still pending.';
+    const first = dockGolem().catch((error: unknown) => {
+      reportGolemWindowError(error);
+      return error;
+    });
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    emit(MODE_EVENT, phase('closing', 4, 2));
+    emit(MESSAGE_EVENT, returnedDrafts(2, 7, { [CONV]: 'written in the window' }));
+    await flush();
+
+    // Go authorized the close, the window never left the manager: the phase
+    // stays `closing` and the snapshot carries the reason.
+    emit(MODE_EVENT, withReason(phase('closing', 5, 2), stalled));
+    await flush();
+    expect(((await first) as Error).message).toBe(stalled);
+    expect(useGolemStore.getState().windowError).toBe(stalled);
+    expect(useGolemStore.getState().windowState).toMatchObject({
+      phase: 'closing',
+      reason: stalled,
+    });
+    // Still the window's until it is actually gone.
+    expect(useGolemStore.getState().hostFrozen).toBe(true);
+
+    // The retry is a fresh CloseGolemWindow: Go re-arms its retirement observer.
+    const second = dockGolem();
+    expect(closeMock).toHaveBeenCalledTimes(2);
+    expect(useGolemStore.getState().windowError).toBeNull();
+    emit(MODE_EVENT, retired(6));
+    await expect(second).resolves.toBeUndefined();
+    expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'written in the window' });
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: false,
+      centerReveal: 'golem',
+    });
+    expect(useGolemStore.getState().hostFrozen).toBe(false);
   });
 
   it('does not reveal Golem when a bootstrap dies before it was ever ready', async () => {

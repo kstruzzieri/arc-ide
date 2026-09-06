@@ -236,9 +236,11 @@ function installState(own: Owner, next: GolemWindowState): void {
   // `restoreGolemReady` walks closing→ready under the SAME handoff number, so
   // this snapshot is the only word this window gets that a transfer Go gave up
   // on is over. Settling the waiter here — before the barrier is recomputed —
-  // is what keeps a timed-out re-dock from leaving the window mute.
+  // is what keeps a timed-out re-dock from leaving the window mute. Go names
+  // why (its deadline, a relayed abort); the generic text is only for a
+  // snapshot that carries no reason.
   if (mine && next.phase === 'ready' && own.handoffs.has(next.handoff))
-    own.core?.abortHandoff(next.handoff, TRANSFER_ENDED);
+    own.core?.abortHandoff(next.handoff, next.reason ?? TRANSFER_ENDED);
   refreshFrozen(own);
   if (!mine) return;
   if (next.phase === 'closing' && next.handoff !== 0) void beginReDock(own, next);

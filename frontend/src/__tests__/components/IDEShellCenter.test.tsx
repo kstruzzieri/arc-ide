@@ -826,7 +826,7 @@ describe('IDEShell center focus', () => {
 // ── #271 B6: the center while the satellite owns the chat ────────────────────
 
 describe('IDEShell center pair, undocked', () => {
-  const windowPhase = (phase: GolemWindowState['phase'], revision: number) =>
+  const windowPhase = (phase: GolemWindowState['phase'], revision: number, reason?: string) =>
     act(() =>
       useGolemStore.getState().setWindowState({
         mode: phase === 'ready' || phase === 'closing' ? 'undocked' : 'docked',
@@ -835,6 +835,7 @@ describe('IDEShell center pair, undocked', () => {
         restorePending: false,
         stateRevision: revision,
         handoff: phase === 'closed' ? 0 : 1,
+        ...(reason === undefined ? {} : { reason }),
       })
     );
 
@@ -906,6 +907,25 @@ describe('IDEShell center pair, undocked', () => {
     expect(screen.getByRole('group', { name: 'Golem window' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Dock Golem panel' })).toBeDisabled();
     // Bringing the window forward is still possible while it hands back.
+    expect(screen.getByRole('button', { name: 'Focus Golem window' })).toBeEnabled();
+  });
+
+  it('re-enables Dock as the retry when the re-dock stalls with a reason', () => {
+    render(undockShell());
+    windowPhase('ready', 2);
+    windowPhase('closing', 3);
+    expect(screen.getByRole('button', { name: 'Dock Golem panel' })).toBeDisabled();
+
+    // Go authorized the close but the window never retired: the phase stays
+    // `closing` and the snapshot names why. Dock is the retry.
+    windowPhase(
+      'closing',
+      4,
+      'The Golem window has not closed within 2s; the close is still pending.'
+    );
+    const dock = screen.getByRole('button', { name: 'Dock Golem panel' });
+    expect(dock).toBeEnabled();
+    expect(dock).toHaveAttribute('title', 'Retry docking the Golem panel');
     expect(screen.getByRole('button', { name: 'Focus Golem window' })).toBeEnabled();
   });
 

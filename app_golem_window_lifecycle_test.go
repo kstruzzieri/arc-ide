@@ -1772,3 +1772,139 @@ func TestGolemWindowWireFixture(t *testing.T) {
 		t.Fatalf("mode = %s after the fixture re-dock, want docked", h.mode())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Failure reasons on the published state
+// ---------------------------------------------------------------------------
+
+func (h *golemHarness) lastModeEvent() GolemWindowState {
+	h.t.Helper()
+	events := h.modeEvents()
+	if len(events) == 0 {
+		h.t.Fatal("no window state was emitted")
+	}
+	return events[len(events)-1]
+}
+
+func TestGolemStateCarriesFailureReasons(t *testing.T) {
+	t.Run("bootstrap deadline names itself on closing and closed, and the next open clears it", func(t *testing.T) {
+		h := newGolemHarness(t)
+		if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("OpenGolemWindow: %v", err)
+		}
+		satellite := h.satellite()
+		h.pendingTimer().fire()
+		if got := h.lastModeEvent(); got.Phase != golemPhaseClosing || got.Reason != "bootstrap deadline expired" {
+			t.Fatalf("after the bootstrap deadline: phase=%s reason=%q, want closing/\"bootstrap deadline expired\"", got.Phase, got.Reason)
+		}
+		h.retire(satellite.id)
+		waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+		if got := h.lastModeEvent(); got.Phase != golemPhaseClosed || got.Reason != "bootstrap deadline expired" {
+			t.Fatalf("closed after the deadline: phase=%s reason=%q, want the deadline text kept", got.Phase, got.Reason)
+		}
+		if got, err := h.app.GetGolemWindowState(h.mainCtx()); err != nil || got.Reason != "bootstrap deadline expired" {
+			t.Fatalf("GetGolemWindowState = %+v, %v; want the deadline reason readable after the fact", got, err)
+		}
+		if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("retry OpenGolemWindow: %v", err)
+		}
+		if got := h.lastModeEvent(); got.Phase != golemPhaseBootstrapping || got.Reason != "" {
+			t.Fatalf("a fresh attempt published phase=%s reason=%q, want bootstrapping with no reason", got.Phase, got.Reason)
+		}
+	})
+
+	t.Run("re-dock deadline names itself on ready and the next request clears it", func(t *testing.T) {
+		h := newGolemHarness(t)
+		h.undock()
+		if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("CloseGolemWindow: %v", err)
+		}
+		h.pendingTimer().fire()
+		if got := h.lastModeEvent(); got.Phase != golemPhaseReady || got.Reason != "draft transfer deadline expired" {
+			t.Fatalf("after the transfer deadline: phase=%s reason=%q, want ready/\"draft transfer deadline expired\"", got.Phase, got.Reason)
+		}
+		if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("second CloseGolemWindow: %v", err)
+		}
+		if got := h.lastModeEvent(); got.Phase != golemPhaseClosing || got.Reason != "" {
+			t.Fatalf("a fresh re-dock published phase=%s reason=%q, want closing with no reason", got.Phase, got.Reason)
+		}
+	})
+
+	t.Run("a relayed abort reason is the one published", func(t *testing.T) {
+		h := newGolemHarness(t)
+		h.undock()
+		if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("CloseGolemWindow: %v", err)
+		}
+		if err := h.app.PostGolemWindowMessage(h.satCtx(), GolemWindowMessage{
+			Kind: "abort", Instance: h.instance(), Handoff: h.handoff(),
+			Payload: json.RawMessage(`{"reason":"transfer refused by the window"}`),
+		}); err != nil {
+			t.Fatalf("abort: %v", err)
+		}
+		if got := h.lastModeEvent(); got.Phase != golemPhaseReady || got.Reason != "transfer refused by the window" {
+			t.Fatalf("after the abort: phase=%s reason=%q, want ready with the abort text", got.Phase, got.Reason)
+		}
+	})
+
+	t.Run("a stalled retirement publishes closing with a reason and the retry clears it", func(t *testing.T) {
+		h := newGolemHarness(t)
+		h.undock()
+		satellite := h.satellite()
+		if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("CloseGolemWindow: %v", err)
+		}
+		h.transferBackToMain(90, true)
+		if err := h.app.ConfirmGolemWindowClose(h.satCtx(), h.instance(), h.handoff()); err != nil {
+			t.Fatalf("ConfirmGolemWindowClose: %v", err)
+		}
+		authorized := h.lastModeEvent()
+		if authorized.Phase != golemPhaseClosing || authorized.Reason != "" {
+			t.Fatalf("after authorization: phase=%s reason=%q, want closing with no reason", authorized.Phase, authorized.Reason)
+		}
+		// The two-second retirement cap is the production constant.
+		waitForGolem(t, func() bool { return h.app.golemRetirementFailed() })
+		waitForGolem(t, func() bool { return h.lastModeEvent().StateRevision > authorized.StateRevision })
+		stalled := h.lastModeEvent()
+		if stalled.Phase != golemPhaseClosing || !strings.Contains(stalled.Reason, "has not closed within") {
+			t.Fatalf("after the retirement cap: phase=%s reason=%q, want closing with the stall reason", stalled.Phase, stalled.Reason)
+		}
+		if got, err := h.app.GetGolemWindowState(h.mainCtx()); err != nil || got.Reason != stalled.Reason {
+			t.Fatalf("GetGolemWindowState = %+v, %v; want the stall reason readable after the fact", got, err)
+		}
+
+		h.retire(satellite.id)
+		if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+			t.Fatalf("retry CloseGolemWindow: %v", err)
+		}
+		waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+		if got := h.lastModeEvent(); got.Phase != golemPhaseClosed || got.Reason != "" {
+			t.Fatalf("after the retry: phase=%s reason=%q, want closed with no reason", got.Phase, got.Reason)
+		}
+	})
+}
+
+// TestFirstUndockPersistsPlacedFrame pins that the first save after a fresh
+// undock writes the frame the window was actually placed at, never 0x0.
+func TestFirstUndockPersistsPlacedFrame(t *testing.T) {
+	h := newGolemHarness(t)
+	h.undock()
+	options := h.lastOptions()
+	waitForGolem(t, func() bool { return h.savedMode() == appstate.ModeUndocked })
+	saved, ok := h.savedState()
+	if !ok {
+		t.Fatal("nothing was saved after the undock")
+	}
+	got := saved.GolemWindow
+	if got.Width <= 0 || got.Height <= 0 {
+		t.Fatalf("saved frame = %+v, want a real frame, not an empty one", got)
+	}
+	want := appstate.GolemWindow{X: options.X, Y: options.Y, Width: options.Width, Height: options.Height}
+	if got.X != want.X || got.Y != want.Y || got.Width != want.Width || got.Height != want.Height {
+		t.Fatalf("saved frame = %+v, want the placed frame %+v", got, want)
+	}
+	if held := h.app.golemLastNormalFrame(); held != want {
+		t.Fatalf("lastNormal = %+v, want the placed frame %+v", held, want)
+	}
+}
