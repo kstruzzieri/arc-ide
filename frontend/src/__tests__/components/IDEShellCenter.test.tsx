@@ -362,6 +362,38 @@ describe('IDEShell center pair', () => {
     expect(useIDEStore.getState().panelSizes.left).toBe(260);
     expect(cssVar('--panel-left-width')).toBe('260px');
   });
+
+  // A reveal that changes no collapse flag changes no effective width either
+  // (`computeCenterLayout` only consults `reveal` when degraded), so it must not
+  // invalidate a live gesture. An async editor/diff intent resolving mid-drag —
+  // `focusEditorSurface` after an await — is the everyday way that happens.
+  it('survives an editor reveal that lands mid-gesture', () => {
+    render(shell());
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+
+    act(() => {
+      fireEvent.mouseDown(separator('Resize panel left width'), { clientX: 260, clientY: 0 });
+    });
+    act(() => {
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: 400, clientY: 0 }));
+      jest.advanceTimersByTime(32);
+    });
+    expect(cssVar('--panel-left-width')).toBe('400px');
+
+    act(() => focusEditorSurface('file'));
+    expect(useIDEStore.getState().centerReveal).toBe('files');
+
+    act(() => {
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: 420, clientY: 0 }));
+      jest.advanceTimersByTime(32);
+    });
+    act(() => {
+      document.dispatchEvent(new MouseEvent('mouseup'));
+    });
+
+    expect(useIDEStore.getState().panelSizes.left).toBe(420);
+    expect(cssVar('--panel-left-width')).toBe('420px');
+  });
 });
 
 describe('IDEShell center reorder by drag', () => {

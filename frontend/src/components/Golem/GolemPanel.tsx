@@ -581,16 +581,18 @@ export function GolemPanel({ visible }: GolemPanelProps) {
   // composer, and only the visible host consumes it. A request raised while the
   // panel is a rail waits here until the panel is shown, so ⌘⇧I still lands;
   // becoming visible on its own (a widened window, a restore) never does.
-  // The request is only spent once a composer actually takes the focus, so a
-  // render without one leaves the request armed rather than dropping it.
+  // The request is only spent once the composer actually takes the focus, so an
+  // absent one — or a composer still disabled because the conversation has not
+  // bound yet — leaves the request armed instead of dropping it. That is why
+  // `conversationId` is a dependency: it is what re-enables the textarea.
   const consumedFocusRevision = useRef(composerFocusRevision);
   useEffect(() => {
     if (!visible || consumedFocusRevision.current === composerFocusRevision) return;
     const composer = composerRef.current;
     if (!composer) return;
-    consumedFocusRevision.current = composerFocusRevision;
     composer.focus();
-  }, [composerFocusRevision, visible]);
+    if (document.activeElement === composer) consumedFocusRevision.current = composerFocusRevision;
+  }, [composerFocusRevision, visible, conversationId]);
 
   // A hidden pane cannot be measured or scrolled, so becoming visible re-pins
   // the transcript to the newest row and re-fits the composer — without focus.

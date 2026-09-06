@@ -837,7 +837,8 @@ describe('useWorkspacePersistence', () => {
 
   it.each([
     ['a fractional width rounds to a positive integer', 511.6, 512],
-    ['a sub-pixel width floors at 1, never 0', 0.4, 1],
+    ['a sub-pixel width clamps up to the seam minimum, never 0', 0.4, 320],
+    ['an absurd width clamps down to the seam maximum', 1e9, 900],
     ['a negative width falls back to the default', -5, 420],
     ['a non-finite width falls back to the default', Number.POSITIVE_INFINITY, 420],
   ])('normalizes the persisted Golem width: %s', async (_name, saved, expected) => {
@@ -939,7 +940,7 @@ describe('useWorkspacePersistence', () => {
     mockLoadWorkspaceState.mockResolvedValueOnce(
       savedStateWithLayout(
         {
-          panelSizes: { left: 260, right: 280, bottom: 200, golem: 300 },
+          panelSizes: { left: 260, right: 280, bottom: 200, golem: 340 },
           centerOrder: 'files-first',
           golemCollapsed: true,
           filesCollapsed: false,
@@ -975,7 +976,7 @@ describe('useWorkspacePersistence', () => {
 
     const state = useIDEStore.getState();
     expect(state.centerOrder).toBe('files-first');
-    expect(state.panelSizes.golem).toBe(300);
+    expect(state.panelSizes.golem).toBe(340);
     expect(state.isGolemPanelCollapsed).toBe(true);
     expect(state.isFilesPanelCollapsed).toBe(false);
   });

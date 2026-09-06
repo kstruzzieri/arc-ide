@@ -144,9 +144,11 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
 
     // Restore layout
     if (state.layout) {
-      // Validate before the setters: the generated bindings move wire bytes in
-      // without checking them, so a hand-edited file can hold a numeric string
-      // or an infinity where a size belongs.
+      // Validate before the setters. A wrongly *typed* size never reaches here:
+      // Go's decode rejects the whole file on a type mismatch, so a hand-edited
+      // `"260"` fails the load outright. What does reach here is an absent or
+      // null field and any finite number the file cares to name — zero, a
+      // negative, an absurd one — so the guard is about range, not type.
       const sizes = state.layout.panelSizes;
       for (const panel of ['left', 'right', 'bottom'] as const) {
         const size: unknown = sizes?.[panel];

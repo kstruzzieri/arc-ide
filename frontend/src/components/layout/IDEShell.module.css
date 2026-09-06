@@ -122,12 +122,15 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Containing block for the reorder drop-line at the bottom of this file. */
+  position: relative;
 }
 
 .golemPanel {
   width: var(--panel-golem-width);
   flex: none;
   min-width: 0;
+  position: relative;
   background: var(--surface-panel);
   border: 1px solid color-mix(in srgb, var(--accent-project) 22%, transparent);
   border-radius: var(--panel-radius);
@@ -197,11 +200,10 @@
   border: 0;
 }
 
-/* The drop-line rides the far edge of the target island. */
-[data-center-panel][data-drop-over='true'] {
-  position: relative;
-}
-
+/* The drop-line rides the far edge of the target island. Its containing block is
+   established unconditionally on `.centerArea` / `.golemPanel` — toggling
+   `position` on `dragenter` would re-establish the containing block of the whole
+   editor + terminal subtree for the length of a drag. */
 [data-center-panel][data-drop-over='true']::after {
   content: '';
   position: absolute;

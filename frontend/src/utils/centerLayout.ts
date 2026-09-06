@@ -39,9 +39,15 @@ export interface RawCenterLayout {
 export function normalizeCenterLayout(raw: RawCenterLayout): CenterLayoutPrefs {
   const centerOrder: CenterOrder =
     raw.centerOrder === 'golem-first' ? 'golem-first' : 'files-first';
+  // Clamped to the seam's own limits: a hand-edited or corrupt file must not
+  // leave a preference the seam could never have produced sitting in the store
+  // (and back in the file) until some later drag commits over it.
   const golemWidth =
     typeof raw.golemWidth === 'number' && Number.isFinite(raw.golemWidth) && raw.golemWidth > 0
-      ? Math.max(1, Math.round(raw.golemWidth))
+      ? Math.min(
+          CENTER_LIMITS.maxGolemPx,
+          Math.max(CENTER_LIMITS.minGolem, Math.round(raw.golemWidth))
+        )
       : DEFAULT_GOLEM_WIDTH;
   // A saved `false` must survive: the default is collapsed, and only a real
   // boolean may override it (null / undefined are "absent").

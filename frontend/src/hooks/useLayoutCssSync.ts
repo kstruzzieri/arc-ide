@@ -12,7 +12,8 @@ import { useLayoutEffect, useRef } from 'react';
 
 type Sizes = { left: number; right: number; bottom: number; golem: number };
 
-const CSS_VARS = {
+/** The custom property each resizable panel's size is written to. */
+export const CSS_VARS = {
   left: '--panel-left-width',
   right: '--panel-right-width',
   bottom: '--panel-bottom-height',

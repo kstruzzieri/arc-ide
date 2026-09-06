@@ -25,7 +25,7 @@ import { FilesCommandBar } from './FilesCommandBar';
 import { PanelRail } from './PanelRail';
 import { ResizeHandle } from './ResizeHandle';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
-import { useLayoutCssSync } from '../../hooks/useLayoutCssSync';
+import { CSS_VARS, useLayoutCssSync } from '../../hooks/useLayoutCssSync';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { createCommands } from '../../utils/commands';
 import {
@@ -45,14 +45,7 @@ import { useGolemStore } from '../../stores/golemStore';
 import styles from './IDEShell.module.css';
 
 /** Panels whose size is a draggable CSS variable. */
-type ResizePanel = 'left' | 'right' | 'bottom' | 'golem';
-
-const CSS_VAR: Record<ResizePanel, string> = {
-  left: '--panel-left-width',
-  right: '--panel-right-width',
-  bottom: '--panel-bottom-height',
-  golem: '--panel-golem-width',
-};
+type ResizePanel = keyof typeof CSS_VARS;
 
 const CENTER_PANELS: readonly CenterPanel[] = ['files', 'golem'];
 
@@ -111,6 +104,7 @@ export function IDEShell({
   const workspacePath = useIDEStore((s) => s.workspace?.path ?? null);
   const [isCommandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
+  const closeCommandPalette = useCallback(() => setCommandPaletteOpen(false), []);
   const { openFolder } = useOpenFolder();
   const commands = useMemo(() => createCommands(openFolder), [openFolder]);
 
@@ -201,7 +195,7 @@ export function IDEShell({
       bottom: bottom.height,
       golem: center.golemWidth,
     },
-    active ? CSS_VAR[active.panel] : null,
+    active ? CSS_VARS[active.panel] : null,
     invalidationRevision
   );
 
@@ -243,12 +237,15 @@ export function IDEShell({
   }, [effectiveLeft, effectiveRight, setPanelSize]);
 
   // Everything that redefines the layout underneath an in-flight gesture, and
-  // nothing this gesture itself produces.
+  // nothing this gesture itself produces. `centerReveal` is deliberately absent:
+  // it only reaches the effective layout through the two collapse flags (which
+  // `revealCenterPanel` writes and which are listed here), so a reveal that
+  // changes no flag — an async editor/diff intent resolving mid-drag — must not
+  // cancel the gesture.
   const invalidationKey = [
     viewport.width,
     viewport.height,
     centerOrder,
-    centerReveal,
     isLeftPanelCollapsed,
     isRightPanelCollapsed,
     isBottomPanelCollapsed,
@@ -693,7 +690,7 @@ export function IDEShell({
       <CommandPalette
         open={isCommandPaletteOpen}
         commands={commands}
-        onClose={() => setCommandPaletteOpen(false)}
+        onClose={closeCommandPalette}
       />
     </div>
   );

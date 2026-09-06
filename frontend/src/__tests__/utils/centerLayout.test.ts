@@ -29,9 +29,16 @@ describe('normalizeCenterLayout', () => {
     expect(normalizeCenterLayout({ centerOrder: 'sideways' }).centerOrder).toBe('files-first');
   });
 
+  // A width outside the seam's own limits can only come from a hand-edited or
+  // corrupt file; clamping it here stops the preference from persisting garbage
+  // until the next seam drag happens to commit an effective value over it.
+  it('clamps a persisted width to the seam limits', () => {
+    expect(normalizeCenterLayout({ golemWidth: 1e9 }).golemWidth).toBe(CENTER_LIMITS.maxGolemPx);
+    expect(normalizeCenterLayout({ golemWidth: 12 }).golemWidth).toBe(CENTER_LIMITS.minGolem);
+  });
+
   it('rounds a finite positive width and falls back for zero, negative, NaN, or non-numbers', () => {
     expect(normalizeCenterLayout({ golemWidth: 501.6 }).golemWidth).toBe(502);
-    expect(normalizeCenterLayout({ golemWidth: 0.1 }).golemWidth).toBe(1);
     expect(normalizeCenterLayout({ golemWidth: Number.POSITIVE_INFINITY }).golemWidth).toBe(
       DEFAULT_GOLEM_WIDTH
     );

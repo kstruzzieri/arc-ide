@@ -638,6 +638,43 @@ describe('GolemPanel composer', () => {
   });
 });
 
+// ── composer focus requests ───────────────────────────────────────────────────
+
+describe('GolemPanel composer focus', () => {
+  // ⌘⇧I in the first second of a repository arrives while the bridge is still
+  // binding, so the textarea is disabled and cannot take focus. The request has
+  // to stay armed until it can be honoured.
+  it('honours a focus request raised before the conversation bound', () => {
+    render(<GolemPanel visible />);
+    expect(composer()).toBeDisabled();
+
+    act(() => store().requestComposerFocus());
+    expect(document.activeElement).not.toBe(composer());
+
+    // The bind path: `hydrateStatus` selects the conversation without raising a
+    // focus request of its own, so only the armed one can move focus here.
+    hydrate();
+
+    expect(composer()).toBeEnabled();
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it('does not re-spend an honoured request on a later visibility flip', () => {
+    hydrate();
+    selectFocused();
+    const { rerender } = render(<GolemPanel visible />);
+
+    act(() => store().requestComposerFocus());
+    expect(document.activeElement).toBe(composer());
+
+    act(() => composer().blur());
+    rerender(<GolemPanel visible={false} />);
+    rerender(<GolemPanel visible />);
+
+    expect(document.activeElement).not.toBe(composer());
+  });
+});
+
 // ── draft durability ──────────────────────────────────────────────────────────
 
 describe('GolemPanel draft', () => {

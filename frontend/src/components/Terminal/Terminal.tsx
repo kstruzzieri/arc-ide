@@ -310,11 +310,20 @@ export function Terminal() {
     e.dataTransfer.setData('text/plain', String(index));
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOverIndex(index);
-  }, []);
+  // Only this strip's own tab drag may light a tab. The app has other drag
+  // sources now (#271 moves the center panels by dragging their command bars),
+  // and accepting any drag here showed a drop indicator for a gesture `handleDrop`
+  // would refuse anyway. `dragIndex` is the strip's own state, so this stays
+  // decoupled from whatever else the app learns to drag.
+  const handleDragOver = useCallback(
+    (e: React.DragEvent, index: number) => {
+      if (dragIndex === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setDragOverIndex(index);
+    },
+    [dragIndex]
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent, toIndex: number) => {

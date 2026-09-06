@@ -940,6 +940,23 @@ function mergeRunHistorySnapshot(
   return { runHistory, ...archives };
 }
 
+/**
+ * The whole center-pair truth a reveal writes (#271 §2.3): the requested panel
+ * becomes the explicit intent and stops being a rail, and the peer is left as
+ * the user set it. `revealCenterPanel` and `focusProfileOutput` both go through
+ * here so the pair invariant has one definition rather than one per caller.
+ */
+function revealCenterPatch(
+  state: Pick<IDEState, 'isGolemPanelCollapsed' | 'isFilesPanelCollapsed'>,
+  panel: CenterPanel
+): Pick<IDEState, 'centerReveal' | 'isGolemPanelCollapsed' | 'isFilesPanelCollapsed'> {
+  return {
+    centerReveal: panel,
+    isGolemPanelCollapsed: panel === 'golem' ? false : state.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: panel === 'files' ? false : state.isFilesPanelCollapsed,
+  };
+}
+
 export const useIDEStore = create<IDEStore>()(
   devtools(
     (set, get) => ({
@@ -1233,15 +1250,7 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       revealCenterPanel: (panel) =>
-        set(
-          (state) => ({
-            centerReveal: panel,
-            isGolemPanelCollapsed: panel === 'golem' ? false : state.isGolemPanelCollapsed,
-            isFilesPanelCollapsed: panel === 'files' ? false : state.isFilesPanelCollapsed,
-          }),
-          false,
-          'revealCenterPanel'
-        ),
+        set((state) => revealCenterPatch(state, panel), false, 'revealCenterPanel'),
 
       // Restore path: one set, already normalized, so the subscribe-and-save
       // hook never observes a half-applied pair.
@@ -2556,8 +2565,7 @@ export const useIDEStore = create<IDEStore>()(
               // un-collapsing the bottom panel is only half the job: the column
               // itself may be a rail, by preference or by window pressure. Set
               // in the same object so a repeat click on the same run repeats it.
-              centerReveal: 'files' as CenterPanel,
-              isFilesPanelCollapsed: false,
+              ...revealCenterPatch(state, 'files'),
             };
           },
           false,
