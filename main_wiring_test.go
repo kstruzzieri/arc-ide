@@ -26,6 +26,15 @@ import (
 //     global menu. Absent, Navigate/Workspace vanish on every platform, and
 //     macOS also loses the AppMenu/EditMenu roles that wire Cmd+C/V/X/A into
 //     the webview's responder chain.
+//   - WebviewWindowOptions.Name: golemWindowNameMain: #271 verifies every bound
+//     window call against a live handle's id AND name. Without the name, main
+//     matches nothing and every Golem window binding refuses its own caller.
+//   - app.golemWindowFactory / app.screenBounds / app.golemWindowPresent: the
+//     three native seams the #271 window machine needs. They are installed once
+//     here rather than lazily inside a concurrent bound call; unset, undocking
+//     is impossible and a close can never observe its own retirement.
+//   - app.loadGolemWindowPreference(): the one read of the persisted Golem
+//     window mode. Absent, an undocked window is never restored after a restart.
 //   - WebviewWindowOptions.UseApplicationMenu: true: Windows attaches the
 //     global menu (Navigate/Workspace) to a window only when this is true;
 //     absent, that build silently loses the menu and its accelerators. Linux
@@ -96,6 +105,31 @@ func fieldValue(node ast.Node, field string) ast.Expr {
 		if key, isIdent := kv.Key.(*ast.Ident); isIdent && key.Name == field {
 			value = kv.Value
 			return false
+		}
+		return true
+	})
+	return value
+}
+
+// mainWindowOptionField returns the value of one field of the
+// application.WebviewWindowOptions literal. fieldValue is not enough for Name:
+// application.Options carries one too, and it is written first.
+func mainWindowOptionField(node ast.Node, field string) ast.Expr {
+	var value ast.Expr
+	ast.Inspect(node, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok || selectorPath(lit.Type) != "application.WebviewWindowOptions" {
+			return true
+		}
+		for _, element := range lit.Elts {
+			kv, isPair := element.(*ast.KeyValueExpr)
+			if !isPair {
+				continue
+			}
+			if key, isIdent := kv.Key.(*ast.Ident); isIdent && key.Name == field {
+				value = kv.Value
+				return false
+			}
 		}
 		return true
 	})
@@ -198,6 +232,18 @@ func scanMainWiring(fn *ast.FuncDecl) []string {
 		missing = append(missing, "main must register events.Common.WindowClosing calling app.handleMainWindowClosing")
 	}
 
+	if name := mainWindowOptionField(fn.Body, "Name"); selectorPath(name) != "golemWindowNameMain" {
+		missing = append(missing, "WebviewWindowOptions must set Name: golemWindowNameMain")
+	}
+	for _, seam := range []string{"app.golemWindowFactory", "app.screenBounds", "app.golemWindowPresent"} {
+		if !assignsTo(fn.Body, seam) {
+			missing = append(missing, "main must assign "+seam)
+		}
+	}
+	if !containsCallTo(fn.Body, "app.loadGolemWindowPreference") {
+		missing = append(missing, "main must call app.loadGolemWindowPreference()")
+	}
+
 	return missing
 }
 
@@ -242,11 +288,16 @@ func main() {
 		ShouldQuit: app.shouldQuit,
 	})
 	app.v3app = wapp
+	app.golemWindowFactory = newGolemWindow
+	app.screenBounds = golemScreens
+	app.golemWindowPresent = golemPresent
 	wapp.Menu.Set(buildAppMenu(app, wapp))
 	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:               golemWindowNameMain,
 		UseApplicationMenu: true,
 	})
 	app.mainWindow = win
+	app.loadGolemWindowPreference()
 	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		app.handleMainWindowClosing(e.Cancel)
 	})
@@ -269,6 +320,11 @@ func main() {
 		"main window unassigned":       "app.mainWindow = win",
 		"menu set removed":             "wapp.Menu.Set(buildAppMenu(app, wapp))",
 		"use application menu removed": "UseApplicationMenu: true,",
+		"main window name removed":     "Name:               golemWindowNameMain,",
+		"window factory unassigned":    "app.golemWindowFactory = newGolemWindow",
+		"screen seam unassigned":       "app.screenBounds = golemScreens",
+		"manager seam unassigned":      "app.golemWindowPresent = golemPresent",
+		"preference load removed":      "app.loadGolemWindowPreference()",
 	}
 
 	for name, removed := range mutations {

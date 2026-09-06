@@ -60,9 +60,39 @@ func main() {
 	})
 	app.v3app = wapp
 
+	// #271: the native seams the Golem window state machine needs, installed
+	// once here so no bound call ever mutates a function field concurrently.
+	// The primary screen leads, because it is the placement fallback when a
+	// saved window's display is gone.
+	app.golemWindowFactory = func(options application.WebviewWindowOptions) application.Window {
+		// Unstarted: main.go's own handle and hooks are installed before the
+		// window is registered and run, so a bootstrap cannot race them.
+		return application.NewWindow(options)
+	}
+	app.screenBounds = func() []application.Rect {
+		screens := wapp.Screen.GetAll()
+		areas := make([]application.Rect, 0, len(screens))
+		for _, screen := range screens {
+			if screen == nil {
+				continue
+			}
+			if screen.IsPrimary {
+				areas = append([]application.Rect{screen.WorkArea}, areas...)
+				continue
+			}
+			areas = append(areas, screen.WorkArea)
+		}
+		return areas
+	}
+	app.golemWindowPresent = func(id uint) bool {
+		_, present := wapp.Window.GetByID(id)
+		return present
+	}
+
 	wapp.Menu.Set(buildAppMenu(app, wapp))
 
 	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:             golemWindowNameMain,
 		Title:            "Firn",
 		Width:            1440,
 		Height:           900,
@@ -85,6 +115,10 @@ func main() {
 		},
 	})
 	app.mainWindow = win
+
+	// #271: the persisted Golem window preference is loaded once; the frontend
+	// restores an undocked window itself once its chat owner is ready.
+	app.loadGolemWindowPreference()
 
 	// The main window close button starts the quit handshake instead of closing
 	// directly. The permitted transition issues the one final platform Quit.

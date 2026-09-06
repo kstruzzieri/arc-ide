@@ -47,8 +47,10 @@ type App struct {
 	quitFn func()
 	// v3app and mainWindow are the v3 host handles, set in main() before Run.
 	// Both are nil in tests, so every use of them is nil-guarded.
-	v3app           *application.App
-	mainWindow      *application.WebviewWindow
+	v3app *application.App
+	// mainWindow is stored as the runtime interface, not the concrete window,
+	// so #271's caller verification can be exercised against a fake handle.
+	mainWindow      application.Window
 	executor        *runprofile.Executor
 	osFS            filesystem.FileSystem
 	workspaceStore  *workspace.Store
@@ -81,6 +83,25 @@ type App struct {
 	// closeMu.
 	shutdownHistoryWorkspace string
 	shutdownHistoryEpoch     uint64
+
+	// #271 Golem satellite window. golemWinMu guards golemWin alone; no native
+	// call, no disk write and no callback into the App may run while it is
+	// held, and quitPermitted() (closeMu) is always read before it.
+	golemWinMu sync.Mutex
+	golemWin   golemWindowRuntime
+	// golemSaveMu serializes app.json writes; golemSavedGen drops a write that
+	// carries an older generation than one already applied.
+	golemSaveMu   sync.Mutex
+	golemSavedGen uint64
+	// Native seams, installed once in main() before Run. Tests inject them
+	// directly; they are never mutated from a concurrent bound call.
+	golemWindowFactory func(application.WebviewWindowOptions) application.Window
+	screenBounds       func() []application.Rect
+	golemWindowPresent func(uint) bool
+	// golemAfterFunc and golemTransitionOverride are test seams for the bounded
+	// transition timers. Zero values mean the production clock and deadline.
+	golemAfterFunc          func(time.Duration, func()) golemTimer
+	golemTransitionOverride time.Duration
 }
 
 // closeState is the spec §5.5 app-close state machine. The first OS close
