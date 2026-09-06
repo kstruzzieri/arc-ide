@@ -157,7 +157,6 @@ export interface ConversationView {
   transcript: TranscriptEntry[];
   runs: Record<string, RunView>;
   activeRunId: string | null;
-  draft: string;
   queuedTurns: QueuedTurn[];
   pendingConsentTurn: PendingConsentTurn | null;
   lastFailedTurn: RetryTurn | null;
@@ -192,15 +191,23 @@ export interface GolemStoreState {
   invalidateBinding(): void;
   ingestEvent(value: unknown): void;
   ingestRunStatus(value: unknown): void;
-  selectConversation(conversationId: string): void;
-  clearConversation(conversationId: string): void;
-  setDraft(conversationId: string, value: string): void;
-  submitTurn(conversationId: string): Promise<void>;
-  allowAndSend(conversationId: string): Promise<void>;
-  retryLastFailed(conversationId: string): Promise<void>;
-  updateQueuedTurn(conversationId: string, queueId: string, message: string): void;
-  removeQueuedTurn(conversationId: string, queueId: string): void;
-  cancelRun(runId: string): Promise<void>;
+  /**
+   * Local admission (#271 spec §5.2). Each of these answers for the state
+   * transition it just made or refused, synchronously, before the provider has
+   * said anything: the visible host needs a definitive yes/no *now* to decide
+   * whether to drop the text the user typed. Provider completion and failure
+   * keep landing through the transcript, `lastFailedTurn` and the run phases,
+   * exactly as before — a rejected provider promise is not a refusal, because
+   * admission already took ownership of that prompt.
+   */
+  selectConversation(conversationId: string): GolemActionResult;
+  clearConversation(conversationId: string): GolemActionResult;
+  submitTurn(conversationId: string, text: string): GolemActionResult;
+  allowAndSend(conversationId: string, runId: string, challengeId: string): GolemActionResult;
+  retryLastFailed(conversationId: string): GolemActionResult;
+  updateQueuedTurn(conversationId: string, queueId: string, message: string): GolemActionResult;
+  removeQueuedTurn(conversationId: string, queueId: string): GolemActionResult;
+  cancelRun(runId: string): GolemActionResult;
 }
 
 /**

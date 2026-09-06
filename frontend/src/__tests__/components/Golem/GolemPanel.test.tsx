@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { CommandPalette } from '../../../components/CommandPalette';
 import { GolemPanel } from '../../../components/Golem';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { useDraftStore } from '../../../golem/draftStore';
 import { useGitStore } from '../../../stores/gitStore';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 import { useIDEStore } from '../../../stores/ideStore';
@@ -234,6 +235,9 @@ const fakeScroll = (
 
 beforeEach(() => {
   __resetGolemStore();
+  // Composer drafts are host-lifetime now (#271 B4), so they outlive a store
+  // reset by design — which is exactly why each test has to clear them.
+  useDraftStore.setState({ drafts: {} });
   useIDEStore.setState(useIDEStore.getInitialState());
   jest.clearAllMocks();
   uuidQueue = [RUN_A, RUN_B];
@@ -709,6 +713,97 @@ describe('GolemPanel draft', () => {
       store().selectConversation(CONV);
     });
     expect(composer()).toHaveValue('frontend draft');
+  });
+});
+
+// ── host admission (#271 B4) ──────────────────────────────────────────────────
+//
+// The docked host owns the composer text and drops it only when the store's
+// admission accepted it. A refusal keeps what the user typed and says why.
+
+describe('GolemPanel admission', () => {
+  const newChatButton = () => screen.getByRole('button', { name: 'New chat' });
+  const toast = () => useIDEStore.getState().toast;
+
+  beforeEach(() => {
+    hydrate();
+    selectFocused();
+  });
+
+  it('clears an accepted draft immediately, before the provider has answered', () => {
+    // Never resolves: the draft must go on local admission alone.
+    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
+    render(<GolemPanel visible />);
+
+    type('hello there');
+    pressEnter();
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect(composer()).toHaveValue('');
+    expect(toast()).toBeNull();
+  });
+
+  it('keeps a refused draft and explains the refusal', () => {
+    render(<GolemPanel visible />);
+    type('keep this');
+
+    // The binding is gone, so the store refuses. The textarea stays enabled —
+    // the conversation is still known — so Enter really does reach the adapter.
+    act(() => {
+      store().invalidateBinding();
+    });
+    pressEnter();
+
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue('keep this');
+    expect(toast()).toMatchObject({ type: 'error' });
+    expect(toast()?.message).toEqual(expect.any(String));
+    expect(toast()?.message).not.toBe('');
+  });
+
+  it('refuses New chat while a run is live and keeps the draft', () => {
+    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
+    render(<GolemPanel visible />);
+
+    type('first');
+    pressEnter();
+    type('leftover');
+
+    // The store would refuse a clear here (a live run could re-hydrate a
+    // cleared conversation), so the button is disabled rather than lying.
+    expect(newChatButton()).toBeDisabled();
+    expect(composer()).toHaveValue('leftover');
+  });
+
+  it('accepts New chat when the only thing to clear is the draft', () => {
+    render(<GolemPanel visible />);
+
+    // An empty transcript and no queue: only this host knows there is anything
+    // to clear at all, and the store accepts on its idle guard alone.
+    type('just a draft');
+    expect(newChatButton()).toBeEnabled();
+    fireEvent.click(newChatButton());
+
+    expect(composer()).toHaveValue('');
+    expect(toast()).toBeNull();
+  });
+
+  it('freezes every action the moment a handoff starts', () => {
+    const { rerender } = render(<GolemPanel visible />);
+    type('mid-thought');
+
+    rerender(<GolemPanel visible frozen />);
+
+    expect(composer()).toBeDisabled();
+    expect(sendButton()).toBeDisabled();
+    expect(newChatButton()).toBeDisabled();
+
+    // A click or keydown that raced the barrier is refused by the handler too,
+    // not only by `disabled` — and the draft is still here for the new owner.
+    pressEnter();
+    fireEvent.click(sendButton());
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue('mid-thought');
   });
 });
 
@@ -1489,7 +1584,7 @@ describe('GolemPanel tool clustering', () => {
     expect(screen.getByText('running')).toBeInTheDocument();
   });
 
-  it('reveals a tool chip raw detail as text, rendering markup literally', async () => {
+  it('reveals a tool chip detail as text, rendering markup literally', async () => {
     const { container } = await startRun();
     toolFinished(2, { toolCallId: 'call-x', name: 'search', preview: '<b>x</b>' });
 
@@ -1501,13 +1596,20 @@ describe('GolemPanel tool clustering', () => {
     // The preview renders as literal text, never a real <b> element.
     const preview = screen.getByText('<b>x</b>');
     expect(preview.querySelector('b')).toBeNull();
+    expect(screen.getByText('call-x')).toBeInTheDocument();
 
-    // The raw payload is pretty-printed JSON, also text inside a <pre>.
-    const raw = container.querySelector('pre');
-    expect(raw).not.toBeNull();
-    expect(raw?.textContent).toContain('"toolCallId": "call-x"');
-    expect(raw?.textContent).toContain('"preview": "<b>x</b>"');
-    expect(raw?.querySelector('b')).toBeNull();
+    // The raw provider event body is owner-only and never projected (#271 B4),
+    // so the surface — which renders the same projection in both windows —
+    // has nothing to dump. No <pre> means no route for unsanitized markup.
+    expect(container.querySelector('pre')).toBeNull();
+  });
+
+  it('says so when a tool call reported no preview, rather than inventing detail', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'call-y', name: 'read', preview: '' });
+
+    fireEvent.click(screen.getByRole('button', { name: /read/i }));
+    expect(screen.getByText('This tool call reported no preview.')).toBeInTheDocument();
   });
 
   it('keeps the streaming assistant reply as the transcript last child after a tool cluster', async () => {

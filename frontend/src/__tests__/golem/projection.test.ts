@@ -1,3 +1,4 @@
+import { useDraftStore } from '../../golem/draftStore';
 import { buildGolemView } from '../../golem/projection';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { GolemContractError } from '../../types/golem';
@@ -9,7 +10,10 @@ import type {
 } from '../../types/golem';
 import { parseGolemView } from '../../types/golemWindow';
 
-beforeEach(() => __resetGolemStore());
+beforeEach(() => {
+  __resetGolemStore();
+  useDraftStore.setState({ drafts: {} });
+});
 
 const destination: ProviderDestination = {
   provider: 'ollama',
@@ -51,13 +55,13 @@ it('projects store state without drafts or raw events', () => {
         transcript: [],
         runs: {},
         activeRunId: null,
-        draft: 'secret typing',
         queuedTurns: [],
         pendingConsentTurn: null,
         lastFailedTurn: null,
       },
     },
   }));
+  useDraftStore.getState().setDraft('c1', 'secret typing');
   const view = buildGolemView(useGolemStore.getState());
   expect(view.selectedConversationId).toBe('c1');
   expect(view.conversations.c1).not.toHaveProperty('draft');
@@ -128,7 +132,6 @@ function seedRichConversation(): ConversationView {
       r3: { identity: { ...runIdentity, runId: 'r3' }, phase: 'admitting', lastSeq: -1 },
     },
     activeRunId: 'r1',
-    draft: 'secret typing',
     queuedTurns: [
       { queueId: 'q1', state: 'queued', message: 'next up', contextRefs: [] },
       {
@@ -153,6 +156,10 @@ function seedRichConversation(): ConversationView {
     bridgePhase: 'ready',
     conversations: { ...s.conversations, c1: conversation },
   }));
+  // The composer text lives in the visible host now (#271 B4), never in the
+  // store — so the projection cannot ship it even by accident. The assertion
+  // that a serialized view never contains it stays exactly as strict.
+  useDraftStore.getState().setDraft('c1', 'secret typing');
   return conversation;
 }
 
