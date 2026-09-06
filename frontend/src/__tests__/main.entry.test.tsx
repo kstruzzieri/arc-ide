@@ -9,6 +9,8 @@
  * that a string selector returns the expected name.
  */
 
+import { readFileSync } from 'node:fs';
+
 const OWNERS = [
   '../App',
   '../stores/golemStore',
@@ -65,6 +67,23 @@ beforeEach(() => {
   jest.resetModules();
   document.body.innerHTML = '<div id="root"></div>';
   goTo('/');
+});
+
+/**
+ * jsdom applies no stylesheet, so no mounted assertion can tell a themed window
+ * from one whose every custom property is undefined. The load path is what is
+ * checkable: the tokens and the reset must be imported by the module BOTH roots
+ * pass through, not by the IDE's own root behind the dynamic branch.
+ */
+it('loads the design tokens and the reset ahead of either root', () => {
+  const source = readFileSync('src/entry.ts', 'utf8');
+  const branch = source.indexOf('selectRoot(window.location.hash)');
+  expect(branch).toBeGreaterThan(-1);
+  for (const sheet of ['./styles/tokens.css', './styles/reset.css']) {
+    const at = source.indexOf(`import '${sheet}';`);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(branch);
+  }
 });
 
 it('names the satellite route for that exact hash and nothing else', async () => {

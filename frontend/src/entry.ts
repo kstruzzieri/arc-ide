@@ -1,3 +1,9 @@
+// Every module below the branch styles itself from these, so they are loaded
+// here rather than inside either root: this file is the one thing both roots
+// pass through, and a satellite that only imported them via `App` would render
+// with every custom property undefined.
+import './styles/tokens.css';
+import './styles/reset.css';
 import { createElement, StrictMode, type ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 

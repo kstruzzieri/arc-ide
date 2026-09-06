@@ -2,6 +2,7 @@ import {
   createMainRelayCore,
   createSatelliteCore,
   RELAY_ACTION_REFUSED,
+  RELAY_HANDOFF_IN_PROGRESS,
   type MainRelayCore,
   type SatelliteCore,
 } from '../../golem/relayCore';
@@ -828,6 +829,51 @@ describe('satellite core', () => {
           .filter((m) => m.handoff === 2)
           .every((m) => m.id === first.id)
       ).toBe(true);
+    } finally {
+      core.dispose();
+      jest.useRealTimers();
+    }
+  });
+
+  it('ends an aborted handoff, lifts the barrier, and ignores everything else', async () => {
+    jest.useFakeTimers();
+    const { bus, core, onError } = makeSatellite();
+    try {
+      const stalled = core.beginHandoff(1, () => ({ c1: 'kept' }));
+      let ended = '';
+      void stalled.catch((error: Error) => {
+        ended = error.message;
+      });
+      await flush();
+      expect(bus.sent('satellite', 'drafts')).toHaveLength(1);
+
+      // While the transfer is live the barrier holds every action back.
+      await expect(core.send({ type: 'select', conversationId: 'c1' })).rejects.toThrow(
+        RELAY_HANDOFF_IN_PROGRESS
+      );
+
+      // A handoff this core never started is not this core's to end.
+      core.abortHandoff(99, 'not this one');
+      await flush();
+      expect(ended).toBe('');
+
+      core.abortHandoff(1, 'main gave up');
+      await flush();
+      expect(ended).toBe('main gave up');
+
+      // Its retry timer went with it: nothing re-posts the dead transfer.
+      jest.advanceTimersByTime(60_000);
+      await flush();
+      expect(bus.sent('satellite', 'drafts')).toHaveLength(1);
+
+      // Input is live again, and a second abort of the same handoff is inert.
+      const resumed = core.send({ type: 'select', conversationId: 'c1' });
+      void resumed.catch(() => undefined);
+      await flush();
+      expect(bus.sent('satellite', 'action')).toHaveLength(1);
+      core.abortHandoff(1, 'again');
+      await flush();
+      expect(onError).not.toHaveBeenCalled();
     } finally {
       core.dispose();
       jest.useRealTimers();

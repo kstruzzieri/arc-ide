@@ -49,14 +49,29 @@ import { NO_PENDING_COMPOSERS, useViewStore } from './viewStore';
 const MODE_EVENT = 'golem:window-mode';
 const MESSAGE_EVENT = 'golem:window-message';
 
+/**
+ * Go's own bound on a whole transition — `golemTransitionDeadline` in
+ * app_golem_window.go. Nothing here arms a timer against it; it is the ceiling
+ * the retry bounds below are chosen under, because when it expires Go restores
+ * `ready` on its own and this window's verdict would explain a transition the
+ * user has already been handed back.
+ */
+export const GOLEM_TRANSITION_DEADLINE_MS = 10_000;
 /** How long an unacknowledged relay post waits before it is posted again. */
-export const SATELLITE_ACK_TIMEOUT_MS = 4000;
-/** Posts per action before the outcome is declared uncertain rather than lost. */
+export const SATELLITE_ACK_TIMEOUT_MS = 3000;
+/**
+ * Posts per action or transfer before the outcome is declared uncertain rather
+ * than lost. ACK × ATTEMPTS must stay under GOLEM_TRANSITION_DEADLINE_MS, which
+ * `windowSatellite.test.ts` asserts rather than leaving to arithmetic.
+ */
 export const SATELLITE_MAX_ATTEMPTS = 3;
 /**
- * Envelopes held while the bootstrap response is outstanding. Generous enough
- * for a busy opening exchange and small enough that a wedged startup fails
- * loudly instead of growing without bound.
+ * Envelopes held while the bootstrap response is outstanding. `handleMessage`
+ * coalesces superseded projections in place, so this bounds only what cannot be
+ * collapsed: main's draft transfer and its retries — at most
+ * SATELLITE_MAX_ATTEMPTS posts per handoff — plus the one held view. Sixty-four
+ * is an order of magnitude above that, so an overflow means the relay is
+ * producing traffic this window has no rule for, not a merely slow startup.
  */
 export const SATELLITE_STARTUP_BUFFER = 64;
 
@@ -67,6 +82,7 @@ const UNEXPECTED_MESSAGE = 'Golem received a window message meant for another wi
 const STALE_TRANSFER = 'Golem received a draft transfer that does not belong to this window.';
 const UNEXPLAINED_REFUSAL = 'Golem refused that action.';
 const ABORT_UNEXPLAINED = 'The main window ended the transition without a reason.';
+const TRANSFER_ENDED = 'The move to the main window did not complete.';
 
 /**
  * One optimistic queue edit. The projection is the only source of a queued
@@ -92,8 +108,6 @@ interface Owner {
   rawView: GolemView | null;
   /** One promise per handoff, so a repeated `closing` snapshot cannot restart it. */
   handoffs: Map<number, Promise<void>>;
-  /** The handoff whose transfer failed before authorization, or null. */
-  handoffFailed: number | null;
   queueEdits: Map<string, QueueEdit>;
 }
 
@@ -105,9 +119,14 @@ const transport: RelayTransport = {
 
 // ── store writes ─────────────────────────────────────────────────────────────
 
-/** Surfaces a failure. A retired owner is silent: its window is already gone. */
+/**
+ * Surfaces a failure. A *retired* owner is silent: its window is already gone.
+ * No owner at all is not the same thing — the relay never started, or was torn
+ * down before the caller ran — and that failure is the user's only sign that
+ * this window is not connected, so it is written.
+ */
 function report(own: Owner | null, value: unknown): void {
-  if (own === null || own.cancelled || own !== active) return;
+  if (own !== null && (own.cancelled || own !== active)) return;
   useViewStore.setState({ error: boundedGolemMessage(value) }, false, 'golem/error');
 }
 
@@ -128,13 +147,14 @@ function setPending(own: Owner, conversationId: string, pending: boolean): void 
 /**
  * The one rule for the interaction barrier. This window is live only while it
  * holds a projection, the transferred draft map and Go's own `ready` for its
- * instance — and only while no transfer is waiting to be retried.
+ * instance. Go is the sole authority on the last of those: a transfer that
+ * failed leaves the phase alone until Go restores `ready`, and a window that
+ * froze itself past that point could never be typed in again.
  */
 function refreshFrozen(own: Owner): void {
   if (own.cancelled || own !== active) return;
   const { view, state, frozen } = useViewStore.getState();
   const next =
-    own.handoffFailed !== null ||
     !own.draftsInstalled ||
     view === null ||
     state === null ||
@@ -212,8 +232,15 @@ function installState(own: Owner, next: GolemWindowState): void {
   // late delivery and must not walk `ready` back to `bootstrapped`.
   if (current !== null && next.stateRevision <= current.stateRevision) return;
   useViewStore.setState({ state: next }, false, 'golem/state');
+  const mine = own.instance !== 0 && next.instance === own.instance;
+  // `restoreGolemReady` walks closing→ready under the SAME handoff number, so
+  // this snapshot is the only word this window gets that a transfer Go gave up
+  // on is over. Settling the waiter here — before the barrier is recomputed —
+  // is what keeps a timed-out re-dock from leaving the window mute.
+  if (mine && next.phase === 'ready' && own.handoffs.has(next.handoff))
+    own.core?.abortHandoff(next.handoff, TRANSFER_ENDED);
   refreshFrozen(own);
-  if (own.instance === 0 || next.instance !== own.instance) return;
+  if (!mine) return;
   if (next.phase === 'closing' && next.handoff !== 0) void beginReDock(own, next);
 }
 
@@ -271,12 +298,11 @@ function handleAbort(own: Owner, message: GolemWindowMessage): void {
       ? boundedGolemMessage(payload.reason)
       : ABORT_UNEXPLAINED;
   useViewStore.setState({ error: reason }, false, 'golem/aborted');
-  if (own.handoffs.has(message.handoff)) {
-    // The transfer this window started is over and cannot resume: B2's core
-    // stays blocked, so the window holds still and offers a retry.
-    own.handoffs.delete(message.handoff);
-    own.handoffFailed = message.handoff;
-  }
+  // Main ended the transfer this window started. Settling the waiter with
+  // main's own reason both lifts the relay's barrier and keeps that reason as
+  // the one the failure is finally reported under.
+  own.handoffs.delete(message.handoff);
+  own.core?.abortHandoff(message.handoff, reason);
   refreshFrozen(own);
 }
 
@@ -322,6 +348,17 @@ function handleMessage(own: Owner, payload: unknown): void {
     return;
   }
   if (own.core === null) {
+    if (envelope.message.kind === 'view') {
+      // Projections are a strict revision series and only the newest can ever
+      // be installed, so a superseded one is replaced where it stands rather
+      // than spending room the buffer holds for the draft transfer.
+      const held = own.buffer.findIndex((entry) => entry.message.kind === 'view');
+      if (held !== -1) {
+        if (envelope.message.revision > own.buffer[held].message.revision)
+          own.buffer[held] = envelope;
+        return;
+      }
+    }
     if (own.buffer.length >= SATELLITE_STARTUP_BUFFER) {
       // Dropping one of these could drop a draft transfer, so the startup
       // fails loudly instead.
@@ -386,9 +423,17 @@ function runBootstrap(own: Owner): void {
 function failHandoff(own: Owner, state: GolemWindowState, reason: string): void {
   if (own.cancelled || own !== active) return;
   own.handoffs.delete(state.handoff);
-  own.handoffFailed = state.handoff;
-  useViewStore.setState({ error: reason, frozen: true }, false, 'golem/handoff-failed');
-  postAbort(state.instance, state.handoff, reason);
+  // Idempotent, and the barrier comes down even when the transfer itself had
+  // succeeded and it was the close authorization that failed.
+  own.core?.abortHandoff(state.handoff, reason);
+  useViewStore.setState({ error: reason }, false, 'golem/handoff-failed');
+  // Only while Go still believes the transfer is running. Once it has restored
+  // `ready` — its own deadline, or an abort it relayed — an abort would name a
+  // transition it has already closed, and Go answers that with an error.
+  const current = useViewStore.getState().state;
+  if (current !== null && current.phase === 'closing' && current.handoff === state.handoff)
+    postAbort(state.instance, state.handoff, reason);
+  refreshFrozen(own);
 }
 
 async function runReDock(own: Owner, state: GolemWindowState, core: SatelliteCore): Promise<void> {
@@ -429,7 +474,6 @@ function beginReDock(own: Owner, state: GolemWindowState): Promise<void> {
     failHandoff(own, state, NO_CONNECTION);
     return Promise.resolve();
   }
-  own.handoffFailed = null;
   const promise = runReDock(own, state, core);
   own.handoffs.set(state.handoff, promise);
   return promise;
@@ -452,7 +496,6 @@ export function startGolemSatellite(): () => void {
     draftsInstalled: false,
     rawView: null,
     handoffs: new Map(),
-    handoffFailed: null,
     queueEdits: new Map(),
   };
   active = own;
@@ -564,10 +607,6 @@ export function retryGolemConnection(): void {
   if (own.core === null) {
     own.generation += 1;
     runBootstrap(own);
-    return;
-  }
-  if (own.handoffFailed !== null) {
-    void requestReDock();
     return;
   }
   own.core.retryPending();

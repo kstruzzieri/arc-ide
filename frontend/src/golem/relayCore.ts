@@ -404,6 +404,15 @@ export interface SatelliteCore {
   installBootstrap(view: GolemView | null, revision: number): void;
   receive(envelope: GolemWindowEnvelope): void;
   beginHandoff(handoff: number, readDrafts: () => GolemDraftMap): Promise<void>;
+  /**
+   * Ends a transfer this window can no longer complete — main aborted the
+   * transition, or Go's own deadline expired and it handed the window back.
+   * The waiter rejects with `reason`, its retry timer stops, and the input
+   * barrier the handoff raised comes down whether or not the transfer had
+   * already settled: either way nothing is waiting on it any more. A handoff
+   * this core never started changes nothing.
+   */
+  abortHandoff(handoff: number, reason: string): void;
   ready(handoff: number, draftID: number): Promise<void>;
   retryPending(): void;
   dispose(): void;
@@ -674,6 +683,19 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     entry.reject(relayError(ack.reason ?? RELAY_TRANSFER_UNCONFIRMED));
   }
 
+  function abortHandoff(handoff: number, reason: string): void {
+    const entry = handoffs.get(handoff);
+    if (!entry) return;
+    // The transition is over either way — a resolved transfer whose close was
+    // then refused is just as dead as an unanswered one — so the barrier comes
+    // down first and unconditionally.
+    blocked = false;
+    if (entry.settled) return;
+    clearTimer(entry);
+    entry.settled = true;
+    entry.reject(relayError(reason));
+  }
+
   // ── Draft transfer, main → satellite ──
 
   function receiveDrafts(message: GolemWindowMessage): void {
@@ -791,5 +813,14 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     }
   }
 
-  return { send, installBootstrap, receive, beginHandoff, ready, retryPending, dispose };
+  return {
+    send,
+    installBootstrap,
+    receive,
+    beginHandoff,
+    abortHandoff,
+    ready,
+    retryPending,
+    dispose,
+  };
 }

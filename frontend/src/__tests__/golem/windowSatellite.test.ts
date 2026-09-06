@@ -45,6 +45,7 @@ import {
   retryGolemConnection,
   satelliteActions,
   startGolemSatellite,
+  GOLEM_TRANSITION_DEADLINE_MS,
   SATELLITE_ACK_TIMEOUT_MS,
   SATELLITE_MAX_ATTEMPTS,
   SATELLITE_STARTUP_BUFFER,
@@ -201,6 +202,17 @@ async function startReady(): Promise<() => void> {
   return stop;
 }
 
+/**
+ * The retry bounds are not free parameters: Go restores `ready` on its own
+ * deadline (`golemTransitionDeadline`), and a verdict that landed after that
+ * would explain a transition the user has already been handed back.
+ */
+it('spends every transfer retry before Go abandons the transition', () => {
+  expect(SATELLITE_ACK_TIMEOUT_MS * SATELLITE_MAX_ATTEMPTS).toBeLessThan(
+    GOLEM_TRANSITION_DEADLINE_MS
+  );
+});
+
 describe('startup ordering', () => {
   it('installs a live view and drafts that arrive before the bootstrap response', async () => {
     const boot = deferred<GolemWindowBootstrap>();
@@ -295,7 +307,9 @@ describe('startup ordering', () => {
     bootstrapMock.mockReturnValue(boot.promise);
     const stop = startGolemSatellite();
     emitMode(stateOf());
-    for (let i = 0; i <= SATELLITE_STARTUP_BUFFER; i += 1) emitMessage(viewMessage(i + 1));
+    // Transfers, not projections: dropping one of these would drop a draft map,
+    // so they are exactly what the bound exists for and what cannot coalesce.
+    for (let i = 0; i <= SATELLITE_STARTUP_BUFFER; i += 1) emitMessage(draftsMessage(i + 1, 1, {}));
     await flush();
 
     expect(useViewStore.getState().error).not.toBeNull();
@@ -306,6 +320,29 @@ describe('startup ordering', () => {
     await flush();
     // A resolution that arrives after the failure cannot quietly revive it.
     expect(useViewStore.getState().view).toBeNull();
+    stop();
+  });
+
+  it('coalesces superseded projections instead of overflowing the buffer', async () => {
+    const boot = deferred<GolemWindowBootstrap>();
+    bootstrapMock.mockReturnValue(boot.promise);
+    const stop = startGolemSatellite();
+    emitMode(stateOf());
+    // Only the newest projection can ever be installed, so a burst of them must
+    // not consume the room the buffer holds for a draft transfer.
+    for (let i = 0; i <= SATELLITE_STARTUP_BUFFER; i += 1)
+      emitMessage(viewMessage(i + 1, viewOf({ composerFocusRevision: i + 1 })));
+    emitMessage(draftsMessage(7, 1, { 'conv-a': 'held text' }));
+    await flush();
+    expect(posted('abort')).toHaveLength(0);
+
+    boot.resolve(bootstrapOf({ view: viewOf(), revision: 1 }));
+    await flush();
+
+    expect(useViewStore.getState().error).toBeNull();
+    expect(useViewStore.getState().view?.composerFocusRevision).toBe(SATELLITE_STARTUP_BUFFER + 1);
+    expect(useDraftStore.getState().drafts).toEqual({ 'conv-a': 'held text' });
+    expect(posted('ready')).toHaveLength(1);
     stop();
   });
 
@@ -359,9 +396,13 @@ describe('StrictMode double start', () => {
   });
 
   it('drops the retired owner listeners and timers', async () => {
-    bootstrapMock.mockReturnValue(Promise.resolve(bootstrapOf({ view: viewOf(), revision: 1 })));
-    const stop = startGolemSatellite();
+    const stop = await startReady();
+    // An unacknowledged action, so the retired owner really does leave a retry
+    // timer behind for the teardown to cancel.
+    actions.send('conv-a', 'hello');
     await flush();
+    expect(posted('action')).toHaveLength(1);
+
     stop();
     expect(listeners.size).toBe(0);
     const before = postMock.mock.calls.length;
@@ -526,18 +567,66 @@ describe('re-dock', () => {
     const aborts = posted('abort');
     expect(aborts).toHaveLength(1);
     expect(aborts[0]).toMatchObject({ instance: 1, handoff: 2 });
+
+    // Go answers that abort with closing→ready, which is what puts this window
+    // back to work: a refused move must not cost the user their input.
+    emitMode(stateOf({ phase: 'ready', stateRevision: 5, handoff: 2 }));
+    await flush();
+    expect(useViewStore.getState().frozen).toBe(false);
+    actions.send('conv-a', 'still mine');
+    await flush();
+    expect(posted('action')).toHaveLength(1);
     stop();
   });
 
   it('aborts when the close authorization is refused', async () => {
     confirmMock.mockImplementation(() => Promise.reject(new Error('close not authorized')));
     const stop = await startReady();
+    useDraftStore.getState().setDraft('conv-a', 'still mine');
     emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
     await flush();
     emitMessage(transferAck(posted('drafts')[0].id, 2));
     await flush();
     expect(useViewStore.getState().error).toContain('close not authorized');
     expect(posted('abort')).toHaveLength(1);
+
+    emitMode(stateOf({ phase: 'ready', stateRevision: 5, handoff: 2 }));
+    await flush();
+    expect(useViewStore.getState().frozen).toBe(false);
+    expect(useDraftStore.getState().drafts['conv-a']).toBe('still mine');
+    actions.send('conv-a', 'still mine');
+    await flush();
+    expect(posted('action')).toHaveLength(1);
+    stop();
+  });
+
+  it('restores input when Go abandons the transfer on its own deadline', async () => {
+    const stop = await startReady();
+    useDraftStore.getState().setDraft('conv-a', 'still mine');
+    emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
+    await flush();
+    expect(posted('drafts')).toHaveLength(1);
+
+    // Every retry is spent, and the core names the reason, before Go's own
+    // deadline runs out.
+    for (let i = 0; i < SATELLITE_MAX_ATTEMPTS; i += 1) {
+      jest.advanceTimersByTime(SATELLITE_ACK_TIMEOUT_MS);
+      await flush();
+    }
+    expect(useViewStore.getState().error).not.toBeNull();
+
+    // `restoreGolemReady` walks the phase back under the SAME handoff number,
+    // which is the only signal this window gets that the transfer is over.
+    emitMode(stateOf({ phase: 'ready', stateRevision: 5, handoff: 2 }));
+    await flush();
+
+    expect(useViewStore.getState().frozen).toBe(false);
+    expect(useDraftStore.getState().drafts['conv-a']).toBe('still mine');
+    actions.send('conv-a', 'still mine');
+    await flush();
+    expect(posted('action')).toHaveLength(1);
+    // Go closed the transition itself; an abort would name one that is gone.
+    expect(posted('abort')).toHaveLength(0);
     stop();
   });
 
@@ -552,25 +641,26 @@ describe('re-dock', () => {
     stop();
   });
 
-  it('holds still with a retry when main aborts the transition', async () => {
+  it('restores input when main aborts the transition', async () => {
     const stop = await startReady();
+    useDraftStore.getState().setDraft('conv-a', 'still mine');
     emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
     await flush();
-    emitMessage(abortMessage(2, 'The main window refused the handoff.'));
-    await flush();
-    expect(useViewStore.getState().error).toBe('The main window refused the handoff.');
 
-    // Go restores `ready`, but this window's relay is still inside the barrier
-    // it opened, so it stays frozen and offers the transfer again.
+    // `acceptGolemAbort` restores ready and only then relays the abort, so this
+    // window is told the transition is over and told why in the same breath.
+    emitMessage(abortMessage(2, 'The main window refused the handoff.'));
     emitMode(stateOf({ phase: 'ready', stateRevision: 5, handoff: 2 }));
     await flush();
-    expect(useViewStore.getState().frozen).toBe(true);
 
-    closeMock.mockClear();
-    retryGolemConnection();
+    expect(useViewStore.getState().frozen).toBe(false);
+    expect(useViewStore.getState().error).toBe('The main window refused the handoff.');
+    expect(useDraftStore.getState().drafts['conv-a']).toBe('still mine');
+    actions.send('conv-a', 'still mine');
     await flush();
-    expect(closeMock).toHaveBeenCalledTimes(1);
-    expect(useViewStore.getState().error).toBeNull();
+    expect(posted('action')).toHaveLength(1);
+    // Main ended this transition; echoing an abort back names a dead one.
+    expect(posted('abort')).toHaveLength(0);
     stop();
   });
 
