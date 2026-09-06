@@ -11,7 +11,8 @@ import (
 )
 
 // Same byte-for-byte mock discipline as internal/workspace/store_test.go.
-func newMockFS() (*filesystem.Mock, map[string][]byte) {
+func newMockFS(t *testing.T) (*filesystem.Mock, map[string][]byte) {
+	t.Helper()
 	files := map[string][]byte{}
 	dirs := map[string]bool{}
 	return &filesystem.Mock{
@@ -23,6 +24,9 @@ func newMockFS() (*filesystem.Mock, map[string][]byte) {
 			return data, nil
 		},
 		WriteFileFunc: func(path string, data []byte, perm fs.FileMode) error {
+			if perm != 0o600 {
+				t.Errorf("WriteFile perm = %v, want 0600", perm)
+			}
 			files[path] = data
 			return nil
 		},
@@ -36,7 +40,13 @@ func newMockFS() (*filesystem.Mock, map[string][]byte) {
 			delete(files, oldPath)
 			return nil
 		},
-		MkdirAllFunc: func(path string, perm fs.FileMode) error { dirs[path] = true; return nil },
+		MkdirAllFunc: func(path string, perm fs.FileMode) error {
+			if perm != 0o700 {
+				t.Errorf("MkdirAll perm = %v, want 0700", perm)
+			}
+			dirs[path] = true
+			return nil
+		},
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			if !dirs[path] {
 				return nil, fs.ErrNotExist
@@ -49,7 +59,7 @@ func newMockFS() (*filesystem.Mock, map[string][]byte) {
 var firnDir = filepath.FromSlash("/home/user/.firn")
 
 func TestLoadMissingFileIsDockedDefault(t *testing.T) {
-	fsys, _ := newMockFS()
+	fsys, _ := newMockFS(t)
 	s := NewStore(fsys, firnDir)
 	got, err := s.Load()
 	if err != nil {
@@ -61,7 +71,7 @@ func TestLoadMissingFileIsDockedDefault(t *testing.T) {
 }
 
 func TestSaveThenLoadRoundTripsNegativeCoordinates(t *testing.T) {
-	fsys, files := newMockFS()
+	fsys, files := newMockFS(t)
 	s := NewStore(fsys, firnDir)
 	want := State{GolemWindow: GolemWindow{Mode: ModeUndocked, X: -1440, Y: 120, Width: 480, Height: 720}}
 	if err := s.Save(want); err != nil {
@@ -84,7 +94,7 @@ func TestSaveThenLoadRoundTripsNegativeCoordinates(t *testing.T) {
 }
 
 func TestLoadNormalizesInvalidModeAndRejectsUnknownVersion(t *testing.T) {
-	fsys, files := newMockFS()
+	fsys, files := newMockFS(t)
 	path := filepath.Join(firnDir, "app.json")
 	files[path] = []byte(`{"version":1,"state":{"golemWindow":{"mode":"sideways","x":1,"y":2,"width":3,"height":4}}}`)
 	s := NewStore(fsys, firnDir)
@@ -110,7 +120,7 @@ func TestLoadNormalizesInvalidModeAndRejectsUnknownVersion(t *testing.T) {
 }
 
 func TestSaveDisabledWithoutFirnDir(t *testing.T) {
-	fsys, _ := newMockFS()
+	fsys, _ := newMockFS(t)
 	s := NewStore(fsys, "")
 	if err := s.Save(Default()); err == nil {
 		t.Fatal("Save with no firnDir must fail loudly rather than write a relative path")
@@ -121,9 +131,11 @@ func TestSaveDisabledWithoutFirnDir(t *testing.T) {
 }
 
 func TestSaveWritesVersionedEnvelope(t *testing.T) {
-	fsys, files := newMockFS()
+	fsys, files := newMockFS(t)
 	s := NewStore(fsys, firnDir)
-	_ = s.Save(Default())
+	if err := s.Save(Default()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	var sf StateFile
 	if err := json.Unmarshal(files[filepath.Join(firnDir, "app.json")], &sf); err != nil {
 		t.Fatal(err)
@@ -134,7 +146,7 @@ func TestSaveWritesVersionedEnvelope(t *testing.T) {
 }
 
 func TestLoadReadErrorBlocksSubsequentSaveAndBytesUnchanged(t *testing.T) {
-	fsys, files := newMockFS()
+	fsys, files := newMockFS(t)
 	path := filepath.Join(firnDir, "app.json")
 	files[path] = []byte(`not json`)
 	s := NewStore(fsys, firnDir)
@@ -150,8 +162,36 @@ func TestLoadReadErrorBlocksSubsequentSaveAndBytesUnchanged(t *testing.T) {
 	}
 }
 
+func TestSaveWithoutLoadProbesExistingFileAndBlocksOnFutureVersion(t *testing.T) {
+	fsys, files := newMockFS(t)
+	path := filepath.Join(firnDir, "app.json")
+	files[path] = []byte(`{"version":2,"state":{}}`)
+	before := string(files[path])
+	s := NewStore(fsys, firnDir)
+	// No Load() call: Save must still refuse to clobber a future-version file.
+	if err := s.Save(Default()); !errors.Is(err, ErrUnknownVersion) {
+		t.Fatalf("Save without a prior Load = %v, want ErrUnknownVersion", err)
+	}
+	if string(files[path]) != before {
+		t.Fatal("future-version file changed by a Save that never called Load")
+	}
+}
+
+func TestSaveWithoutLoadAndNoExistingFileWritesNormally(t *testing.T) {
+	fsys, files := newMockFS(t)
+	s := NewStore(fsys, firnDir)
+	// No Load() call and no file on disk: Save must proceed.
+	if err := s.Save(Default()); err != nil {
+		t.Fatalf("Save without a prior Load and no existing file: %v", err)
+	}
+	path := filepath.Join(firnDir, "app.json")
+	if _, ok := files[path]; !ok {
+		t.Fatalf("app.json not written; files = %v", keys(files))
+	}
+}
+
 func TestSaveAtomicWriteFailureLeavesFileUnchanged(t *testing.T) {
-	fsys, files := newMockFS()
+	fsys, files := newMockFS(t)
 	path := filepath.Join(firnDir, "app.json")
 	files[path] = []byte(`{"version":1,"state":{"golemWindow":{"mode":"docked"}}}`)
 	before := string(files[path])

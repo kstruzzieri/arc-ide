@@ -80,9 +80,24 @@ var golemWindowKinds = map[string]map[string]bool{
 	"abort":  {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
 }
 
+// asLiveWindow normalizes a typed-nil *application.WebviewWindow boxed into
+// the application.Window interface to a true nil interface. A nil pointer
+// stored in a non-nil interface still passes `handle != nil`, and calling
+// handle.ID() then dereferences the nil receiver (webview_window.go's ID
+// reads a struct field) — so this guard must run before any nil check below.
+func asLiveWindow(w application.Window) application.Window {
+	if ww, ok := w.(*application.WebviewWindow); ok && ww == nil {
+		return nil
+	}
+	return w
+}
+
 // callerRole identifies the actual live handle from beta.16 WindowKey.
-// Pass nil for an absent handle, never a typed nil pointer in an interface.
+// Pass nil for an absent handle, never a typed nil pointer in an interface —
+// but a typed nil is normalized defensively rather than trusted from callers.
 func callerRole(ctx context.Context, mainWindow, satelliteWindow application.Window) (string, error) {
+	mainWindow = asLiveWindow(mainWindow)
+	satelliteWindow = asLiveWindow(satelliteWindow)
 	window, _ := ctx.Value(application.WindowKey).(application.Window)
 	if window == nil {
 		return "", fmt.Errorf("golem window: caller window unknown")

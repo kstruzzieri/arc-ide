@@ -63,6 +63,10 @@ type Store struct {
 	path string
 
 	mu sync.Mutex
+	// loaded is set once Load has run. Save probes the existing file itself
+	// when this is still false, so a Store that writes without ever loading
+	// cannot clobber a file it never read (spec §3.2).
+	loaded bool
 	// writeBlocked is latched after an unreadable/unparseable/future-version
 	// existing file, so this session never overwrites content it could not
 	// faithfully read back.
@@ -85,6 +89,7 @@ func NewStore(fsys filesystem.FileSystem, firnDir string) *Store {
 func (s *Store) Load() (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.loaded = true
 	if s.path == "" {
 		return Default(), nil
 	}
@@ -113,9 +118,20 @@ func (s *Store) Load() (State, error) {
 
 // Save writes the state atomically (temp file + rename) with 0600, tightening
 // ~/.firn to 0700 the way the workspace store does.
+//
+// A Store that writes without ever calling Load has not yet seen whatever is
+// on disk. Rather than trust a zero-value writeBlocked, Save probes the
+// existing file itself the first time, so it can never overwrite a
+// future-version app.json a newer Firn wrote (spec §3.2).
 func (s *Store) Save(state State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.loaded {
+		if s.path != "" {
+			s.probeExistingVersion()
+		}
+		s.loaded = true
+	}
 	if s.writeBlocked != nil {
 		return fmt.Errorf("app state writes disabled to preserve existing file: %w", s.writeBlocked)
 	}
@@ -132,8 +148,33 @@ func (s *Store) Save(state State) error {
 	if err != nil {
 		return fmt.Errorf("marshaling app state: %w", err)
 	}
-	if err := filesystem.WriteFileAtomic(s.fs, s.path, data, fs.FileMode(0o600)); err != nil {
+	if err := filesystem.WriteFileAtomic(s.fs, s.path, data, 0o600); err != nil {
 		return fmt.Errorf("writing app state: %w", err)
 	}
 	return nil
+}
+
+// probeExistingVersion reads only the version envelope of an existing file
+// ahead of a never-loaded Store's first write, latching writeBlocked with the
+// same wrapped errors Load would produce for an unreadable, unparseable, or
+// future-version file. A missing file latches nothing: Save may proceed.
+func (s *Store) probeExistingVersion() {
+	data, err := s.fs.ReadFile(s.path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		s.writeBlocked = fmt.Errorf("reading app state: %w", err)
+		return
+	}
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
+		return
+	}
+	if envelope.Version != version {
+		s.writeBlocked = fmt.Errorf("%w: %d", ErrUnknownVersion, envelope.Version)
+	}
 }
