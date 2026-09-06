@@ -203,6 +203,17 @@ export interface GolemStoreState {
   cancelRun(runId: string): Promise<void>;
 }
 
+/**
+ * The outcome of admitting one user intent against the executing owner
+ * (#271 spec §5.2). `ok: false` is a *definitive* refusal the host may act
+ * on — it never encodes "not yet known": an uncertain relay timeout keeps the
+ * action pending instead. `reason` is already bounded by the producer.
+ */
+export interface GolemActionResult {
+  ok: boolean;
+  reason?: string;
+}
+
 // ── Wails inputs ──────────────────────────────────────────────────────────────
 // v3 constructors Object.assign their entire source object rather than
 // copying field by field, so passing a caller-supplied object straight
@@ -291,7 +302,7 @@ const isNumber = (value: unknown): value is number =>
 /** Absent means absent: `undefined` and `null` are the same missing optional. */
 const isAbsent = (value: unknown): boolean => value === undefined || value === null;
 
-function readConversationIdentity(value: unknown): ConversationIdentity | null {
+export function readConversationIdentity(value: unknown): ConversationIdentity | null {
   if (!isRecord(value)) return null;
   if (!isNumber(value.repoEpoch) || !isString(value.workspaceId) || !isString(value.conversationId))
     return null;
@@ -302,14 +313,14 @@ function readConversationIdentity(value: unknown): ConversationIdentity | null {
   };
 }
 
-function readRunIdentity(value: unknown): RunIdentity | null {
+export function readRunIdentity(value: unknown): RunIdentity | null {
   const base = readConversationIdentity(value);
   if (!base || !isRecord(value)) return null;
   if (!isString(value.runId) || value.runId === '') return null;
   return { ...base, runId: value.runId };
 }
 
-function readDestination(value: unknown): ProviderDestination | null {
+export function readDestination(value: unknown): ProviderDestination | null {
   if (!isRecord(value)) return null;
   const { provider, model, endpoint, classification, digest } = value;
   if (!isString(provider) || !isString(model) || !isString(endpoint) || !isString(digest))
@@ -324,7 +335,7 @@ function readContextReceipt(value: unknown): ContextReceipt | null {
   return { included: value.included, bytes: value.bytes, excluded: value.excluded };
 }
 
-function readConsentChallenge(value: unknown): ConsentChallenge | null {
+export function readConsentChallenge(value: unknown): ConsentChallenge | null {
   if (!isRecord(value)) return null;
   if (!isString(value.id) || value.id === '') return null;
   if (!isString(value.destinationDigest) || !isNumber(value.expiresAt)) return null;
