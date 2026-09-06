@@ -407,9 +407,12 @@ describe('GolemSurface visibility', () => {
     );
 
     // A request raised while hidden waits rather than being dropped, and the
-    // hidden host stays silent so two windows never speak the same line.
+    // hidden host stays silent so two windows never speak the same line. The
+    // region must be *absent*, not merely empty: a live region that mounts
+    // with content already in it is not announced, so a region parked here
+    // holding the last reply would re-announce it on expand or re-dock.
     rerender(<Harness view={view} actions={actions} visible={false} focusRevision={1} />);
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
+    expect(document.querySelector('[aria-live="polite"]')).toBeNull();
     expect(document.activeElement).not.toBe(composer());
 
     rerender(<Harness view={view} actions={actions} visible focusRevision={1} />);

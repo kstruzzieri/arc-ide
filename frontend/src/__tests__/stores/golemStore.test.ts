@@ -987,16 +987,18 @@ describe('send gating', () => {
     expect(conv().activeRunId).toBeNull();
   });
 
-  it('shows a bounded inline error and calls nothing when secure randomUUID is unavailable', async () => {
+  it('refuses through one channel and calls nothing when secure randomUUID is unavailable', async () => {
     hydrateReady();
     installCrypto({});
-    store().submitTurn(CONV, 'hello');
+    const result = store().submitTurn(CONV, 'hello');
     await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
-    const errors = conv().transcript.filter((e) => e.kind === 'error');
-    expect(errors).toHaveLength(1);
-    expect(errors[0].text.length).toBeLessThanOrEqual(200);
+    // The refusal reason is the whole message. A transcript row as well would
+    // make the docked host show it twice — once inline, once as the toast the
+    // refusal raises — so the transcript stays untouched.
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('secure run ID') });
+    expect(conv().transcript).toEqual([]);
     expect(conv().activeRunId).toBeNull();
   });
 });
@@ -1487,7 +1489,8 @@ describe('consent', () => {
 
   it('declines with Cancel on the pending identity and keeps the turn retryable', async () => {
     await firstRemoteSubmission();
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     expect(mockCancelGolemRun).toHaveBeenCalledTimes(1);
     const cancelArg = mockCancelGolemRun.mock.calls[0][0] as ai.RunIdentity;
@@ -1537,7 +1540,8 @@ describe('consent', () => {
     mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
       Promise.resolve(needsConsentAdmission(request.identity.runId))
     );
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     const retried = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
@@ -1568,7 +1572,8 @@ describe('consent', () => {
     mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
       Promise.resolve(needsConsentAdmission(request.identity.runId))
     );
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     const retried = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
@@ -1607,7 +1612,8 @@ describe('consent', () => {
     jest.spyOn(Date, 'now').mockReturnValue(conv().pendingConsentTurn!.challenge.expiresAt + 1);
     mockCancelGolemRun.mockClear();
 
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     // The backend already dropped the challenge, so Cancel has nothing to
     // match and would only answer with a rejection.
@@ -1631,7 +1637,8 @@ describe('consent', () => {
     const userEntryId = conv().pendingConsentTurn!.userEntryId;
     mockCancelGolemRun.mockRejectedValueOnce('The Golem request is invalid or stale.');
 
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     // Cancel is only rejected here when the backend no longer holds the
     // challenge, so restoring needs-consent would offer an impossible grant.
@@ -1654,7 +1661,7 @@ describe('consent', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    const pending = store().submitTurn(CONV, 'ask remote');
+    expect(store().submitTurn(CONV, 'ask remote')).toEqual({ ok: true });
 
     // The repository is rebound before the challenge comes back; the backend
     // has already dropped every unconsumed challenge for the old incarnation.
@@ -1669,7 +1676,7 @@ describe('consent', () => {
     );
 
     gate.resolve(needsConsentAdmission(RUN_A));
-    await pending;
+    await flush();
 
     expect(conv().pendingConsentTurn).toBeNull();
     expect(conv().runs[RUN_A].phase).toBe('failed');
@@ -1744,14 +1751,14 @@ describe('consent', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    const pending = store().submitTurn(CONV, 'hello');
+    expect(store().submitTurn(CONV, 'hello')).toEqual({ ok: true });
 
     store().hydrateStatus(
       parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 } }))
     );
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
 
     // Unlike needs_consent, an accepted admission names a run the backend is
     // already running: the epoch guard is deliberately not applied here, or the
@@ -1767,7 +1774,7 @@ describe('consent', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    const pending = store().submitTurn(CONV, 'ask remote');
+    expect(store().submitTurn(CONV, 'ask remote')).toEqual({ ok: true });
     store().submitTurn(CONV, 'queued after');
     await flush();
 
@@ -1778,7 +1785,7 @@ describe('consent', () => {
     const dispatchedCalls = mockRunGolemTurn.mock.calls.length;
 
     gate.resolve(needsConsentAdmission(RUN_A));
-    await pending;
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('canceled');
     expect(conv().pendingConsentTurn).toBeNull();
@@ -1795,12 +1802,11 @@ describe('failure and retry', () => {
     uuidQueue = [RUN_A, RUN_B];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    const pending = store().submitTurn(CONV, 'first');
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
     store().submitTurn(CONV, 'second');
     await flush();
 
     gate.reject('The Golem request is invalid or stale.');
-    await pending;
     await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('failed');
@@ -1913,13 +1919,39 @@ describe('failure and retry', () => {
     hydrateReady({ available: false, initError: 'Golem is unavailable.' });
     uuidQueue = [RUN_B];
     mockRunGolemTurn.mockClear();
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(uuidQueue).toEqual([RUN_B]);
     expect(conv().lastFailedTurn).toEqual(failed);
     expect(conv().runs[RUN_B]).toBeUndefined();
     expect(conv().activeRunId).toBeNull();
+  });
+
+  it('refuses Retry through one channel when secure randomUUID is unavailable', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'first');
+    await flush();
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
+    );
+    const failed = conv().lastFailedTurn;
+    const errorsBefore = conv().transcript.filter((e) => e.kind === 'error').length;
+
+    installCrypto({});
+    mockRunGolemTurn.mockClear();
+    const result = store().retryLastFailed(CONV);
+    installCrypto({ randomUUID: mockRandomUUID });
+    await flush();
+
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('secure run ID') });
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    // No extra transcript row: the refusal already carries the whole message.
+    expect(conv().transcript.filter((e) => e.kind === 'error')).toHaveLength(errorsBefore);
+    // The retry is still available once a secure ID can be named again.
+    expect(conv().lastFailedTurn).toEqual(failed);
   });
 
   it('sets bridgePhase error when an admission violates the contract', async () => {
@@ -1976,7 +2008,8 @@ describe('failure and retry', () => {
     expect(conv().lastFailedTurn).toBeNull();
 
     mockRunGolemTurn.mockClear();
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
   });
 
@@ -1992,7 +2025,8 @@ describe('failure and retry', () => {
 
     uuidQueue = [RUN_B];
     mockRunGolemTurn.mockClear();
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).identity.runId).toBe(RUN_B);
@@ -2048,7 +2082,8 @@ describe('cancel', () => {
 
   it('ignores cancel for an unknown or already terminal run', async () => {
     hydrateReady();
-    await store().cancelRun(RUN_C);
+    store().cancelRun(RUN_C);
+    await flush();
     expect(mockCancelGolemRun).not.toHaveBeenCalled();
 
     uuidQueue = [RUN_A];
@@ -2061,7 +2096,8 @@ describe('cancel', () => {
         payload: { stopReason: 'end_turn', model: 'm' },
       })
     );
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
     expect(mockCancelGolemRun).not.toHaveBeenCalled();
   });
 
@@ -2072,7 +2108,8 @@ describe('cancel', () => {
     await flush();
     mockCancelGolemRun.mockRejectedValueOnce('The Golem request is invalid or stale.');
 
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('running');
     expect(
@@ -2345,7 +2382,7 @@ describe('clearConversation', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValue(gate.promise);
-    const pending = store().submitTurn(CONV, 'first');
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
     expect(conv().activeRunId).toBe(RUN_A);
 
     const before = conv();
@@ -2356,7 +2393,7 @@ describe('clearConversation', () => {
     expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
   });
 
   it('is a no-op while a consent is pending', async () => {
@@ -2548,6 +2585,41 @@ describe('admission results', () => {
     await flush();
   });
 
+  it('refuses a mismatched approval on its own terms without releasing an expired challenge', async () => {
+    hydrateReady({ needsConsent: true, destination: remoteDestination });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(
+      admissionPayload(RUN_A, {
+        state: 'needs_consent',
+        destination: remoteDestination,
+        consentChallenge: challengeFor(RUN_A),
+      })
+    );
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
+    const pending = conv().pendingConsentTurn!;
+    jest.spyOn(Date, 'now').mockReturnValue(pending.challenge.expiresAt + 1);
+
+    // A stale view approving a challenge that is not the current one has no
+    // standing over the current one — expiring it here would clear a challenge
+    // the user in front of it never saw.
+    expect(store().allowAndSend(CONV, RUN_B, pending.challenge.id)).toEqual({
+      ok: false,
+      reason: 'That approval was for a different request.',
+    });
+    expect(conv().pendingConsentTurn).toBe(pending);
+    expect(conv().runs[RUN_A].phase).toBe('needs-consent');
+    expect(conv().transcript.filter((e) => e.kind === 'error')).toHaveLength(0);
+
+    // The matching approval is still the one that gets told it expired.
+    expect(store().allowAndSend(CONV, RUN_A, pending.challenge.id)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('expired'),
+    });
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses Retry when there is nothing that failed', () => {
     hydrateReady();
     expect(store().retryLastFailed(CONV)).toMatchObject({ ok: false });
@@ -2561,7 +2633,7 @@ describe('monotonicity under deferred promises', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    const pending = store().submitTurn(CONV, 'first');
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
     store().submitTurn(CONV, 'second');
     await flush();
 
@@ -2579,7 +2651,7 @@ describe('monotonicity under deferred promises', () => {
     expect(conv().activeRunId).toBe(RUN_B);
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('done');
     expect(conv().activeRunId).toBe(RUN_B);

@@ -13,6 +13,7 @@
  */
 
 import { ai } from '../wails/bindings';
+import { GOLEM_UNAVAILABLE } from '../golem/projection';
 
 export interface ConversationIdentity {
   repoEpoch: number;
@@ -284,8 +285,13 @@ export const contractError = (): never => {
 
 const MAX_ERROR_CHARS = 200;
 
-/** Shown whenever a failure carries no usable message of its own. */
-export const GOLEM_UNAVAILABLE = 'Golem is unavailable.';
+/**
+ * Shown whenever a failure carries no usable message of its own. Defined in
+ * `golem/projection` — the bindings-free half — because the satellite's chat
+ * surface needs it and must never reach this module; re-exported here so the
+ * store and the validators keep their single import surface.
+ */
+export { GOLEM_UNAVAILABLE };
 
 /**
  * Clamps any rejection value to a short, displayable string. The backend

@@ -11,6 +11,7 @@ import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   activeRunOf,
+  GOLEM_UNAVAILABLE,
   isBound,
   isLivePhase,
   selectedConversation,
@@ -41,15 +42,6 @@ import styles from './GolemPanel.module.css';
  * carries no host drafts, no raw provider events and no owner-only submitted
  * prompts) and everything it changes goes out through `actions`.
  */
-
-/**
- * Deliberately spelled out rather than imported as `GOLEM_UNAVAILABLE` from
- * `types/golem`: that module pulls in the generated Wails bindings for its
- * request constructors, and importing one string from it would drag the whole
- * backend surface into the satellite window. Type-only imports from there are
- * fine — they are erased. `GolemSurface.imports.test.tsx` is what caught this.
- */
-const BRIDGE_UNAVAILABLE = 'Golem is unavailable.';
 
 const NO_WORKSPACE = 'Open a workspace to chat with Golem.';
 const BINDING = 'Connecting to Golem…';
@@ -476,7 +468,7 @@ export function GolemSurface({
 
   const notice = useMemo(() => {
     if (view.bridgePhase === 'binding') return BINDING;
-    if (view.bridgePhase === 'error') return view.bridgeError ?? BRIDGE_UNAVAILABLE;
+    if (view.bridgePhase === 'error') return view.bridgeError ?? GOLEM_UNAVAILABLE;
     if (!conversation) return NO_WORKSPACE;
     if (!isBound(view, conversation)) return STALE;
     if (!conversation.available) return conversation.initError ?? UNAVAILABLE;
@@ -908,16 +900,21 @@ export function GolemSurface({
       </div>
 
       {/* Only the visible host announces: two windows sharing one conversation
-          would otherwise say the same thing twice. */}
-      <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="false">
-        {visible && announcement && <span>{announcement}</span>}
-        {visible && activeRun && activeAnnouncement && (
-          <span key={activeRun.identity.runId}>
-            {announcement && ' '}
-            {activeAnnouncement}
-          </span>
-        )}
-      </div>
+          would otherwise say the same thing twice. The region is unmounted
+          rather than emptied while hidden — a live region that is mounted with
+          content already in it is not announced, so leaving the last reply
+          parked here would make expanding or re-docking read it out again. */}
+      {visible && (
+        <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="false">
+          {announcement && <span>{announcement}</span>}
+          {activeRun && activeAnnouncement && (
+            <span key={activeRun.identity.runId}>
+              {announcement && ' '}
+              {activeAnnouncement}
+            </span>
+          )}
+        </div>
+      )}
     </>
   );
 }

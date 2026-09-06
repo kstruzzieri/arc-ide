@@ -116,6 +116,19 @@ export const STATUS_LABEL: Partial<Record<RunPhase, string>> = {
   'needs-consent': 'APPROVAL',
 };
 
+/**
+ * Shown whenever a failure carries no usable message of its own.
+ *
+ * It lives in this module rather than in `types/golem` because both the store
+ * and the surface need it, and only this module is reachable from the
+ * satellite: `types/golem` pulls in the generated Wails bindings for its
+ * request constructors, so importing one string from there would drag the
+ * whole backend surface into the undocked window. `types/golem` re-exports it,
+ * and this module's own imports from there are type-only, so the two
+ * directions never meet at runtime.
+ */
+export const GOLEM_UNAVAILABLE = 'Golem is unavailable.';
+
 export const workspaceName = (conversation: ProjectedConversation): string =>
   conversation.workspaceLabel || 'Workspace';
 

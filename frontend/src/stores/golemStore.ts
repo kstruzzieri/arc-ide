@@ -1211,16 +1211,11 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return OK;
       }
 
+      // Refusal only, no transcript row: the reason carries the same text back
+      // to the host that asked, which retains the draft and surfaces it once.
+      // Appending a row as well would say it twice in the docked window.
       const runId = secureRandomUUID();
-      if (!runId) {
-        set((state) => {
-          const mutation = beginMutation(state);
-          const draft = draftConversation(mutation, conversationId)!;
-          appendError(draft, '', NO_SECURE_UUID_ERROR);
-          return toState(mutation);
-        });
-        return refuse(NO_SECURE_UUID_ERROR);
-      }
+      if (!runId) return refuse(NO_SECURE_UUID_ERROR);
 
       const identity: RunIdentity = { ...conversation.identity, runId };
       const turnDraft: TurnDraft = { message, contextRefs: [] };
@@ -1256,15 +1251,24 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     allowAndSend(conversationId: string, runId: string, challengeId: string): GolemActionResult {
       const refusal = sendRefusal(conversationId);
       if (refusal) return refuse(refusal);
+      // Identity first, and before the expiry sweep: an approval dispatched
+      // from a stale view names a challenge that is not the current one, so it
+      // is not entitled to release the current one either — expiring here
+      // would let it clear a challenge the user in front of it never saw.
+      // Identity first, and before the expiry sweep: an approval dispatched
+      // from a stale view names a challenge that is not the current one, so it
+      // is not entitled to release the current one either — expiring here
+      // would let it clear a challenge the user in front of it never saw.
+      const stale = get().conversations[conversationId].pendingConsentTurn;
+      if (stale && (stale.identity.runId !== runId || stale.challenge.id !== challengeId)) {
+        return refuse(CONSENT_MISMATCH_ERROR);
+      }
       // The backend would reject the grant with "no pending consent challenge"
       // and leave nothing to clear it, so expire it here instead.
       if (dropExpiredConsent(conversationId)) return refuse(CONSENT_EXPIRED_ERROR);
       const conversation = get().conversations[conversationId];
       const pending = conversation.pendingConsentTurn;
       if (!pending) return refuse(NO_PENDING_CONSENT_ERROR);
-      if (pending.identity.runId !== runId || pending.challenge.id !== challengeId) {
-        return refuse(CONSENT_MISMATCH_ERROR);
-      }
       const run = conversation.runs[pending.identity.runId];
       if (!run || run.phase !== 'needs-consent') return refuse(BUSY_ERROR);
 
@@ -1297,16 +1301,9 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return refuse(BUSY_ERROR);
       }
 
+      // As in `submitTurn`: one channel only, the refusal.
       const runId = secureRandomUUID();
-      if (!runId) {
-        set((state) => {
-          const mutation = beginMutation(state);
-          const draft = draftConversation(mutation, conversationId)!;
-          appendError(draft, '', NO_SECURE_UUID_ERROR);
-          return toState(mutation);
-        });
-        return refuse(NO_SECURE_UUID_ERROR);
-      }
+      if (!runId) return refuse(NO_SECURE_UUID_ERROR);
 
       const identity: RunIdentity = { ...conversation.identity, runId };
       set((state) => {
