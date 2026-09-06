@@ -5,6 +5,152 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as json$0 from "../encoding/json/models.js";
+
+/**
+ * GolemWindowBootstrap is the satellite's first read: current state plus the
+ * latest projection main published (null before the first publish).
+ */
+export class GolemWindowBootstrap {
+    "state": GolemWindowState;
+    "view": json$0.RawMessage;
+    "revision": number;
+
+    /** Creates a new GolemWindowBootstrap instance. */
+    constructor($$source: Partial<GolemWindowBootstrap> = {}) {
+        if (!("state" in $$source)) {
+            this["state"] = (new GolemWindowState());
+        }
+        if (!("view" in $$source)) {
+            this["view"] = null;
+        }
+        if (!("revision" in $$source)) {
+            this["revision"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GolemWindowBootstrap instance from a string or object.
+     */
+    static createFrom($$source: any = {}): GolemWindowBootstrap {
+        const $$createField0_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("state" in $$parsedSource) {
+            $$parsedSource["state"] = $$createField0_0($$parsedSource["state"]);
+        }
+        return new GolemWindowBootstrap($$parsedSource as Partial<GolemWindowBootstrap>);
+    }
+}
+
+/**
+ * GolemWindowMessage is one relayed message. Kind fixes the payload type on
+ * the frontend; Go validates only the envelope.
+ */
+export class GolemWindowMessage {
+    "kind": string;
+    "instance": number;
+    "handoff": number;
+    "id": number;
+    "revision": number;
+    "payload": json$0.RawMessage;
+
+    /** Creates a new GolemWindowMessage instance. */
+    constructor($$source: Partial<GolemWindowMessage> = {}) {
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
+        }
+        if (!("instance" in $$source)) {
+            this["instance"] = 0;
+        }
+        if (!("handoff" in $$source)) {
+            this["handoff"] = 0;
+        }
+        if (!("id" in $$source)) {
+            this["id"] = 0;
+        }
+        if (!("revision" in $$source)) {
+            this["revision"] = 0;
+        }
+        if (!("payload" in $$source)) {
+            this["payload"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GolemWindowMessage instance from a string or object.
+     */
+    static createFrom($$source: any = {}): GolemWindowMessage {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new GolemWindowMessage($$parsedSource as Partial<GolemWindowMessage>);
+    }
+}
+
+/**
+ * GolemWindowPhase is the live phase of the Golem window.
+ */
+export enum GolemWindowPhase {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    golemPhaseClosed = "closed",
+    golemPhaseBootstrapping = "bootstrapping",
+    golemPhaseBootstrapped = "bootstrapped",
+    golemPhaseReady = "ready",
+    golemPhaseClosing = "closing",
+};
+
+/**
+ * GolemWindowState is what both windows read; emitted on every transition.
+ */
+export class GolemWindowState {
+    "mode": string;
+    "phase": GolemWindowPhase;
+    "instance": number;
+    "restorePending": boolean;
+    "stateRevision": number;
+    "handoff": number;
+
+    /** Creates a new GolemWindowState instance. */
+    constructor($$source: Partial<GolemWindowState> = {}) {
+        if (!("mode" in $$source)) {
+            this["mode"] = "";
+        }
+        if (!("phase" in $$source)) {
+            this["phase"] = GolemWindowPhase.$zero;
+        }
+        if (!("instance" in $$source)) {
+            this["instance"] = 0;
+        }
+        if (!("restorePending" in $$source)) {
+            this["restorePending"] = false;
+        }
+        if (!("stateRevision" in $$source)) {
+            this["stateRevision"] = 0;
+        }
+        if (!("handoff" in $$source)) {
+            this["handoff"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GolemWindowState instance from a string or object.
+     */
+    static createFrom($$source: any = {}): GolemWindowState {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new GolemWindowState($$parsedSource as Partial<GolemWindowState>);
+    }
+}
+
 /**
  * WorkspaceInfo identifies the repository the Golem chat is bound to. Path is
  * the canonical root the backend authorized, never the caller's input, and all
@@ -42,3 +188,6 @@ export class WorkspaceInfo {
         return new WorkspaceInfo($$parsedSource as Partial<WorkspaceInfo>);
     }
 }
+
+// Private type creation functions
+const $$createType0 = GolemWindowState.createFrom;

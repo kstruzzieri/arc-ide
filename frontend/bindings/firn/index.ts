@@ -7,5 +7,9 @@ export {
 };
 
 export {
+    GolemWindowBootstrap,
+    GolemWindowMessage,
+    GolemWindowPhase,
+    GolemWindowState,
     WorkspaceInfo
 } from "./models.js";

@@ -51,11 +51,13 @@ export * as workspace from '../../bindings/firn/internal/workspace/models';
  */
 export const GOLEM_RAW_CALL_IDS = {
   ApplyGolemSettings: 3398837476,
+  BootstrapGolemWindow: 3232539019,
   CancelGolemSettingsApply: 3715274072,
   ConfirmGolemSettingsApply: 4278120228,
   CreateGolemSettings: 649660458,
   GetGolemSettings: 3594143992,
   GetGolemStatus: 107712831,
+  GetGolemWindowState: 180649870,
   LoadGolemProfile: 1561429884,
   ReloadGolemSettings: 1366669581,
   RunGolemTurn: 2592072505,
@@ -92,3 +94,14 @@ export const ReloadGolemSettings = (): CancellablePromise<unknown> =>
 
 export const RunGolemTurn = (req: TurnRequest): CancellablePromise<unknown> =>
   Call.ByID(GOLEM_RAW_CALL_IDS.RunGolemTurn, req);
+
+// #271 window state and bootstrap: both resolve with a generated class whose
+// constructor defaults every missing field, so the phase, mode and instance a
+// stale or malformed snapshot omits would arrive looking valid. The `ctx` these
+// take Go-side is injected by the runtime and absent from the generated
+// signature, so neither takes an argument here.
+export const BootstrapGolemWindow = (): CancellablePromise<unknown> =>
+  Call.ByID(GOLEM_RAW_CALL_IDS.BootstrapGolemWindow);
+
+export const GetGolemWindowState = (): CancellablePromise<unknown> =>
+  Call.ByID(GOLEM_RAW_CALL_IDS.GetGolemWindowState);
