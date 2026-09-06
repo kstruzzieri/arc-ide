@@ -768,8 +768,7 @@ describe('bridge lifecycle and hydration', () => {
     expect(conv().runs[RUN_A].phase).toBe('running');
   });
 
-  it('starts unbound with the Runs panel preserved', () => {
-    expect(store().panelMode).toBe('runs');
+  it('starts unbound with nothing hydrated', () => {
     expect(store().bridgePhase).toBe('unbound');
     expect(store().hydratedIdentity).toBeNull();
     expect(store().conversations).toEqual({});
@@ -829,8 +828,8 @@ describe('bridge lifecycle and hydration', () => {
   it('rejects a stale-epoch status while retaining conversation history', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'hello');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'hello');
+    await flush();
 
     store().hydrateStatus(
       parseGolemStatus(
@@ -964,15 +963,14 @@ describe('send gating', () => {
     // A run ID is available: a refusal here has to come from the gate, not from
     // an exhausted UUID queue, which would look identical from the mock alone.
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'hello');
-    await store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'hello')).toMatchObject({ ok: false });
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(mockRandomUUID).not.toHaveBeenCalled();
     expect(uuidQueue).toEqual([RUN_A]);
-    // The refusal is silent and lossless: the message stays in the composer and
-    // nothing is projected, queued, or routed.
-    expect(conv().draft).toBe('hello');
+    // The refusal is definitive and lossless: the host keeps the message the
+    // user typed, and nothing is projected, queued, or routed here.
     expect(conv().transcript).toEqual([]);
     expect(conv().queuedTurns).toEqual([]);
     expect(conv().runs).toEqual({});
@@ -983,8 +981,8 @@ describe('send gating', () => {
   it('makes no backend call for a blank draft', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, '   ');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, '   ');
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(uuidQueue).toEqual([RUN_A]);
@@ -992,17 +990,18 @@ describe('send gating', () => {
     expect(conv().activeRunId).toBeNull();
   });
 
-  it('shows a bounded inline error and calls nothing when secure randomUUID is unavailable', async () => {
+  it('refuses through one channel and calls nothing when secure randomUUID is unavailable', async () => {
     hydrateReady();
     installCrypto({});
-    store().setDraft(CONV, 'hello');
-    await store().submitTurn(CONV);
+    const result = store().submitTurn(CONV, 'hello');
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
-    const errors = conv().transcript.filter((e) => e.kind === 'error');
-    expect(errors).toHaveLength(1);
-    expect(errors[0].text.length).toBeLessThanOrEqual(200);
-    expect(conv().draft).toBe('hello');
+    // The refusal reason is the whole message. A transcript row as well would
+    // make the docked host show it twice — once inline, once as the toast the
+    // refusal raises — so the transcript stays untouched.
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('secure run ID') });
+    expect(conv().transcript).toEqual([]);
     expect(conv().activeRunId).toBeNull();
   });
 });
@@ -1011,7 +1010,6 @@ describe('submitTurn', () => {
   it('creates the provisional run, routing and user row before the Wails call', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'explain this');
 
     let observed: ReturnType<typeof store> | null = null;
     const gate = deferred<unknown>();
@@ -1020,7 +1018,7 @@ describe('submitTurn', () => {
       return gate.promise;
     });
 
-    const pending = store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'explain this')).toEqual({ ok: true });
     expect(observed).not.toBeNull();
     const snapshot = observed!;
     const before = snapshot.conversations[CONV];
@@ -1028,22 +1026,23 @@ describe('submitTurn', () => {
     expect(before.runs[RUN_A].request).toEqual({ message: 'explain this', contextRefs: [] });
     expect(before.runs[RUN_A].userEntryId).toBeTruthy();
     expect(before.activeRunId).toBe(RUN_A);
-    expect(before.draft).toBe('');
     expect(snapshot.runToConversation[RUN_A]).toBe(CONV);
     const userRow = before.transcript.find((e) => e.kind === 'user')!;
     expect(userRow.text).toBe('explain this');
     expect(userRow.id).toBe(before.runs[RUN_A].userEntryId);
 
+    // Awaiting the now-synchronous admission proves nothing about the provider,
+    // so the deferred backend fixture is what gets awaited.
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
     expect(conv().runs[RUN_A].phase).toBe('running');
   });
 
   it('submits no endpoint or path', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'hello');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'hello');
+    await flush();
 
     const request = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
     expect(Object.keys(request).sort()).toEqual([
@@ -1067,8 +1066,7 @@ describe('submitTurn', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValue(gate.promise);
-    store().setDraft(CONV, 'hello');
-    const pending = store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'hello')).toEqual({ ok: true });
 
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.started' }));
     store().ingestEvent(
@@ -1077,7 +1075,7 @@ describe('submitTurn', () => {
     expect(conv().runs[RUN_A].phase).toBe('running');
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
     expect(conv().runs[RUN_A].phase).toBe('running');
     expect(conv().transcript.filter((e) => e.kind === 'assistant')[0].text).toBe('hi');
   });
@@ -1085,8 +1083,8 @@ describe('submitTurn', () => {
   it('routes background events by threadId while another workspace is focused', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'hello');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'hello');
+    await flush();
 
     // Focus moves to a sibling workspace in the same repository.
     store().hydrateStatus(
@@ -1118,12 +1116,14 @@ describe('submitTurn', () => {
     expect(store().conversations).toBe(before);
   });
 
-  it('restores the same transcript and draft after switching away and back', async () => {
+  // Composer text is not store state any more (#271): it lives in the visible
+  // host's `useDraftStore`, so its durability is asserted there and in the
+  // panel suite. What the store still owns across a switch is the transcript.
+  it('restores the same transcript after switching away and back', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'hello');
-    await store().submitTurn(CONV);
-    store().setDraft(CONV, 'draft in progress');
+    store().submitTurn(CONV, 'hello');
+    await flush();
 
     store().hydrateStatus(
       parseGolemStatus(
@@ -1132,24 +1132,20 @@ describe('submitTurn', () => {
         })
       )
     );
-    store().selectConversation(OTHER_CONV);
-    expect(conv(OTHER_CONV).draft).toBe('');
+    expect(store().selectConversation(OTHER_CONV)).toEqual({ ok: true });
+    expect(conv(OTHER_CONV).transcript).toEqual([]);
 
-    store().selectConversation(CONV);
+    const revision = store().composerFocusRevision;
+    expect(store().selectConversation(CONV)).toEqual({ ok: true });
     expect(store().selectedConversationId).toBe(CONV);
-    expect(conv().draft).toBe('draft in progress');
+    expect(store().composerFocusRevision).toBeGreaterThan(revision);
     expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
   });
 
-  it('preserves the draft across Runs mode and a collapsed panel', () => {
-    hydrateReady();
-    store().setDraft(CONV, 'still here');
-    useGolemStore.setState({ panelMode: 'runs' });
-    expect(conv().draft).toBe('still here');
+  it('requestComposerFocus bumps the revision by exactly one', () => {
     const revision = store().composerFocusRevision;
-    store().selectConversation(CONV);
-    expect(store().composerFocusRevision).toBeGreaterThan(revision);
-    expect(conv().draft).toBe('still here');
+    store().requestComposerFocus();
+    expect(store().composerFocusRevision).toBe(revision + 1);
   });
 });
 
@@ -1157,20 +1153,19 @@ describe('queueing', () => {
   const startBusyRun = async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
   };
 
   it('stages a queued turn without a backend call while a run is active', async () => {
     await startBusyRun();
     mockRunGolemTurn.mockClear();
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'second');
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(conv().queuedTurns).toHaveLength(1);
     expect(conv().queuedTurns[0]).toMatchObject({ message: 'second', state: 'queued' });
-    expect(conv().draft).toBe('');
   });
 
   it('stages a queued turn while consent is pending', async () => {
@@ -1183,23 +1178,23 @@ describe('queueing', () => {
         consentChallenge: challengeFor(RUN_A),
       })
     );
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     expect(conv().pendingConsentTurn).not.toBeNull();
 
     mockRunGolemTurn.mockClear();
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'second');
+    await flush();
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(conv().queuedTurns).toHaveLength(1);
   });
 
   it('starts exactly one queued turn on the terminal relay with a fresh run ID', async () => {
     await startBusyRun();
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
-    store().setDraft(CONV, 'third');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'second');
+    await flush();
+    store().submitTurn(CONV, 'third');
+    await flush();
     expect(conv().queuedTurns).toHaveLength(2);
 
     uuidQueue = [RUN_B];
@@ -1223,8 +1218,8 @@ describe('queueing', () => {
 
   it('edits and removes staged turns', async () => {
     await startBusyRun();
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'second');
+    await flush();
     const queueId = conv().queuedTurns[0].queueId;
 
     store().updateQueuedTurn(CONV, queueId, 'second, revised');
@@ -1235,8 +1230,8 @@ describe('queueing', () => {
 
   it('keeps queued turns staged as reopen-required after unbind and reissues them on rebind', async () => {
     await startBusyRun();
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'second');
+    await flush();
 
     store().invalidateBinding();
     expect(store().bridgePhase).toBe('unbound');
@@ -1279,8 +1274,8 @@ describe('queueing', () => {
     // React would render the reissued turn's transcript row and activeRunId
     // never at all. Identity across the two publications is the only witness.
     await startBusyRun();
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'second');
+    await flush();
     store().invalidateBinding();
     store().ingestEvent(
       eventPayload({
@@ -1334,8 +1329,19 @@ describe('consent', () => {
     hydrateReady({ destination: remoteDestination, needsConsent: true });
     uuidQueue = [RUN_A];
     mockRunGolemTurn.mockResolvedValue(needsConsentAdmission(RUN_A));
-    store().setDraft(CONV, 'ask remote');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
+  };
+
+  /**
+   * Approve exactly the challenge the conversation is currently showing. The
+   * grant now names its run and challenge, so the tests approve what a user
+   * would have been looking at rather than "whatever is pending".
+   */
+  const approve = () => {
+    const pending = conv().pendingConsentTurn;
+    if (!pending) throw new Error('no pending consent turn to approve');
+    return store().allowAndSend(CONV, pending.identity.runId, pending.challenge.id);
   };
 
   it('stores the exact request when admission needs consent', async () => {
@@ -1353,7 +1359,8 @@ describe('consent', () => {
     mockRunGolemTurn.mockClear();
     mockRunGolemTurn.mockResolvedValue(admissionPayload(RUN_A, { destination: remoteDestination }));
 
-    await store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     const retry = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
@@ -1374,7 +1381,10 @@ describe('consent', () => {
       'Remote consent storage is unavailable; open Golem configuration for repair steps.'
     );
 
-    await store().allowAndSend(CONV);
+    // Admitted locally: the grant really was dispatched. The provider's later
+    // rejection is a transcript event, not a refusal of the click.
+    expect(approve()).toEqual({ ok: true });
+    await flush();
 
     expect(conv().pendingConsentTurn).toEqual(pendingBefore);
     expect(conv().runs[RUN_A].phase).toBe('needs-consent');
@@ -1394,20 +1404,23 @@ describe('consent', () => {
     mockRunGolemTurn.mockClear();
     mockRunGolemTurn.mockReturnValue(grant.promise);
 
-    const first = store().allowAndSend(CONV);
-    const duplicate = store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
+    // The run left `needs-consent` on the first grant, so the second is refused
+    // with a reason rather than dispatched a second time.
+    expect(approve()).toMatchObject({ ok: false });
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     grant.reject(
       'Remote consent storage is unavailable; open Golem configuration for repair steps.'
     );
-    await Promise.all([first, duplicate]);
+    await flush();
     expect(conv().runs[RUN_A].phase).toBe('needs-consent');
 
     mockRunGolemTurn.mockResolvedValueOnce(
       admissionPayload(RUN_A, { destination: remoteDestination })
     );
-    await store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(2);
     expect(conv().runs[RUN_A].phase).toBe('running');
@@ -1418,16 +1431,16 @@ describe('consent', () => {
     const grant = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(grant.promise);
 
-    const admitting = store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
     expect(conv().runs[RUN_A].phase).toBe('admitting');
 
-    await store().cancelRun(RUN_A);
+    expect(store().cancelRun(RUN_A)).toMatchObject({ ok: false });
 
     expect(mockCancelGolemRun).not.toHaveBeenCalled();
     expect(conv().runs[RUN_A].phase).toBe('admitting');
 
     grant.resolve(admissionPayload(RUN_A, { destination: remoteDestination }));
-    await admitting;
+    await flush();
     expect(conv().runs[RUN_A].phase).toBe('running');
   });
 
@@ -1436,12 +1449,12 @@ describe('consent', () => {
     const grant = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(grant.promise);
 
-    const admitting = store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.started' }));
     expect(conv().runs[RUN_A].phase).toBe('running');
 
     grant.resolve(admissionPayload(RUN_A, { destination: remoteDestination }));
-    await admitting;
+    await flush();
     expect(conv().pendingConsentTurn).toBeNull();
 
     store().ingestEvent(
@@ -1461,17 +1474,17 @@ describe('consent', () => {
 
     const failing = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(failing.promise);
-    const firstGrant = store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
     failing.reject(
       'Remote consent storage is unavailable; open Golem configuration for repair steps.'
     );
-    await firstGrant;
+    await flush();
 
     const recovering = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(recovering.promise);
-    const secondGrant = store().allowAndSend(CONV);
+    expect(approve()).toEqual({ ok: true });
     recovering.resolve(admissionPayload(RUN_A, { destination: remoteDestination }));
-    await secondGrant;
+    await flush();
 
     expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
     expect(mockRunGolemTurn.mock.calls).toHaveLength(firstCallCount + 2);
@@ -1485,7 +1498,8 @@ describe('consent', () => {
 
   it('declines with Cancel on the pending identity and keeps the turn retryable', async () => {
     await firstRemoteSubmission();
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     expect(mockCancelGolemRun).toHaveBeenCalledTimes(1);
     const cancelArg = mockCancelGolemRun.mock.calls[0][0] as ai.RunIdentity;
@@ -1512,7 +1526,8 @@ describe('consent', () => {
     jest.spyOn(Date, 'now').mockReturnValue(pending.challenge.expiresAt + 1);
     mockRunGolemTurn.mockClear();
 
-    await store().allowAndSend(CONV);
+    expect(approve()).toMatchObject({ ok: false });
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(conv().pendingConsentTurn).toBeNull();
@@ -1534,7 +1549,8 @@ describe('consent', () => {
     mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
       Promise.resolve(needsConsentAdmission(request.identity.runId))
     );
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     const retried = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
@@ -1549,15 +1565,15 @@ describe('consent', () => {
     hydrateReady({ destination: remoteDestination, needsConsent: true });
     uuidQueue = [RUN_A];
     mockRunGolemTurn.mockRejectedValueOnce('The Golem request is invalid or stale.');
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     expect(conv().lastFailedTurn!.draft.message).toBe('first');
 
     // Turn 2 parks on a consent challenge, which then expires.
     uuidQueue = [RUN_B];
     mockRunGolemTurn.mockResolvedValueOnce(needsConsentAdmission(RUN_B));
-    store().setDraft(CONV, 'ask remote');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
     jest.spyOn(Date, 'now').mockReturnValue(conv().pendingConsentTurn!.challenge.expiresAt + 1);
 
     uuidQueue = [RUN_C];
@@ -1565,7 +1581,8 @@ describe('consent', () => {
     mockRunGolemTurn.mockImplementation((request: ai.TurnRequest) =>
       Promise.resolve(needsConsentAdmission(request.identity.runId))
     );
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     const retried = mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest;
@@ -1589,8 +1606,8 @@ describe('consent', () => {
       Promise.resolve(needsConsentAdmission(request.identity.runId))
     );
     uuidQueue = [RUN_B];
-    store().setDraft(CONV, 'ask again');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'ask again');
+    await flush();
 
     expect(conv().queuedTurns).toHaveLength(0);
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
@@ -1604,7 +1621,8 @@ describe('consent', () => {
     jest.spyOn(Date, 'now').mockReturnValue(conv().pendingConsentTurn!.challenge.expiresAt + 1);
     mockCancelGolemRun.mockClear();
 
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     // The backend already dropped the challenge, so Cancel has nothing to
     // match and would only answer with a rejection.
@@ -1628,7 +1646,8 @@ describe('consent', () => {
     const userEntryId = conv().pendingConsentTurn!.userEntryId;
     mockCancelGolemRun.mockRejectedValueOnce('The Golem request is invalid or stale.');
 
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     // Cancel is only rejected here when the backend no longer holds the
     // challenge, so restoring needs-consent would offer an impossible grant.
@@ -1651,8 +1670,7 @@ describe('consent', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    store().setDraft(CONV, 'ask remote');
-    const pending = store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'ask remote')).toEqual({ ok: true });
 
     // The repository is rebound before the challenge comes back; the backend
     // has already dropped every unconsumed challenge for the old incarnation.
@@ -1667,7 +1685,7 @@ describe('consent', () => {
     );
 
     gate.resolve(needsConsentAdmission(RUN_A));
-    await pending;
+    await flush();
 
     expect(conv().pendingConsentTurn).toBeNull();
     expect(conv().runs[RUN_A].phase).toBe('failed');
@@ -1742,15 +1760,14 @@ describe('consent', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    store().setDraft(CONV, 'hello');
-    const pending = store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'hello')).toEqual({ ok: true });
 
     store().hydrateStatus(
       parseGolemStatus(statusPayload({ identity: { ...identity, repoEpoch: EPOCH + 1 } }))
     );
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
 
     // Unlike needs_consent, an accepted admission names a run the backend is
     // already running: the epoch guard is deliberately not applied here, or the
@@ -1766,10 +1783,9 @@ describe('consent', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    store().setDraft(CONV, 'ask remote');
-    const pending = store().submitTurn(CONV);
-    store().setDraft(CONV, 'queued after');
-    await store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'ask remote')).toEqual({ ok: true });
+    store().submitTurn(CONV, 'queued after');
+    await flush();
 
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.started' }));
     uuidQueue = [RUN_B];
@@ -1778,7 +1794,7 @@ describe('consent', () => {
     const dispatchedCalls = mockRunGolemTurn.mock.calls.length;
 
     gate.resolve(needsConsentAdmission(RUN_A));
-    await pending;
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('canceled');
     expect(conv().pendingConsentTurn).toBeNull();
@@ -1795,13 +1811,11 @@ describe('failure and retry', () => {
     uuidQueue = [RUN_A, RUN_B];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    store().setDraft(CONV, 'first');
-    const pending = store().submitTurn(CONV);
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
+    store().submitTurn(CONV, 'second');
+    await flush();
 
     gate.reject('The Golem request is invalid or stale.');
-    await pending;
     await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('failed');
@@ -1821,8 +1835,8 @@ describe('failure and retry', () => {
   it('ignores a late or duplicate run-status for a run that already ended', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({
         seq: 1,
@@ -1863,10 +1877,10 @@ describe('failure and retry', () => {
     );
     store().selectConversation(OTHER_CONV);
     uuidQueue = [RUN_A];
-    store().setDraft(OTHER_CONV, 'first');
-    await store().submitTurn(OTHER_CONV);
-    store().setDraft(OTHER_CONV, 'second');
-    await store().submitTurn(OTHER_CONV);
+    store().submitTurn(OTHER_CONV, 'first');
+    await flush();
+    store().submitTurn(OTHER_CONV, 'second');
+    await flush();
     expect(conv(OTHER_CONV).queuedTurns[0].state).toBe('queued');
 
     // The repository is rebound and focus lands elsewhere, so the sibling's
@@ -1903,8 +1917,8 @@ describe('failure and retry', () => {
   it('refuses Retry while the conversation is unavailable', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
     );
@@ -1914,7 +1928,8 @@ describe('failure and retry', () => {
     hydrateReady({ available: false, initError: 'Golem is unavailable.' });
     uuidQueue = [RUN_B];
     mockRunGolemTurn.mockClear();
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
     expect(uuidQueue).toEqual([RUN_B]);
@@ -1923,12 +1938,37 @@ describe('failure and retry', () => {
     expect(conv().activeRunId).toBeNull();
   });
 
+  it('refuses Retry through one channel when secure randomUUID is unavailable', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'first');
+    await flush();
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
+    );
+    const failed = conv().lastFailedTurn;
+    const errorsBefore = conv().transcript.filter((e) => e.kind === 'error').length;
+
+    installCrypto({});
+    mockRunGolemTurn.mockClear();
+    const result = store().retryLastFailed(CONV);
+    installCrypto({ randomUUID: mockRandomUUID });
+    await flush();
+
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('secure run ID') });
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    // No extra transcript row: the refusal already carries the whole message.
+    expect(conv().transcript.filter((e) => e.kind === 'error')).toHaveLength(errorsBefore);
+    // The retry is still available once a secure ID can be named again.
+    expect(conv().lastFailedTurn).toEqual(failed);
+  });
+
   it('sets bridgePhase error when an admission violates the contract', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
     mockRunGolemTurn.mockResolvedValueOnce({ state: 'maybe' });
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
 
     expect(store().bridgePhase).toBe('error');
     expect(store().bridgeError).toBeTruthy();
@@ -1939,8 +1979,8 @@ describe('failure and retry', () => {
     hydrateReady();
     uuidQueue = [RUN_A];
     mockRunGolemTurn.mockResolvedValueOnce(admissionPayload(RUN_B));
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
 
     expect(store().bridgePhase).toBe('error');
     expect(conv().runs[RUN_A].phase).toBe('failed');
@@ -1950,8 +1990,8 @@ describe('failure and retry', () => {
   it('records lastFailedTurn from a terminal run.failed with a known request', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
     );
@@ -1977,15 +2017,16 @@ describe('failure and retry', () => {
     expect(conv().lastFailedTurn).toBeNull();
 
     mockRunGolemTurn.mockClear();
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
     expect(mockRunGolemTurn).not.toHaveBeenCalled();
   });
 
   it('retries with a fresh run ID and reuses the original user row', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
     );
@@ -1993,7 +2034,8 @@ describe('failure and retry', () => {
 
     uuidQueue = [RUN_B];
     mockRunGolemTurn.mockClear();
-    await store().retryLastFailed(CONV);
+    store().retryLastFailed(CONV);
+    await flush();
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).identity.runId).toBe(RUN_B);
@@ -2049,12 +2091,13 @@ describe('cancel', () => {
 
   it('ignores cancel for an unknown or already terminal run', async () => {
     hydrateReady();
-    await store().cancelRun(RUN_C);
+    store().cancelRun(RUN_C);
+    await flush();
     expect(mockCancelGolemRun).not.toHaveBeenCalled();
 
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({
         seq: 1,
@@ -2062,18 +2105,20 @@ describe('cancel', () => {
         payload: { stopReason: 'end_turn', model: 'm' },
       })
     );
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
     expect(mockCancelGolemRun).not.toHaveBeenCalled();
   });
 
   it('restores the run and reports a bounded error when Cancel is rejected', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     mockCancelGolemRun.mockRejectedValueOnce('The Golem request is invalid or stale.');
 
-    await store().cancelRun(RUN_A);
+    store().cancelRun(RUN_A);
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('running');
     expect(
@@ -2088,8 +2133,8 @@ describe('activity and failure revisions', () => {
   it('advances activity on running and canceling and failure on run failure', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     expect(store().lastActiveConversationId).toBe(CONV);
     const afterRunning = store().activityRevision;
     expect(afterRunning).toBeGreaterThan(0);
@@ -2155,8 +2200,8 @@ describe('activity and failure revisions', () => {
         consentChallenge: challengeFor(RUN_A),
       })
     );
-    store().setDraft(CONV, 'ask remote');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('needs-consent');
     expect(store().lastActiveConversationId).toBe(CONV);
@@ -2186,8 +2231,8 @@ describe('activity and failure revisions', () => {
   it('keeps an older failure visible when newer activity happens elsewhere', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({ seq: 1, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
     );
@@ -2202,8 +2247,8 @@ describe('activity and failure revisions', () => {
     );
     store().selectConversation(OTHER_CONV);
     uuidQueue = [RUN_B];
-    store().setDraft(OTHER_CONV, 'other');
-    await store().submitTurn(OTHER_CONV);
+    store().submitTurn(OTHER_CONV, 'other');
+    await flush();
 
     expect(store().lastActiveConversationId).toBe(OTHER_CONV);
     expect(store().lastFailureConversationId).toBe(CONV);
@@ -2246,15 +2291,14 @@ describe('clearConversation', () => {
       destination: remoteDestination,
     });
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(
       eventPayload({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'hi' } })
     );
     store().ingestEvent(
       eventPayload({ seq: 2, type: 'run.failed', payload: { code: 'run_failed', message: 'boom' } })
     );
-    store().setDraft(CONV, 'leftover draft');
 
     // A rich but idle conversation: content present, no live run, and a failure
     // that put this conversation in the StatusBar's "Attention" slot.
@@ -2269,7 +2313,7 @@ describe('clearConversation', () => {
     expect(store().lastFailureConversationId).toBe(CONV);
     const focusRevision = store().composerFocusRevision;
 
-    store().clearConversation(CONV);
+    expect(store().clearConversation(CONV)).toEqual({ ok: true });
     const after = conv();
 
     // Copy-on-write: a brand-new conversation object so every subscriber re-renders.
@@ -2279,7 +2323,6 @@ describe('clearConversation', () => {
     expect(after.transcript).toEqual([]);
     expect(after.runs).toEqual({});
     expect(after.activeRunId).toBeNull();
-    expect(after.draft).toBe('');
     expect(after.queuedTurns).toEqual([]);
     expect(after.pendingConsentTurn).toBeNull();
     expect(after.lastFailedTurn).toBeNull();
@@ -2300,8 +2343,8 @@ describe('clearConversation', () => {
   it('purges only the cleared conversation from runToConversation', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
     // A second CONV-mapped run plus one belonging to another conversation.
     useGolemStore.setState((state) => ({
@@ -2318,8 +2361,8 @@ describe('clearConversation', () => {
   it('clears its own failure slot but leaves one pointing elsewhere', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
     useGolemStore.setState({ lastFailureConversationId: OTHER_CONV });
     const failureRevision = store().failureRevision;
@@ -2334,10 +2377,10 @@ describe('clearConversation', () => {
     hydrateReady({ destination: remoteDestination, needsConsent: true });
     uuidQueue = [RUN_A];
     mockRunGolemTurn.mockResolvedValue(needsConsentAdmission(RUN_A));
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
+    store().submitTurn(CONV, 'second');
+    await flush();
     store().invalidateBinding();
 
     // Idle (no live run, no pending consent) but still carrying staged turns.
@@ -2356,8 +2399,7 @@ describe('clearConversation', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValue(gate.promise);
-    store().setDraft(CONV, 'first');
-    const pending = store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
     expect(conv().activeRunId).toBe(RUN_A);
 
     const before = conv();
@@ -2368,15 +2410,15 @@ describe('clearConversation', () => {
     expect(conv().transcript.filter((e) => e.kind === 'user')).toHaveLength(1);
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
   });
 
   it('is a no-op while a consent is pending', async () => {
     hydrateReady({ destination: remoteDestination, needsConsent: true });
     uuidQueue = [RUN_A];
     mockRunGolemTurn.mockResolvedValue(needsConsentAdmission(RUN_A));
-    store().setDraft(CONV, 'ask remote');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
     expect(conv().pendingConsentTurn).not.toBeNull();
 
     const before = conv();
@@ -2389,8 +2431,216 @@ describe('clearConversation', () => {
   it('does nothing for an unknown conversation', () => {
     hydrateReady();
     const before = store().conversations;
-    expect(() => store().clearConversation('conv-nope')).not.toThrow();
+    expect(store().clearConversation('conv-nope')).toMatchObject({ ok: false });
     expect(store().conversations).toBe(before);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #271 B4 — synchronous local admission
+//
+// Every action method answers for the *local* state transition it just made or
+// refused, before the provider has said anything. A rejected provider promise
+// is never a refusal: admission already owns that submitted prompt, and its
+// later failure belongs to the transcript/retry flow.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('admission results', () => {
+  it('admits explicit text before the provider responds', () => {
+    store().hydrateStatus(parseGolemStatus(statusPayload()));
+    uuidQueue.push(RUN_A);
+    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
+    expect(store().submitTurn(CONV, '  explicit text  ')).toEqual({ ok: true });
+    expect((mockRunGolemTurn.mock.calls[0][0] as ai.TurnRequest).message).toBe('explicit text');
+    expect(store().conversations[CONV]).not.toHaveProperty('draft');
+  });
+
+  it('refuses an old conversation without retargeting or accepting its input', () => {
+    store().hydrateStatus(parseGolemStatus(statusPayload()));
+    store().invalidateBinding();
+    const refusal = store().submitTurn(CONV, 'keep this');
+    expect(refusal).toMatchObject({ ok: false });
+    expect(refusal.reason).toEqual(expect.any(String));
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    // Nothing was retargeted onto a still-bound conversation, and the refused
+    // text never reached the transcript or the queue.
+    expect(conv().transcript).toEqual([]);
+    expect(conv().queuedTurns).toEqual([]);
+  });
+
+  it('refuses a blank message with a reason rather than silently doing nothing', () => {
+    hydrateReady();
+    expect(store().submitTurn(CONV, '   ')).toMatchObject({ ok: false });
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+  });
+
+  it('admits a Send staged behind a live run as a queued turn', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    const admitting = deferred<Record<string, unknown>>();
+    mockRunGolemTurn.mockReturnValueOnce(admitting.promise);
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
+
+    expect(store().submitTurn(CONV, 'second')).toEqual({ ok: true });
+    expect(conv().queuedTurns.map((turn) => turn.message)).toEqual(['second']);
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+
+    admitting.resolve(admissionPayload(RUN_A));
+    await flush();
+  });
+
+  it('refuses a Send this window cannot name a secure run for', () => {
+    hydrateReady();
+    installCrypto({});
+    expect(store().submitTurn(CONV, 'hello')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('secure run ID'),
+    });
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    installCrypto({ randomUUID: mockRandomUUID });
+  });
+
+  it('refuses Clear while a run is live and accepts it once the conversation is idle', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    const admitting = deferred<Record<string, unknown>>();
+    mockRunGolemTurn.mockReturnValueOnce(admitting.promise);
+    store().submitTurn(CONV, 'first');
+
+    expect(store().clearConversation(CONV)).toMatchObject({ ok: false });
+    expect(conv().transcript).not.toEqual([]);
+
+    admitting.resolve(admissionPayload(RUN_A));
+    await flush();
+    store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
+    expect(store().clearConversation(CONV)).toEqual({ ok: true });
+    expect(conv().transcript).toEqual([]);
+  });
+
+  it('accepts Clear on an idle conversation whose only content is its host draft', () => {
+    hydrateReady();
+    // The store holds no composer text at all now, so an empty conversation is
+    // still clearable: only its host knows whether there is a draft to drop.
+    expect(conv().transcript).toEqual([]);
+    expect(store().clearConversation(CONV)).toEqual({ ok: true });
+  });
+
+  it('refuses a queue edit or removal for a dispatched or unknown id', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A, RUN_B];
+    const admitting = deferred<Record<string, unknown>>();
+    mockRunGolemTurn.mockReturnValueOnce(admitting.promise);
+    store().submitTurn(CONV, 'first');
+    store().submitTurn(CONV, 'second');
+    const queueId = conv().queuedTurns[0].queueId;
+    expect(store().updateQueuedTurn(CONV, queueId, 'second, revised')).toEqual({ ok: true });
+
+    expect(store().updateQueuedTurn(CONV, 'queue-nope', 'x')).toMatchObject({ ok: false });
+    expect(store().removeQueuedTurn(CONV, 'queue-nope')).toMatchObject({ ok: false });
+
+    admitting.resolve(admissionPayload(RUN_A));
+    await flush();
+    store().ingestEvent(eventPayload({ seq: 1, type: 'run.finished', payload: {} }));
+    // The queued turn was dispatched by the terminal, so its id is gone.
+    expect(conv().queuedTurns).toEqual([]);
+    expect(store().updateQueuedTurn(CONV, queueId, 'too late')).toMatchObject({ ok: false });
+    expect(store().removeQueuedTurn(CONV, queueId)).toMatchObject({ ok: false });
+  });
+
+  it('admits a background run cancellation by that run own identity', () => {
+    const backgroundIdentity = {
+      repoEpoch: EPOCH - 1,
+      workspaceId: OTHER_WS,
+      conversationId: OTHER_CONV,
+      runId: RUN_C,
+    };
+    store().hydrateStatus(
+      parseGolemStatus(
+        statusPayload({
+          activeRuns: [
+            {
+              identity: backgroundIdentity,
+              workspaceLabel: 'Backend (previous)',
+              state: 'running',
+            },
+          ],
+        })
+      )
+    );
+    expect(store().selectConversation(OTHER_CONV)).toEqual({ ok: true });
+    expect(store().selectConversation('conv-nope')).toMatchObject({ ok: false });
+
+    expect(store().cancelRun(RUN_C)).toEqual({ ok: true });
+    expect({ ...(mockCancelGolemRun.mock.calls[0][0] as ai.RunIdentity) }).toEqual(
+      backgroundIdentity
+    );
+    expect(store().cancelRun(RUN_C)).toMatchObject({ ok: false });
+    expect(store().cancelRun(RUN_B)).toMatchObject({ ok: false });
+  });
+
+  it('refuses an approval that names a different run or challenge', async () => {
+    hydrateReady({ needsConsent: true, destination: remoteDestination });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(
+      admissionPayload(RUN_A, {
+        state: 'needs_consent',
+        destination: remoteDestination,
+        consentChallenge: challengeFor(RUN_A),
+      })
+    );
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
+    const pending = conv().pendingConsentTurn!;
+    expect(pending.challenge.id).toBe('challenge-1');
+
+    expect(store().allowAndSend(CONV, RUN_B, pending.challenge.id)).toMatchObject({ ok: false });
+    expect(store().allowAndSend(CONV, RUN_A, 'challenge-other')).toMatchObject({ ok: false });
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+
+    expect(store().allowAndSend(CONV, RUN_A, 'challenge-1')).toEqual({ ok: true });
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(2);
+    await flush();
+  });
+
+  it('refuses a mismatched approval on its own terms without releasing an expired challenge', async () => {
+    hydrateReady({ needsConsent: true, destination: remoteDestination });
+    uuidQueue = [RUN_A];
+    mockRunGolemTurn.mockResolvedValueOnce(
+      admissionPayload(RUN_A, {
+        state: 'needs_consent',
+        destination: remoteDestination,
+        consentChallenge: challengeFor(RUN_A),
+      })
+    );
+    store().submitTurn(CONV, 'ask remote');
+    await flush();
+    const pending = conv().pendingConsentTurn!;
+    jest.spyOn(Date, 'now').mockReturnValue(pending.challenge.expiresAt + 1);
+
+    // A stale view approving a challenge that is not the current one has no
+    // standing over the current one — expiring it here would clear a challenge
+    // the user in front of it never saw.
+    expect(store().allowAndSend(CONV, RUN_B, pending.challenge.id)).toEqual({
+      ok: false,
+      reason: 'That approval was for a different request.',
+    });
+    expect(conv().pendingConsentTurn).toBe(pending);
+    expect(conv().runs[RUN_A].phase).toBe('needs-consent');
+    expect(conv().transcript.filter((e) => e.kind === 'error')).toHaveLength(0);
+
+    // The matching approval is still the one that gets told it expired.
+    expect(store().allowAndSend(CONV, RUN_A, pending.challenge.id)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('expired'),
+    });
+    expect(conv().pendingConsentTurn).toBeNull();
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses Retry when there is nothing that failed', () => {
+    hydrateReady();
+    expect(store().retryLastFailed(CONV)).toMatchObject({ ok: false });
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
   });
 });
 
@@ -2400,10 +2650,9 @@ describe('monotonicity under deferred promises', () => {
     uuidQueue = [RUN_A];
     const gate = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(gate.promise);
-    store().setDraft(CONV, 'first');
-    const pending = store().submitTurn(CONV);
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    expect(store().submitTurn(CONV, 'first')).toEqual({ ok: true });
+    store().submitTurn(CONV, 'second');
+    await flush();
 
     uuidQueue = [RUN_B];
     store().ingestEvent(eventPayload({ seq: 1, type: 'run.started' }));
@@ -2419,7 +2668,7 @@ describe('monotonicity under deferred promises', () => {
     expect(conv().activeRunId).toBe(RUN_B);
 
     gate.resolve(admissionPayload(RUN_A));
-    await pending;
+    await flush();
 
     expect(conv().runs[RUN_A].phase).toBe('done');
     expect(conv().activeRunId).toBe(RUN_B);
@@ -2430,10 +2679,10 @@ describe('monotonicity under deferred promises', () => {
   it('preserves the terminal tombstone when an active status snapshot resolves late', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
-    store().setDraft(CONV, 'first');
-    await store().submitTurn(CONV);
-    store().setDraft(CONV, 'second');
-    await store().submitTurn(CONV);
+    store().submitTurn(CONV, 'first');
+    await flush();
+    store().submitTurn(CONV, 'second');
+    await flush();
 
     uuidQueue = [RUN_B];
     store().ingestEvent(
@@ -2473,16 +2722,6 @@ it('keeps TurnAdmission discriminated by state', () => {
   }
   const status: GolemStatus = parseGolemStatus(statusPayload());
   expect(status.identity.conversationId).toBe(CONV);
-});
-
-describe('golemView navigation', () => {
-  it('defaults to chat and toggles to configuration', () => {
-    expect(useGolemStore.getState().golemView).toBe('chat');
-    useGolemStore.getState().setGolemView('configuration');
-    expect(useGolemStore.getState().golemView).toBe('configuration');
-    useGolemStore.getState().setGolemView('chat');
-    expect(useGolemStore.getState().golemView).toBe('chat');
-  });
 });
 
 describe('configuration tab flags (#263 Slice B)', () => {

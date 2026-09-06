@@ -45,112 +45,90 @@
   font-size: 12px;
 }
 
-/* `.phead`: a full-bleed elevated strip, so the chip row reads as chrome
-   rather than as the first row of the conversation. */
-.header {
-  position: relative;
+/* Full-bleed chrome: the bar and chips row sit above the padded chat body
+   (the same negative-margin idiom the retired header used). */
+.chrome {
   display: flex;
   flex-direction: column;
-  gap: 3px;
   margin: -8px -8px 0;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--surface-border-subtle);
-  background-color: var(--surface-elevated);
+  flex: none;
 }
 
-/* The "New chat" reset: a compact + icon button in the header's top-right
-   corner, quiet enough not to fight the centered wordmark. The mark is
-   --text-secondary on --surface-elevated at 6.35:1; it brightens to
-   --text-primary on hover. */
-.newChatButton {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  display: inline-flex;
+/* While a run is active the mark breathes: a smooth opacity fade 100%↔30% plus
+   a constant soft golem-blue halo so it reads as "lit". Opacity is animated, not
+   `drop-shadow` — WKWebView does not interpolate an animated `drop-shadow`
+   filter and snaps between keyframes (the blink); opacity tweens reliably. The
+   halo is a static filter, so it never blinks and dims together with the mark. */
+.tileIcon[data-live='true'] {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent));
+  animation: golemBreathe 2s ease-in-out infinite;
+}
+
+/* The undock control's glyph. A character rather than an icon component: it is
+   the standard "open in a new window" mark, and the button's label carries the
+   meaning for anyone who cannot see it. */
+.undockGlyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.liveDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: var(--golem-accent);
+  box-shadow: 0 0 8px var(--golem-accent);
+  animation: golemBreath 1.2s ease-in-out infinite;
+}
+
+.chipsRow {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  gap: 6px;
+  padding: 7px 10px;
+  background-color: var(--surface-elevated);
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.chipDetails {
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.chipSummary {
+  display: inline-block;
+  padding: 2px 7px;
   border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  line-height: 1.6;
   cursor: pointer;
-  transition:
-    background-color var(--transition),
-    color var(--transition);
+  list-style: none;
 }
 
-/* The mark is an SVG, not a text "+". A glyph centers by line-box metrics, which
-   reserve descender space a plus never fills, so it rides off-center in a box
-   this small and drifts with the font. PlusIcon's strokes cross at the exact
-   center of its 24x24 viewBox, so flex centering lands true. */
-.newChatButton svg {
-  width: 12px;
-  height: 12px;
+.chipSummary::-webkit-details-marker {
+  display: none;
 }
 
-.newChatButton:hover:not(:disabled) {
-  background-color: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.newChatButton:disabled {
-  color: var(--text-disabled);
-  cursor: default;
-}
-
-.newChatButton:focus-visible {
+.chipSummary:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 
-/* The configuration toggle sits left of New chat, same icon-button geometry. */
-.configButton {
-  right: 32px;
+.chipDetails[open] .chipSummary {
+  color: var(--text-primary);
+  border-color: var(--golem-accent);
 }
 
-.identityRow {
+.chipDetailsBody {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
-/* Icon over wordmark, centered — the brand mark leads, GOLEM reads beneath it
-   at a size that carries against the logo. */
-.wordmark {
-  flex: none;
-  display: inline-flex;
   flex-direction: column;
-  align-items: center;
   gap: 3px;
-  color: var(--golem-accent);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  white-space: nowrap;
-}
-
-/* Decorative logo beside the wordmark, sized as a prominent brand mark. It
-   also carries liveness: while a run is active it glows, standing in for a
-   separate status chip. */
-.wordmarkIcon {
-  flex: none;
-  width: 44px;
-  height: 44px;
-}
-
-/* While a run is active the logo breathes: a smooth opacity fade 100%↔30% plus
-   a constant soft golem-blue halo so it reads as "lit". Opacity is animated, not
-   `drop-shadow` — WKWebView does not interpolate an animated `drop-shadow`
-   filter and snaps between keyframes (the blink); opacity tweens reliably. The
-   halo is a static filter, so it never blinks and dims together with the logo. */
-.wordmarkIcon[data-live='true'] {
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent));
-  animation: golemBreathe 2s ease-in-out infinite;
+  margin-top: 6px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 @keyframes golemBreathe {
@@ -225,15 +203,6 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.metaRow {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 /* The working line under the transcript: an obvious "agent is running" notice,
@@ -755,20 +724,6 @@
   font-size: 10px;
 }
 
-.toolRaw {
-  margin: 4px 0 0;
-  max-height: 200px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background-color: var(--surface-base);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow: auto;
-}
-
 .entryText {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -987,7 +942,8 @@
     transition: none;
   }
 
-  .wordmarkIcon[data-live='true'],
+  .tileIcon[data-live='true'],
+  .liveDot,
   .workingDot,
   .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
     animation: none;

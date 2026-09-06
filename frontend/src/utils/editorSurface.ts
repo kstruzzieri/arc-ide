@@ -1,5 +1,22 @@
 import { useGitStore, type EditorFocus } from '../stores/gitStore';
 import { useGolemStore } from '../stores/golemStore';
+import { useIDEStore } from '../stores/ideStore';
+
+/**
+ * Every editor surface lives inside the Files column, which #271 lets the user
+ * (or window pressure) reduce to a rail. Selecting a surface is therefore also a
+ * request to see that column — including when the target is the one already
+ * selected, which is why this is a call at the intent, not an observer of a
+ * changed id or focus flag (spec §6.3).
+ *
+ * A workspace restore is the one caller that is not an intent: it reopens the
+ * files the session had, and the saved layout, not those files, decides whether
+ * Files is a rail.
+ */
+function revealFiles(): void {
+  const state = useIDEStore.getState();
+  if (!state.isRestoringWorkspace) state.revealCenterPanel('files');
+}
 
 /**
  * Select one of the three git-store-owned editor surfaces (#263 spec §3.1).
@@ -10,9 +27,12 @@ import { useGolemStore } from '../stores/golemStore';
  * surface exists — and rather than at each call site, so the two flags cannot
  * drift into disagreeing about which tab is selected.
  */
-export function focusEditorSurface(focus: EditorFocus): void {
+export function focusEditorSurface(focus: EditorFocus, options: { reveal?: boolean } = {}): void {
   useGitStore.getState().setEditorFocus(focus);
   useGolemStore.getState().setConfigTabFocused(false);
+  // `reveal: false` marks the passive synchronization callers — the editor's own
+  // active-file effect — which mirror a selection someone else already made.
+  if (options.reveal !== false) revealFiles();
 }
 
 /**
@@ -31,4 +51,5 @@ export function focusEditorSurface(focus: EditorFocus): void {
 export function focusConfigTab(): void {
   useGolemStore.getState().openConfigTab();
   useGitStore.getState().setEditorFocus('file');
+  revealFiles();
 }

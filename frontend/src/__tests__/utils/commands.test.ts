@@ -2,6 +2,7 @@ import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
 import { useIDEStore } from '../../stores/ideStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { parseGolemStatus } from '../../types/golem';
+import type { GolemWindowState } from '../../types/golemWindow';
 import {
   createCommands,
   matchCommands,
@@ -9,6 +10,19 @@ import {
   showRunProfiles,
   type Command,
 } from '../../utils/commands';
+
+const mockUndock = jest.fn();
+const mockDock = jest.fn();
+const mockFocusWindow = jest.fn();
+const mockReportWindowError = jest.fn();
+
+// The relay itself is B6's own suite; here it is the seam the commands call.
+jest.mock('../../golem/windowRelay', () => ({
+  undockGolem: (...args: unknown[]) => mockUndock(...args) as Promise<void>,
+  dockGolem: (...args: unknown[]) => mockDock(...args) as Promise<void>,
+  focusGolemWindow: (...args: unknown[]) => mockFocusWindow(...args) as Promise<void>,
+  reportGolemWindowError: (...args: unknown[]) => mockReportWindowError(...args),
+}));
 
 const mockNavigateToEditorLocation = jest.fn();
 const mockStartProfile = jest.fn().mockResolvedValue(undefined);
@@ -65,7 +79,22 @@ beforeEach(() => {
   useIDEStore.setState(useIDEStore.getInitialState());
   useSearchStore.setState(useSearchStore.getInitialState());
   __resetGolemStore();
+  mockUndock.mockResolvedValue(undefined);
+  mockDock.mockResolvedValue(undefined);
+  mockFocusWindow.mockResolvedValue(undefined);
 });
+
+const windowPhase = (phase: GolemWindowState['phase'], over: Partial<GolemWindowState> = {}) => {
+  useGolemStore.getState().setWindowState({
+    mode: phase === 'ready' || phase === 'closing' ? 'undocked' : 'docked',
+    phase,
+    instance: phase === 'closed' ? 0 : 1,
+    restorePending: false,
+    stateRevision: 1,
+    handoff: phase === 'closed' ? 0 : 1,
+    ...over,
+  });
+};
 
 const commandById = (id: string) => {
   const command = createCommands(jest.fn()).find((item) => item.id === id);
@@ -101,6 +130,10 @@ test('creates the approved command registry with stable metadata', () => {
     'show-run-profiles',
     'show-golem',
     'golem-configuration',
+    'toggle-golem-panel',
+    'golem-undock',
+    'golem-dock',
+    'swap-center-panels',
     'show-structure',
     'navigate-back',
     'navigate-forward',
@@ -135,6 +168,30 @@ test('creates the approved command registry with stable metadata', () => {
       id: 'golem-configuration',
       title: 'Golem: Configuration',
       keywords: ['settings', 'models', 'providers', 'config', 'ai'],
+      shortcut: undefined,
+    },
+    {
+      id: 'toggle-golem-panel',
+      title: 'Golem: Toggle Panel',
+      keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
+      shortcut: undefined,
+    },
+    {
+      id: 'golem-undock',
+      title: 'Golem: Undock into a Window',
+      keywords: ['window', 'monitor', 'detach'],
+      shortcut: undefined,
+    },
+    {
+      id: 'golem-dock',
+      title: 'Golem: Dock into the Main Window',
+      keywords: ['window', 'attach'],
+      shortcut: undefined,
+    },
+    {
+      id: 'swap-center-panels',
+      title: 'Swap Files and Golem panels',
+      keywords: ['layout', 'reorder', 'golem', 'files'],
       shortcut: undefined,
     },
     {
@@ -173,21 +230,18 @@ test('shows search by selecting and expanding the sidebar, then focusing its inp
   expect(useSearchStore.getState().focusInputRevision).toBe(1);
 });
 
-test('shows run profiles by expanding only the right panel, in Runs mode', () => {
+test('shows run profiles by expanding only the right panel', () => {
   useIDEStore.setState({
     activeSidebarView: 'git',
     isLeftPanelCollapsed: true,
     isRightPanelCollapsed: true,
   });
-  useGolemStore.setState({ panelMode: 'golem' });
 
   commandById('show-run-profiles').run();
 
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
   expect(useIDEStore.getState().activeSidebarView).toBe('git');
   expect(useIDEStore.getState().isLeftPanelCollapsed).toBe(true);
-  // Expanding the panel is not enough: it would have re-shown Golem.
-  expect(useGolemStore.getState().panelMode).toBe('runs');
 });
 
 const golemStatus = (conversationId: string, workspaceId: string) =>
@@ -200,28 +254,27 @@ const golemStatus = (conversationId: string, workspaceId: string) =>
   });
 
 describe('showGolem', () => {
-  it('shows the Golem panel, expanding the right panel and focusing the composer', () => {
-    useIDEStore.setState({ isRightPanelCollapsed: true, activeSidebarView: 'git' });
-    useGolemStore.getState().setGolemView('configuration');
+  it('reveals the Golem island and arms the composer', () => {
+    useIDEStore.setState({ activeSidebarView: 'git' });
     const focusBefore = useGolemStore.getState().composerFocusRevision;
 
     commandById('show-golem').run();
 
-    expect(useGolemStore.getState().panelMode).toBe('golem');
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
     expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
-    // Only the right panel: the sidebar is not this command's business.
+    // Only the center pair: the sidebar is not this command's business.
     expect(useIDEStore.getState().activeSidebarView).toBe('git');
-    // Lands on chat, not whatever view was persisted before (e.g. configuration).
-    expect(useGolemStore.getState().golemView).toBe('chat');
   });
 
-  it('leaves an already-expanded right panel open', () => {
-    useIDEStore.setState({ isRightPanelCollapsed: false });
+  it('leaves the Runs dock exactly as the user left it', () => {
+    useIDEStore.setState({ isRightPanelCollapsed: true });
 
     showGolem();
 
-    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
+    expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
   });
 
   it('selects the named conversation without disturbing the IDE workspace', () => {
@@ -233,7 +286,10 @@ describe('showGolem', () => {
     showGolem('conv-b');
 
     expect(useGolemStore.getState().selectedConversationId).toBe('conv-b');
-    expect(useGolemStore.getState().panelMode).toBe('golem');
+    expect(useIDEStore.getState()).toMatchObject({
+      centerReveal: 'golem',
+      isGolemPanelCollapsed: false,
+    });
     expect(useIDEStore.getState().activeWorkspaceId).toBe('frontend');
   });
 
@@ -255,18 +311,15 @@ it('golem-configuration opens and focuses the app-global configuration tab', () 
   expect(golem.configTabOpen).toBe(true);
   expect(golem.configTabFocused).toBe(true);
   // The editor-area tab is the surface now: the right panel keeps whatever the
-  // user had, and the dock stays on its own view.
-  expect(golem.golemView).toBe('chat');
+  // user had.
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(true);
 });
 
-test('showRunProfiles is exported for direct use and switches modes', () => {
-  useGolemStore.setState({ panelMode: 'golem' });
+test('showRunProfiles is exported for direct use and expands the dock', () => {
   useIDEStore.setState({ isRightPanelCollapsed: true });
 
   showRunProfiles();
 
-  expect(useGolemStore.getState().panelMode).toBe('runs');
   expect(useIDEStore.getState().isRightPanelCollapsed).toBe(false);
 });
 
@@ -430,4 +483,154 @@ test('derives compound command state through the aggregate run instance', () => 
 
   expect(commandById('run-selected-profile').enabled?.()).toBe(false);
   expect(commandById('restart-selected-profile').enabled?.()).toBe(true);
+});
+
+it('swap-center-panels flips the center order', () => {
+  commandById('swap-center-panels').run();
+  expect(useIDEStore.getState().centerOrder).toBe('golem-first');
+});
+
+describe('toggle-golem-panel (#271 §7)', () => {
+  const setViewport = (width: number) =>
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+
+  afterEach(() => setViewport(1024));
+
+  it('reveals and focuses the chat from its default-collapsed rail', () => {
+    setViewport(1440);
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
+
+    commandById('toggle-golem-panel').run();
+
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: false,
+      centerReveal: 'golem',
+    });
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
+  });
+
+  it('collapses only while the island is effectively visible, and refocus never toggles', () => {
+    setViewport(1440);
+    commandById('toggle-golem-panel').run();
+    const focusAfterReveal = useGolemStore.getState().composerFocusRevision;
+
+    // Repeat showGolem: refocuses without collapsing.
+    showGolem();
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(false);
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusAfterReveal);
+
+    commandById('toggle-golem-panel').run();
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: true,
+      isFilesPanelCollapsed: false,
+    });
+  });
+
+  it('reveals rather than saving true when window pressure railed a preferred-open island', () => {
+    // Saved open, but the budget rails it at 1024 with Files requested.
+    setViewport(1024);
+    useIDEStore.getState().setPanelSize('left', 180);
+    useIDEStore.getState().setPanelSize('right', 180);
+    useIDEStore.setState({
+      isGolemPanelCollapsed: false,
+      isFilesPanelCollapsed: false,
+      centerReveal: 'files',
+      isLeftPanelCollapsed: false,
+      isRightPanelCollapsed: false,
+    });
+
+    commandById('toggle-golem-panel').run();
+
+    expect(useIDEStore.getState()).toMatchObject({
+      isGolemPanelCollapsed: false,
+      centerReveal: 'golem',
+    });
+  });
+});
+
+describe('window commands (#271 §5.3)', () => {
+  it('offers undock only from a settled docked surface', () => {
+    expect(commandById('golem-undock').enabled!()).toBe(true);
+
+    useGolemStore.getState().setHostFrozen(true);
+    expect(commandById('golem-undock').enabled!()).toBe(false);
+
+    useGolemStore.getState().setHostFrozen(false);
+    windowPhase('bootstrapping');
+    expect(commandById('golem-undock').enabled!()).toBe(false);
+    windowPhase('ready');
+    expect(commandById('golem-undock').enabled!()).toBe(false);
+  });
+
+  it('offers dock only while the satellite is ready', () => {
+    expect(commandById('golem-dock').enabled!()).toBe(false);
+    windowPhase('closing');
+    expect(commandById('golem-dock').enabled!()).toBe(false);
+    windowPhase('ready');
+    expect(commandById('golem-dock').enabled!()).toBe(true);
+  });
+
+  it('reports a refused transition instead of leaving the promise unhandled', async () => {
+    mockUndock.mockRejectedValue(new Error('no display available'));
+    commandById('golem-undock').run();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockReportWindowError).toHaveBeenCalledTimes(1);
+    expect((mockReportWindowError.mock.calls[0][0] as Error).message).toBe('no display available');
+
+    mockDock.mockRejectedValue(new Error('the window is busy'));
+    windowPhase('ready');
+    commandById('golem-dock').run();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockReportWindowError).toHaveBeenCalledTimes(2);
+  });
+
+  it('withdraws the panel toggle for the whole of a transfer', () => {
+    expect(commandById('toggle-golem-panel').enabled!()).toBe(true);
+    for (const phase of ['bootstrapping', 'bootstrapped', 'ready', 'closing'] as const) {
+      windowPhase(phase);
+      expect(commandById('toggle-golem-panel').enabled!()).toBe(false);
+    }
+  });
+});
+
+describe('showGolem across windows', () => {
+  it('focuses the satellite instead of a hidden tree once it owns the chat', () => {
+    windowPhase('ready');
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
+
+    showGolem();
+
+    expect(mockFocusWindow).toHaveBeenCalledTimes(1);
+    // The request still lands: the satellite's own surface consumes it.
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+  });
+
+  it('retains the selection and the focus request through a transfer', () => {
+    useGolemStore.getState().hydrateStatus(golemStatus('conv-a', 'frontend'));
+    useGolemStore.getState().hydrateStatus(golemStatus('conv-b', 'backend'));
+    windowPhase('closing');
+    const focusBefore = useGolemStore.getState().composerFocusRevision;
+
+    showGolem('conv-b');
+
+    expect(useGolemStore.getState().selectedConversationId).toBe('conv-b');
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(focusBefore);
+    // Neither host is visible mid-transfer, so nothing is revealed or focused.
+    expect(mockFocusWindow).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+  });
+
+  it('surfaces a refused selection rather than dropping it', () => {
+    showGolem('conv-that-never-existed');
+
+    expect(useIDEStore.getState().toast).toEqual({
+      message: 'That Golem conversation is no longer open.',
+      type: 'error',
+    });
+    // The reveal still happens: seeing the chat was the other half of the ask.
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(false);
+  });
 });

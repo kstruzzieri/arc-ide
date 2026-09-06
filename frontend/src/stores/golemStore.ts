@@ -13,6 +13,7 @@ import {
 import type {
   ConversationIdentity,
   ConversationView,
+  GolemActionResult,
   GolemEvent,
   GolemStatus,
   GolemStoreState,
@@ -23,6 +24,7 @@ import type {
   TurnAdmission,
   TurnDraft,
 } from '../types/golem';
+import type { GolemWindowState } from '../types/golemWindow';
 
 /**
  * Conversation-keyed Golem chat state (#226 Task B7).
@@ -46,6 +48,24 @@ const NO_SECURE_UUID_ERROR =
   'This window cannot generate a secure run ID, so the turn was not sent.';
 const STALE_BINDING_ERROR = 'The workspace changed before this turn started.';
 const CONSENT_EXPIRED_ERROR = 'The consent request expired. Send the message again to retry it.';
+
+// Refusal reasons (#271). Every guard that declines an action names why, in
+// words the visible host can put in front of the user unchanged: a silent
+// no-op leaves them staring at text that was neither sent nor kept.
+const NO_CONVERSATION_ERROR = 'That Golem conversation is no longer open.';
+const NOT_CONNECTED_ERROR = 'Golem is not connected yet.';
+const STALE_CONVERSATION_ERROR = 'This workspace is no longer open.';
+const EMPTY_MESSAGE_ERROR = 'There is nothing to send.';
+const BUSY_ERROR = 'Golem is still working on the current run.';
+const NO_PENDING_CONSENT_ERROR = 'There is no approval waiting in this conversation.';
+const CONSENT_MISMATCH_ERROR = 'That approval was for a different request.';
+const NOTHING_TO_RETRY_ERROR = 'There is no failed message to retry.';
+const NO_QUEUED_TURN_ERROR = 'That queued message is no longer waiting.';
+const UNKNOWN_RUN_ERROR = 'That Golem run is not running here.';
+const NOT_CANCELABLE_ERROR = 'That Golem run cannot be canceled in its current state.';
+
+const OK: GolemActionResult = { ok: true };
+const refuse = (reason: string): GolemActionResult => ({ ok: false, reason });
 
 /**
  * `rawEvents` is a bounded tail, not the transcript. Every projected row keeps
@@ -136,7 +156,6 @@ function newConversation(identity: ConversationIdentity, workspaceLabel = ''): C
     transcript: [],
     runs: {},
     activeRunId: null,
-    draft: '',
     queuedTurns: [],
     pendingConsentTurn: null,
     lastFailedTurn: null,
@@ -596,6 +615,32 @@ function reduceEvent(
 
 // ── store ─────────────────────────────────────────────────────────────────────
 
+/**
+ * The lifecycle every session starts in: docked, with no satellite window and
+ * no transfer in flight (#271 spec §5.1). Exported because the relay and its
+ * tests both need the exact shape Go's `closed` snapshot carries.
+ */
+export const DEFAULT_GOLEM_WINDOW_STATE: GolemWindowState = Object.freeze({
+  mode: 'docked',
+  phase: 'closed',
+  instance: 0,
+  restorePending: false,
+  stateRevision: 0,
+  handoff: 0,
+});
+
+/**
+ * Whether the satellite window owns the view: the one definition every docked
+ * host reads (the shell's center pair, the Files bar, the commands). Visual
+ * ownership, not the saved mode alone — a restored `undocked` preference is
+ * still bootstrapping, and not the phase alone either: an aborted bootstrap
+ * closes through `closing` with `mode` still `docked`, and for that tick the
+ * docked pair, with every control it offers, is what the user must keep.
+ */
+export const selectGolemUndocked = (s: { windowState: GolemWindowState }): boolean =>
+  s.windowState.mode === 'undocked' &&
+  (s.windowState.phase === 'ready' || s.windowState.phase === 'closing');
+
 const initialState = () => ({
   conversations: {} as Record<string, ConversationView>,
   runToConversation: {} as Record<string, string>,
@@ -607,13 +652,15 @@ const initialState = () => ({
   activityRevision: 0,
   lastFailureConversationId: null as string | null,
   failureRevision: 0,
-  // Preserve today's panel: Golem is opt-in, and once chosen it stays chosen
-  // for the rest of the process.
-  panelMode: 'runs' as GolemStoreState['panelMode'],
-  golemView: 'chat' as GolemStoreState['golemView'],
   configTabOpen: false,
   configTabFocused: false,
   composerFocusRevision: 0,
+  // App-scoped (#271 §5): `invalidateBinding` and `hydrateStatus` write named
+  // fields only, so a repository switch never touches these three. They are
+  // here so a fresh store — and the test reset — starts docked.
+  windowState: DEFAULT_GOLEM_WINDOW_STATE,
+  hostFrozen: false,
+  windowError: null as string | null,
 });
 
 /**
@@ -632,13 +679,22 @@ let ingestGolemEventBatch: (values: unknown[]) => void = () => {
 };
 
 export const useGolemStore = create<GolemStoreState>()((set, get) => {
-  /** Send is allowed only into the conversation the backend just hydrated. */
-  const canSend = (conversationId: string): boolean => {
+  /**
+   * Send is allowed only into the conversation the backend just hydrated.
+   * Returns the refusal reason, or `null` when the send may proceed — the
+   * guard and the message the host shows are one decision, so they are one
+   * function rather than a boolean plus a second walk over the same state.
+   */
+  const sendRefusal = (conversationId: string): string | null => {
     const state = get();
     const conversation = state.conversations[conversationId];
-    if (!conversation || !conversation.available) return false;
-    if (state.bridgePhase !== 'ready') return false;
-    return sameConversationIdentity(state.hydratedIdentity, conversation.identity);
+    if (!conversation) return NO_CONVERSATION_ERROR;
+    if (state.bridgePhase !== 'ready') return NOT_CONNECTED_ERROR;
+    if (!sameConversationIdentity(state.hydratedIdentity, conversation.identity)) {
+      return STALE_CONVERSATION_ERROR;
+    }
+    if (!conversation.available) return conversation.initError ?? GOLEM_UNAVAILABLE;
+    return null;
   };
 
   /** Advances only the token-matched run that is still awaiting admission. */
@@ -761,6 +817,45 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
 
   const runDispatch = (dispatch: PendingDispatch | null) => {
     if (dispatch) void runTurn(dispatch.identity, dispatch.draft, null);
+  };
+
+  /**
+   * The backend half of a cancellation, after the local `canceling` transition
+   * has already been admitted. A rejection is not a refusal of the user's
+   * intent — the run really was asked to stop — so it rolls the phase back and
+   * reports through the transcript rather than through the caller's result.
+   */
+  const requestCancel = async (
+    conversationId: string,
+    runId: string,
+    identity: RunIdentity,
+    previousPhase: RunPhase
+  ): Promise<void> => {
+    try {
+      // The run's own identity, never the current workspace's: a background
+      // run from a retired epoch is cancelable only by its exact identity.
+      await CancelGolemRun(toCancelRequest(identity));
+    } catch (err) {
+      set((current) => {
+        const mutation = beginMutation(current);
+        const draft = draftConversation(mutation, conversationId);
+        if (!draft) return current;
+        const latest = draft.runs[runId];
+        if (!latest || latest.phase !== 'canceling') return current;
+        // Cancel on a pending-consent turn is only rejected when the backend
+        // no longer holds that challenge, so restoring `needs-consent` would
+        // offer a grant that can never succeed. Every other rejection leaves
+        // the run alive, so its previous phase is still the truth.
+        if (draft.pendingConsentTurn?.identity.runId === runId) {
+          releasePendingConsent(draft, boundedMessage(err));
+        } else {
+          draft.runs[runId] = { ...latest, phase: previousPhase };
+          appendError(draft, runId, boundedMessage(err));
+        }
+        markFailure(mutation, conversationId);
+        return toState(mutation);
+      });
+    }
   };
 
   /**
@@ -1020,14 +1115,27 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       runDispatch(dispatch);
     },
 
-    selectConversation(conversationId: string) {
+    // Any known conversation is selectable, including one in a workspace the
+    // IDE is not focused on: that is how a background run is reached.
+    selectConversation(conversationId: string): GolemActionResult {
+      if (!get().conversations[conversationId]) return refuse(NO_CONVERSATION_ERROR);
       set((state) => ({
         selectedConversationId: conversationId,
         composerFocusRevision: state.composerFocusRevision + 1,
       }));
+      return OK;
     },
 
-    clearConversation(conversationId: string) {
+    clearConversation(conversationId: string): GolemActionResult {
+      // Decided here rather than inferred from a before/after comparison: an
+      // already-empty conversation resets to exactly itself, and the host's own
+      // draft — which this store no longer holds — is reason enough to clear.
+      const existing = get().conversations[conversationId];
+      if (!existing) return refuse(NO_CONVERSATION_ERROR);
+      if (existing.activeRunId !== null || existing.pendingConsentTurn !== null) {
+        return refuse(BUSY_ERROR);
+      }
+
       set((state) => {
         const conversation = state.conversations[conversationId];
         if (!conversation) return state;
@@ -1057,7 +1165,6 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         draft.transcript = [];
         draft.runs = {};
         draft.activeRunId = null;
-        draft.draft = '';
         draft.queuedTurns = [];
         draft.pendingConsentTurn = null;
         draft.lastFailedTurn = null;
@@ -1082,20 +1189,26 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           composerFocusRevision: state.composerFocusRevision + 1,
         };
       });
+      return OK;
     },
 
-    setPanelMode(mode: GolemStoreState['panelMode']) {
-      // Showing the chat is a request to type in it, so the same action that
-      // reveals the panel arms the composer; Runs has no composer to focus.
-      set((state) => ({
-        panelMode: mode,
-        composerFocusRevision:
-          mode === 'golem' ? state.composerFocusRevision + 1 : state.composerFocusRevision,
-      }));
+    requestComposerFocus() {
+      set((state) => ({ composerFocusRevision: state.composerFocusRevision + 1 }));
     },
 
-    setGolemView(view: GolemStoreState['golemView']) {
-      set({ golemView: view });
+    // Window lifecycle (#271). Deliberately dumb writes: the ordering rule ("install only a
+    // newer stateRevision") belongs to the one relay that owns the lifetime,
+    // not to a setter every caller could reach with a stale snapshot.
+    setWindowState(windowState) {
+      set({ windowState });
+    },
+
+    setHostFrozen(hostFrozen) {
+      set({ hostFrozen });
+    },
+
+    setWindowError(windowError) {
+      set({ windowError });
     },
 
     // One app-global tab: opening an already-open tab only re-focuses it.
@@ -1117,27 +1230,18 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       set((state) => ({ configTabFocused: focused && state.configTabOpen }));
     },
 
-    setDraft(conversationId: string, value: string) {
-      set((state) => {
-        const conversation = state.conversations[conversationId];
-        if (!conversation || conversation.draft === value) return state;
-        return {
-          conversations: {
-            ...state.conversations,
-            [conversationId]: { ...conversation, draft: value },
-          },
-        };
-      });
-    },
-
-    async submitTurn(conversationId: string) {
-      if (!canSend(conversationId)) return;
+    // The composer text is supplied by whichever window the user is typing in
+    // (#271): it is never stored here, so it can never be projected out of the
+    // executing owner to the other window.
+    submitTurn(conversationId: string, text: string): GolemActionResult {
+      const refusal = sendRefusal(conversationId);
+      if (refusal) return refuse(refusal);
       // An expired challenge must not keep the conversation busy: the new
       // message starts a fresh run, which collects a fresh challenge.
       dropExpiredConsent(conversationId);
       const conversation = get().conversations[conversationId];
-      const message = conversation.draft.trim();
-      if (!message) return;
+      const message = text.trim();
+      if (!message) return refuse(EMPTY_MESSAGE_ERROR);
 
       const busy = conversation.activeRunId !== null || conversation.pendingConsentTurn !== null;
       if (busy) {
@@ -1150,22 +1254,16 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
             queueId: nextLocalId('queue'),
             state: 'queued',
           });
-          draft.draft = '';
           return toState(mutation);
         });
-        return;
+        return OK;
       }
 
+      // Refusal only, no transcript row: the reason carries the same text back
+      // to the host that asked, which retains the draft and surfaces it once.
+      // Appending a row as well would say it twice in the docked window.
       const runId = secureRandomUUID();
-      if (!runId) {
-        set((state) => {
-          const mutation = beginMutation(state);
-          const draft = draftConversation(mutation, conversationId)!;
-          appendError(draft, '', NO_SECURE_UUID_ERROR);
-          return toState(mutation);
-        });
-        return;
-      }
+      if (!runId) return refuse(NO_SECURE_UUID_ERROR);
 
       const identity: RunIdentity = { ...conversation.identity, runId };
       const turnDraft: TurnDraft = { message, contextRefs: [] };
@@ -1182,24 +1280,41 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
           userEntryId,
         };
         draft.activeRunId = runId;
-        draft.draft = '';
         mutation.runToConversation[runId] = conversationId;
         return toState(mutation);
       });
 
-      await runTurn(identity, turnDraft, null);
+      // The prompt is admitted and already visible in the transcript; how the
+      // provider answers is the transcript's business, not this caller's.
+      void runTurn(identity, turnDraft, null);
+      return OK;
     },
 
-    async allowAndSend(conversationId: string) {
-      if (!canSend(conversationId)) return;
+    /**
+     * The approval names the challenge the user was actually shown. A grant
+     * dispatched from a window whose view has since moved on would otherwise
+     * consent to whatever challenge is pending *now* — a different destination,
+     * possibly a different prompt — so identity is checked before the phase.
+     */
+    allowAndSend(conversationId: string, runId: string, challengeId: string): GolemActionResult {
+      const refusal = sendRefusal(conversationId);
+      if (refusal) return refuse(refusal);
+      // Identity first, and before the expiry sweep: an approval dispatched
+      // from a stale view names a challenge that is not the current one, so it
+      // is not entitled to release the current one either — expiring here
+      // would let it clear a challenge the user in front of it never saw.
+      const stale = get().conversations[conversationId].pendingConsentTurn;
+      if (stale && (stale.identity.runId !== runId || stale.challenge.id !== challengeId)) {
+        return refuse(CONSENT_MISMATCH_ERROR);
+      }
       // The backend would reject the grant with "no pending consent challenge"
       // and leave nothing to clear it, so expire it here instead.
-      if (dropExpiredConsent(conversationId)) return;
+      if (dropExpiredConsent(conversationId)) return refuse(CONSENT_EXPIRED_ERROR);
       const conversation = get().conversations[conversationId];
       const pending = conversation.pendingConsentTurn;
-      if (!pending) return;
+      if (!pending) return refuse(NO_PENDING_CONSENT_ERROR);
       const run = conversation.runs[pending.identity.runId];
-      if (!run || run.phase !== 'needs-consent') return;
+      if (!run || run.phase !== 'needs-consent') return refuse(BUSY_ERROR);
 
       set((state) => {
         const mutation = beginMutation(state);
@@ -1209,11 +1324,13 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return toState(mutation);
       });
 
-      await runTurn(pending.identity, pending.draft, pending.challenge.id);
+      void runTurn(pending.identity, pending.draft, pending.challenge.id);
+      return OK;
     },
 
-    async retryLastFailed(conversationId: string) {
-      if (!canSend(conversationId)) return;
+    retryLastFailed(conversationId: string): GolemActionResult {
+      const refusal = sendRefusal(conversationId);
+      if (refusal) return refuse(refusal);
       // Without this, an expired challenge makes Retry a silent dead button:
       // the busy check below would see `pendingConsentTurn` and return with no
       // feedback. Releasing it also makes its prompt the newest failure, so
@@ -1223,19 +1340,14 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
       dropExpiredConsent(conversationId);
       const conversation = get().conversations[conversationId];
       const failed = conversation?.lastFailedTurn;
-      if (!failed) return;
-      if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) return;
-
-      const runId = secureRandomUUID();
-      if (!runId) {
-        set((state) => {
-          const mutation = beginMutation(state);
-          const draft = draftConversation(mutation, conversationId)!;
-          appendError(draft, '', NO_SECURE_UUID_ERROR);
-          return toState(mutation);
-        });
-        return;
+      if (!failed) return refuse(NOTHING_TO_RETRY_ERROR);
+      if (conversation.activeRunId !== null || conversation.pendingConsentTurn !== null) {
+        return refuse(BUSY_ERROR);
       }
+
+      // As in `submitTurn`: one channel only, the refusal.
+      const runId = secureRandomUUID();
+      if (!runId) return refuse(NO_SECURE_UUID_ERROR);
 
       const identity: RunIdentity = { ...conversation.identity, runId };
       set((state) => {
@@ -1256,45 +1368,61 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return toState(mutation);
       });
 
-      await runTurn(identity, failed.draft, null);
+      void runTurn(identity, failed.draft, null);
+      return OK;
     },
 
-    updateQueuedTurn(conversationId: string, queueId: string, message: string) {
+    // A queue id the dispatcher already consumed is gone, not editable: the
+    // existence check is what stops an edit typed a frame too late from
+    // reporting success against a turn that is already running.
+    updateQueuedTurn(conversationId: string, queueId: string, message: string): GolemActionResult {
+      const conversation = get().conversations[conversationId];
+      if (!conversation) return refuse(NO_CONVERSATION_ERROR);
+      if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
+        return refuse(NO_QUEUED_TURN_ERROR);
+      }
       set((state) => {
-        const conversation = state.conversations[conversationId];
-        if (!conversation) return state;
-        const queuedTurns = conversation.queuedTurns.map((turn) =>
+        const existing = state.conversations[conversationId];
+        if (!existing) return state;
+        const queuedTurns = existing.queuedTurns.map((turn) =>
           turn.queueId === queueId ? { ...turn, message } : turn
         );
         return {
           conversations: {
             ...state.conversations,
-            [conversationId]: { ...conversation, queuedTurns },
+            [conversationId]: { ...existing, queuedTurns },
           },
         };
       });
+      return OK;
     },
 
-    removeQueuedTurn(conversationId: string, queueId: string) {
+    removeQueuedTurn(conversationId: string, queueId: string): GolemActionResult {
+      const conversation = get().conversations[conversationId];
+      if (!conversation) return refuse(NO_CONVERSATION_ERROR);
+      if (!conversation.queuedTurns.some((turn) => turn.queueId === queueId)) {
+        return refuse(NO_QUEUED_TURN_ERROR);
+      }
       set((state) => {
-        const conversation = state.conversations[conversationId];
-        if (!conversation) return state;
+        const existing = state.conversations[conversationId];
+        if (!existing) return state;
         return {
           conversations: {
             ...state.conversations,
             [conversationId]: {
-              ...conversation,
-              queuedTurns: conversation.queuedTurns.filter((turn) => turn.queueId !== queueId),
+              ...existing,
+              queuedTurns: existing.queuedTurns.filter((turn) => turn.queueId !== queueId),
             },
           },
         };
       });
+      return OK;
     },
 
-    async cancelRun(runId: string) {
+    cancelRun(runId: string): GolemActionResult {
       const state = get();
       const conversationId = state.runToConversation[runId];
-      if (!conversationId) return;
+      if (!conversationId) return refuse(UNKNOWN_RUN_ERROR);
       const run = state.conversations[conversationId]?.runs[runId];
       if (
         !run ||
@@ -1302,13 +1430,15 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         run.phase === 'admitting' ||
         run.phase === 'canceling'
       )
-        return;
+        return refuse(NOT_CANCELABLE_ERROR);
       const previousPhase = run.phase;
 
       // Declining an already-expired challenge: the backend has dropped it, so
       // Cancel would be rejected and leave the turn stuck as pending.
       const pending = state.conversations[conversationId]?.pendingConsentTurn;
-      if (pending?.identity.runId === runId && dropExpiredConsent(conversationId)) return;
+      if (pending?.identity.runId === runId && dropExpiredConsent(conversationId)) {
+        return refuse(CONSENT_EXPIRED_ERROR);
+      }
 
       set((current) => {
         const mutation = beginMutation(current);
@@ -1318,31 +1448,10 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
         return toState(mutation);
       });
 
-      try {
-        // The run's own identity, never the current workspace's: a background
-        // run from a retired epoch is cancelable only by its exact identity.
-        await CancelGolemRun(toCancelRequest(run.identity));
-      } catch (err) {
-        set((current) => {
-          const mutation = beginMutation(current);
-          const draft = draftConversation(mutation, conversationId);
-          if (!draft) return current;
-          const latest = draft.runs[runId];
-          if (!latest || latest.phase !== 'canceling') return current;
-          // Cancel on a pending-consent turn is only rejected when the backend
-          // no longer holds that challenge, so restoring `needs-consent` would
-          // offer a grant that can never succeed. Every other rejection leaves
-          // the run alive, so its previous phase is still the truth.
-          if (draft.pendingConsentTurn?.identity.runId === runId) {
-            releasePendingConsent(draft, boundedMessage(err));
-          } else {
-            draft.runs[runId] = { ...latest, phase: previousPhase };
-            appendError(draft, runId, boundedMessage(err));
-          }
-          markFailure(mutation, conversationId);
-          return toState(mutation);
-        });
-      }
+      // The local transition to `canceling` is what the caller is told about;
+      // the backend's answer keeps its existing rollback below.
+      void requestCancel(conversationId, runId, run.identity, previousPhase);
+      return OK;
     },
   };
 });

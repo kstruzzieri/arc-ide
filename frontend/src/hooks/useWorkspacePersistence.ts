@@ -12,6 +12,7 @@ import type { workspace, filesystem } from '../wails/bindings';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { relativePathFromRoot } from '../utils/workspaceRegions';
+import { normalizeCenterLayout } from '../utils/centerLayout';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
 import { ensurePathLoaded } from './useEnsurePathLoaded';
 import { drainRunHistoryForClose } from './useRunOutput';
@@ -90,6 +91,11 @@ function collectWorkspaceState(
       leftCollapsed: state.isLeftPanelCollapsed,
       rightCollapsed: state.isRightPanelCollapsed,
       bottomCollapsed: state.isBottomPanelCollapsed,
+      // #271: preferences only. The transient centerReveal and any effective
+      // (window-pressure) collapse are deliberately not written.
+      centerOrder: state.centerOrder,
+      golemCollapsed: state.isGolemPanelCollapsed,
+      filesCollapsed: state.isFilesPanelCollapsed,
     },
     editor: {
       activeFilePath: state.activeFileId ?? '',
@@ -138,22 +144,50 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
 
     // Restore layout
     if (state.layout) {
-      if (state.layout.panelSizes) {
-        const { left, right, bottom } = state.layout.panelSizes;
-        if (left > 0) store.setPanelSize('left', left);
-        if (right > 0) store.setPanelSize('right', right);
-        if (bottom > 0) store.setPanelSize('bottom', bottom);
+      // Validate before the setters. A wrongly *typed* size never reaches here:
+      // Go's decode rejects the whole file on a type mismatch, so a hand-edited
+      // `"260"` fails the load outright. What does reach here is an absent or
+      // null field and any finite number the file cares to name — zero, a
+      // negative, an absurd one — so the guard is about range, not type.
+      const sizes = state.layout.panelSizes;
+      for (const panel of ['left', 'right', 'bottom'] as const) {
+        const size: unknown = sizes?.[panel];
+        if (typeof size === 'number' && Number.isFinite(size) && size > 0) {
+          store.setPanelSize(panel, Math.max(1, Math.round(size)));
+        }
       }
 
-      // Restore collapsed states — only toggle if current state differs
+      // #271: one normalized, atomic apply. Direct setters alone would not make
+      // a malformed both-collapsed pair order-independent, so the normalizer
+      // decides the whole pair first.
+      store.applyCenterLayout(
+        normalizeCenterLayout({
+          centerOrder: state.layout.centerOrder,
+          golemWidth: state.layout.panelSizes?.golem,
+          golemCollapsed: state.layout.golemCollapsed,
+          filesCollapsed: state.layout.filesCollapsed,
+        })
+      );
+
+      // Restore collapsed states — only toggle if a real boolean differs, so an
+      // absent legacy field cannot toggle a default panel closed.
       const current = useIDEStore.getState();
-      if (state.layout.leftCollapsed !== current.isLeftPanelCollapsed) {
+      if (
+        typeof state.layout.leftCollapsed === 'boolean' &&
+        state.layout.leftCollapsed !== current.isLeftPanelCollapsed
+      ) {
         store.toggleLeftPanel();
       }
-      if (state.layout.rightCollapsed !== current.isRightPanelCollapsed) {
+      if (
+        typeof state.layout.rightCollapsed === 'boolean' &&
+        state.layout.rightCollapsed !== current.isRightPanelCollapsed
+      ) {
         store.toggleRightPanel();
       }
-      if (state.layout.bottomCollapsed !== current.isBottomPanelCollapsed) {
+      if (
+        typeof state.layout.bottomCollapsed === 'boolean' &&
+        state.layout.bottomCollapsed !== current.isBottomPanelCollapsed
+      ) {
         store.toggleBottomPanel();
       }
     }
@@ -413,6 +447,9 @@ export function useWorkspacePersistence(
         state.isLeftPanelCollapsed !== prevState.isLeftPanelCollapsed ||
         state.isRightPanelCollapsed !== prevState.isRightPanelCollapsed ||
         state.isBottomPanelCollapsed !== prevState.isBottomPanelCollapsed ||
+        state.centerOrder !== prevState.centerOrder ||
+        state.isGolemPanelCollapsed !== prevState.isGolemPanelCollapsed ||
+        state.isFilesPanelCollapsed !== prevState.isFilesPanelCollapsed ||
         state.activeSidebarView !== prevState.activeSidebarView ||
         state.expandedPaths !== prevState.expandedPaths ||
         state.isRootExpanded !== prevState.isRootExpanded ||

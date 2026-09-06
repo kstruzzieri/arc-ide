@@ -149,7 +149,10 @@ export function Editor() {
     if (prevActiveFileIdRef.current === activeFileId) return;
     prevActiveFileIdRef.current = activeFileId;
     if (activeFileId) {
-      focusEditorSurface('file');
+      // Passive: this mirrors an activation someone else already performed (and
+      // already revealed for, when it was an intent). Revealing here would also
+      // fire for a workspace restore's reopened tabs.
+      focusEditorSurface('file', { reveal: false });
     }
     return undefined;
   }, [activeFileId]);

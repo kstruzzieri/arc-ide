@@ -23,6 +23,14 @@ const mergeResolutionCss = readFileSync(
   resolve(__dirname, '../../components/Editor/MergeResolutionView.module.css'),
   'utf8'
 );
+const panelRailCss = readFileSync(
+  resolve(__dirname, '../../components/layout/PanelRail.module.css'),
+  'utf8'
+);
+const panelCommandBarCss = readFileSync(
+  resolve(__dirname, '../../components/layout/PanelCommandBar.module.css'),
+  'utf8'
+);
 const statusBarCss = readFileSync(
   resolve(__dirname, '../../components/StatusBar/StatusBar.module.css'),
   'utf8'
@@ -168,6 +176,78 @@ it.each(WORKSPACE_ACCENTS)(
 it('targets the manual merge action semantically instead of by child order', () => {
   expect(mergeResolutionCss).toContain(".cm-mergeResolution-action[data-decision='M']");
   expect(mergeResolutionCss).not.toContain('.cm-mergeResolution-action:last-child');
+});
+
+it('keeps --files-key perceptually clear of every git and status colour', () => {
+  // The FILES bar key duplicates --accent-go's literal on purpose (it must not
+  // move with a repointed workspace accent), so it needs its own seat in the
+  // semantic guard rather than riding the accent loop above.
+  const key = parseHex(token('files-key'));
+  const nearest = SEMANTIC_TOKENS.map((name) => ({
+    name,
+    distance: deltaE2000(key, parseHex(token(name))),
+  })).sort((a, b) => a.distance - b.distance)[0];
+  expect({ nearest: nearest.name, clear: nearest.distance >= 10 }).toEqual({
+    nearest: nearest.name,
+    clear: true,
+  });
+});
+
+it('holds AA contrast for bar names on the tinted command-bar gradient', () => {
+  // The bar paints its key at 12% over --surface-elevated and sets the name in
+  // the key colour on top of that (PanelCommandBar.module.css). Both keys.
+  const elevated = parseHex(token('surface-elevated'));
+  for (const name of ['files-key', 'accent-project'] as const) {
+    const key = parseHex(token(name));
+    expect(contrast(key, composite(key, elevated, 0.12))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(key, elevated)).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+it('defines the #271 layout tokens', () => {
+  expect(css).toMatch(/--panel-golem-width:\s*420px/);
+  expect(css).toMatch(/--panel-rail-width:\s*40px/);
+  expect(css).toMatch(/--panel-bar-height:\s*38px/);
+});
+
+it('pins the golem rail and bar to the project accent instead of the live workspace accent', () => {
+  // The collapsed golem rail (rendered by IDEShell as a sibling of the panel
+  // island) and the golem command bar both live under the `.ide` root's
+  // DYNAMIC data-accent={accent} — never inside GolemPanel's own
+  // data-accent="project" pin. A `var(--accent-dim)` / `var(--accent-glow)`
+  // reference there would repaint GOLEM in the rust/node/... workspace hue
+  // instead of the pinned project accent, contradicting "GOLEM keys the
+  // pinned project accent" (#271 review). Both files pin by mixing the alpha
+  // out of --accent-project itself, so a retuned project accent carries the
+  // glow and the dim with it instead of leaving copied bytes behind.
+  const mix = (name: string, alpha: number) =>
+    new RegExp(
+      `${name}:\\s*color-mix\\(in srgb, var\\(--accent-project\\) ${alpha}%, transparent\\)`
+    );
+  for (const [source, label, pinned] of [
+    [panelRailCss, 'PanelRail.module.css', [mix('--rail-key-glow', 25)]],
+    [
+      panelCommandBarCss,
+      'PanelCommandBar.module.css',
+      [mix('--bar-key-dim', 12), mix('--bar-key-glow', 25)],
+    ],
+  ] as const) {
+    const body = rule(source, "[data-panel='golem']");
+    // Assert the pinned literals are actually present FIRST: `rule()` extracts
+    // up to the first `}`, so a comment containing a stray `}` would truncate
+    // the body before these declarations and let the negative check below
+    // pass for the wrong reason (regression: #271 review round 2).
+    for (const pattern of pinned) {
+      expect({ file: label, body }).toEqual({
+        file: label,
+        body: expect.stringMatching(pattern),
+      });
+    }
+    expect({ file: label, body }).toEqual({
+      file: label,
+      body: expect.not.stringMatching(/var\(--accent(-dim|-glow)?\)/),
+    });
+  }
 });
 
 function token(name: string): string {

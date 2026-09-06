@@ -34,18 +34,28 @@ type LSPState struct {
 }
 
 // Layout captures panel sizes and collapsed states.
+//
+// The #271 center-pair fields are additive and omitempty so files written
+// before them stay valid; the envelope Version stays 1. GolemCollapsed is a
+// pointer because its default is true (Golem is opt-in): a plain omitempty
+// bool could not distinguish "saved false" from "absent".
 type Layout struct {
 	PanelSizes      PanelSizes `json:"panelSizes"`
 	LeftCollapsed   bool       `json:"leftCollapsed"`
 	RightCollapsed  bool       `json:"rightCollapsed"`
 	BottomCollapsed bool       `json:"bottomCollapsed"`
+	CenterOrder     string     `json:"centerOrder,omitempty"`    // "" | "files-first" | "golem-first"
+	GolemCollapsed  *bool      `json:"golemCollapsed,omitempty"` // nil = absent (frontend default: collapsed)
+	FilesCollapsed  bool       `json:"filesCollapsed,omitempty"`
 }
 
-// PanelSizes stores pixel sizes for the three resizable panels.
+// PanelSizes stores pixel sizes for the resizable panels. Golem is the #271
+// center island's preferred width; zero means "absent" (frontend default 420).
 type PanelSizes struct {
 	Left   int `json:"left"`
 	Right  int `json:"right"`
 	Bottom int `json:"bottom"`
+	Golem  int `json:"golem,omitempty"`
 }
 
 // EditorState captures open files and the active tab.

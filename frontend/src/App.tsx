@@ -2,7 +2,8 @@ import './styles/tokens.css';
 import './styles/reset.css';
 import { useCallback, useEffect, useRef } from 'react';
 import { IDEShell } from './components/layout';
-import { RightPanel } from './components/layout/RightPanel';
+import { RunProfiles } from './components/RunProfiles';
+import { GolemPanel } from './components/Golem';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
@@ -20,6 +21,7 @@ import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
 import { drainRunHistoryForClose, useRunOutputListener } from './hooks/useRunOutput';
 import { useGolemBridge } from './hooks/useGolemBridge';
+import { useGolemWindow } from './hooks/useGolemWindow';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
@@ -28,6 +30,7 @@ import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
 import { useConflictProjectionSync } from './hooks/useProblemsProjection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
+import { useGolemStore } from './stores/golemStore';
 import { useGitStore } from './stores/gitStore';
 import { ReadFile } from './wails/bindings';
 import type { FileEvent } from './types/watcher';
@@ -41,6 +44,21 @@ import {
   confirmConfigClose,
   hasUnsavedConfigWork,
 } from './components/GolemConfig/configCloseGuard';
+
+/**
+ * The one place the docked host learns it is not the owner (#271 §5.1). A
+ * component rather than a read inside `App`, so the subscription re-renders the
+ * island alone — and so the whole tree below stays out of `App`'s render.
+ */
+function GolemIsland({ visible }: { visible: boolean }) {
+  const frozen = useGolemStore((state) => state.hostFrozen);
+  return <GolemPanel visible={visible} frozen={frozen} />;
+}
+
+// Module scope, not an inline arrow: IDEShell memoizes the Golem island on this
+// callback's identity, and a fresh function per App render would throw that
+// memo away every time App re-renders (sidebar view, workspace, …).
+const renderGolemPanel = (visible: boolean) => <GolemIsland visible={visible} />;
 
 function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
@@ -61,10 +79,15 @@ function App() {
   // Own run-event capture at the always-mounted App so collapsing the bottom
   // panel (which unmounts Terminal) cannot drop run output or history (#235).
   useRunOutputListener();
-  // Same reason as run output: the Golem chat panel unmounts when the right
-  // panel collapses or switches to Runs, so the event bridge and the repository
-  // binding it owns live at the always-mounted App instead (#226).
+  // The Golem island stays mounted now (#271), but the bridge and the
+  // repository binding it owns still live at the always-mounted App: they are
+  // app-level, not panel-level.
   useGolemBridge();
+  // The undocked-window owner, mounted beside the bridge and only here: the
+  // satellite runs `startGolemSatellite()` in its own JS context instead, and
+  // this one is ready — subscriptions and core wiring — whether or not the
+  // bridge ever binds a repository.
+  useGolemWindow();
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
@@ -199,8 +222,9 @@ function App() {
           )
         }
         centerPanel={<Editor />}
+        golemPanel={renderGolemPanel}
         bottomPanel={<Terminal />}
-        rightPanel={<RightPanel />}
+        rightPanel={<RunProfiles />}
         statusBar={<StatusBar />}
       />
       <Toast />

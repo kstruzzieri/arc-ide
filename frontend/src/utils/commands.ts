@@ -1,4 +1,10 @@
-import { useGolemStore } from '../stores/golemStore';
+import {
+  dockGolem,
+  focusGolemWindow,
+  reportGolemWindowError,
+  undockGolem,
+} from '../golem/windowRelay';
+import { selectGolemUndocked, useGolemStore } from '../stores/golemStore';
 import {
   isLiveRunState,
   representativeRunInstanceId,
@@ -6,6 +12,7 @@ import {
   type NavigationLocation,
 } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
+import { computeEffectiveCenter, viewportSize } from './centerLayout';
 import { navigateToEditorLocation } from './editorNavigation';
 import { focusConfigTab } from './editorSurface';
 import { startProfile, restartProfile } from './profileActions';
@@ -20,6 +27,9 @@ export interface Command {
   run: () => void;
   enabled?: () => boolean;
 }
+
+/** Only reachable if a store refusal ever omits its reason; none does today. */
+const UNEXPLAINED_REFUSAL = 'Golem refused that action.';
 
 const normalize = (value: string) => value.trim().toLowerCase();
 
@@ -83,9 +93,7 @@ const openRightPanel = (): void => {
 };
 
 export function showRunProfiles(): void {
-  // Expanding is not enough now that the right panel has two modes: an expand
-  // alone would re-show whichever mode was last selected.
-  useGolemStore.getState().setPanelMode('runs');
+  // The dock is the Runs home now (#271); expanding it is the whole job.
   openRightPanel();
 }
 
@@ -96,16 +104,62 @@ export function showRunProfiles(): void {
  */
 export function showGolem(conversationId?: string): void {
   const golem = useGolemStore.getState();
-  if (conversationId) golem.selectConversation(conversationId);
-  golem.setPanelMode('golem');
-  golem.setGolemView('chat');
-  openRightPanel();
+  if (conversationId) {
+    // The selection is a refusable act like any other: dropping its result
+    // would leave the caller looking at a conversation it did not ask for.
+    const selected = golem.selectConversation(conversationId);
+    if (!selected.ok) {
+      useIDEStore.getState().showToast(selected.reason ?? UNEXPLAINED_REFUSAL, 'error');
+    }
+  }
+  // Bumped before the branch, and whatever happens next: during a transfer
+  // neither host is visible, so the request waits for whichever one becomes so.
+  golem.requestComposerFocus();
+  const { phase } = golem.windowState;
+  if (phase === 'ready') {
+    // The chat is in the other window. Focusing this one's hidden tree would
+    // move focus somewhere the user cannot see (#271 §5.3).
+    void focusGolemWindow().catch(reportGolemWindowError);
+    return;
+  }
+  if (phase !== 'closed') return; // mid-transfer: nothing is safe to focus yet
+  // Reveal through the effective layout: the transient target guarantees the
+  // island (not a rail) is what the budget keeps under window pressure.
+  useIDEStore.getState().revealCenterPanel('golem');
+}
+
+/**
+ * Toggles the Golem island by what the user can actually see (#271 §7).
+ *
+ * The saved collapse flag alone would answer wrong in both directions: a
+ * preferred-open island the window budget has railed would "collapse" to the
+ * rail it is already showing, and the user's real ask — see the chat — would
+ * need a second invocation. So the effective layout decides, computed from the
+ * same pure budget the shell renders with; nothing is written back but the one
+ * preference (or transient reveal) this command changes.
+ */
+function isGolemEffectivelyVisible(): boolean {
+  const { center } = computeEffectiveCenter(
+    useIDEStore.getState(),
+    viewportSize().width,
+    undefined,
+    golemIsUndocked()
+  );
+  return !center.golemCollapsed;
+}
+
+/** Visual ownership, by the same selector the shell and the Files bar read. */
+const golemIsUndocked = (): boolean => selectGolemUndocked(useGolemStore.getState());
+
+export function toggleGolemPanel(): void {
+  if (isGolemEffectivelyVisible()) useIDEStore.getState().setGolemPanelCollapsed(true);
+  else showGolem();
 }
 
 /**
  * Opens — or refocuses — the one app-global Golem configuration tab in the
- * editor area (#263 spec §3.1). The dock's gear and its "Review configuration"
- * CTA still open the read-only dock readout; this command owns the workspace.
+ * editor area (#263 spec §3.1). The bar gear and the unavailable-state "Review
+ * configuration" CTA route here too (#271 D1).
  */
 export function showGolemConfiguration(): void {
   focusConfigTab();
@@ -239,6 +293,42 @@ export const createCommands = (openFolder: () => void): Command[] => [
     title: 'Golem: Configuration',
     keywords: ['settings', 'models', 'providers', 'config', 'ai'],
     run: showGolemConfiguration,
+  },
+  {
+    id: 'toggle-golem-panel',
+    title: 'Golem: Toggle Panel',
+    keywords: ['ai', 'chat', 'collapse', 'expand', 'layout'],
+    run: toggleGolemPanel,
+    // There is no island here to toggle while the satellite owns it, and a
+    // layout preference written mid-transfer would land on the wrong host.
+    enabled: () => useGolemStore.getState().windowState.phase === 'closed',
+  },
+  {
+    id: 'golem-undock',
+    title: 'Golem: Undock into a Window',
+    keywords: ['window', 'monitor', 'detach'],
+    run: () => {
+      void undockGolem().catch(reportGolemWindowError);
+    },
+    enabled: () => {
+      const s = useGolemStore.getState();
+      return s.windowState.phase === 'closed' && !s.hostFrozen;
+    },
+  },
+  {
+    id: 'golem-dock',
+    title: 'Golem: Dock into the Main Window',
+    keywords: ['window', 'attach'],
+    run: () => {
+      void dockGolem().catch(reportGolemWindowError);
+    },
+    enabled: () => useGolemStore.getState().windowState.phase === 'ready',
+  },
+  {
+    id: 'swap-center-panels',
+    title: 'Swap Files and Golem panels',
+    keywords: ['layout', 'reorder', 'golem', 'files'],
+    run: () => useIDEStore.getState().swapCenterOrder(),
   },
   {
     id: 'show-structure',

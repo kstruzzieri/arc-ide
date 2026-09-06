@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import styles from './Header.module.css';
 import { ChevronDownIcon, SearchIcon, FolderOutlineIcon, FolderOpenOutlineIcon } from '../icons';
 import { useWorkspace, useRecentWorkspaces } from '../../stores/ideStore';
@@ -12,7 +12,18 @@ import { BranchSwitcher } from '../git/BranchSwitcher';
 
 const MENU_ID = 'workspace-menu';
 
-export function Header({ onOpenCommandPalette }: { onOpenCommandPalette: () => void }) {
+/**
+ * Memoised because #271 makes the shell re-render at pointer rate during a seam
+ * drag or a panel reorder, and the shell calls its `header` render-prop on every
+ * one of those renders. The single prop is the shell's own stable
+ * `openCommandPalette` callback, so the memo actually bails out; everything else
+ * the header shows comes from store subscriptions that re-render it on their own.
+ */
+export const Header = memo(function Header({
+  onOpenCommandPalette,
+}: {
+  onOpenCommandPalette: () => void;
+}) {
   const workspace = useWorkspace();
   const workspaceName = workspace?.name || 'No workspace';
   const { openFolder } = useOpenFolder();
@@ -218,4 +229,4 @@ export function Header({ onOpenCommandPalette }: { onOpenCommandPalette: () => v
       <RunProfileSelector />
     </>
   );
-}
+});

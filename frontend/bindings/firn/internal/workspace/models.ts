@@ -148,12 +148,28 @@ export class LSPState {
 
 /**
  * Layout captures panel sizes and collapsed states.
+ * 
+ * The #271 center-pair fields are additive and omitempty so files written
+ * before them stay valid; the envelope Version stays 1. GolemCollapsed is a
+ * pointer because its default is true (Golem is opt-in): a plain omitempty
+ * bool could not distinguish "saved false" from "absent".
  */
 export class Layout {
     "panelSizes": PanelSizes;
     "leftCollapsed": boolean;
     "rightCollapsed": boolean;
     "bottomCollapsed": boolean;
+
+    /**
+     * "" | "files-first" | "golem-first"
+     */
+    "centerOrder"?: string;
+
+    /**
+     * nil = absent (frontend default: collapsed)
+     */
+    "golemCollapsed"?: boolean | null;
+    "filesCollapsed"?: boolean;
 
     /** Creates a new Layout instance. */
     constructor($$source: Partial<Layout> = {}) {
@@ -187,12 +203,14 @@ export class Layout {
 }
 
 /**
- * PanelSizes stores pixel sizes for the three resizable panels.
+ * PanelSizes stores pixel sizes for the resizable panels. Golem is the #271
+ * center island's preferred width; zero means "absent" (frontend default 420).
  */
 export class PanelSizes {
     "left": number;
     "right": number;
     "bottom": number;
+    "golem"?: number;
 
     /** Creates a new PanelSizes instance. */
     constructor($$source: Partial<PanelSizes> = {}) {

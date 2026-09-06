@@ -94,12 +94,14 @@ describe('adapter routing', () => {
   // Each entry is one adapter export and the arguments a caller passes it.
   const routes: Array<[RawCallName, unknown[]]> = [
     ['ApplyGolemSettings', [{ request: 'apply' }]],
+    ['BootstrapGolemWindow', []],
     ['CancelGolemSettingsApply', ['challenge-token']],
     ['ConfirmGolemDestinationGrants', ['challenge-token']],
     ['ConfirmGolemSettingsApply', [{ request: 'confirm' }]],
     ['CreateGolemSettings', [{ request: 'create' }]],
     ['GetGolemSettings', []],
     ['GetGolemStatus', [{ request: 'status' }]],
+    ['GetGolemWindowState', []],
     ['LoadGolemProfile', ['profile-id']],
     ['PrepareGolemDestinationGrants', []],
     ['ReloadGolemSettings', []],

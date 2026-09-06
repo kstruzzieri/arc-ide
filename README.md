@@ -137,6 +137,26 @@ The roadmap includes a built-in AI assistant panel with:
 | File Watching | fsnotify with debounce |
 | Language Intelligence | LSP per active workspace |
 | Search | ripgrep workspace search + CodeMirror in-file search |
+| Golem chat | Center island in the main window, or a second native window |
+
+### The Golem chat window
+
+The Golem chat lives in the center of the main window beside the Files column,
+and can be undocked into a second native window: **Undock into a window** on the
+GOLEM command bar, or `Golem: Undock into a Window` in the command palette. It
+comes back with **Dock in main window** on that window's title bar, `Cmd/Ctrl+W`
+there, or **Dock Golem panel** on the Golem rail the main window shows while the
+chat is away. Both windows render the same chat surface, but only the main
+window ever executes: it owns the conversation store and the `go-llm` runtime,
+and the undocked window is a passive view that posts actions across the window
+relay and waits for the main window to admit or refuse each one. During a
+handoff neither window accepts input, and composer text is carried over with the
+transfer rather than re-derived.
+
+Whether the chat is docked, and where the undocked window last sat, are the only
+machine-scoped preferences Firn keeps: they live in `~/.firn/app.json` as a mode
+and a bounds rectangle. No transcript, draft or consent decision is written
+there — those stay with the repository-scoped Golem state.
 
 ### Performance Targets
 
@@ -254,6 +274,7 @@ If the Golem consent store becomes unavailable — a banner appears, and remote 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
+- [ ] Golem center panel and undocked window (#271) — the center island and the second-window chat are implemented on `feature/issue-271-golem-center-panel`; pending review and the supported-platform smoke pass
 - [ ] Golem follow-ups — settings UI for models, roles, and keys (#263, phase 1 merged and the write phases in review), durable multi-conversation history (#264), token and context usage (#265)
 
 ## Project Structure

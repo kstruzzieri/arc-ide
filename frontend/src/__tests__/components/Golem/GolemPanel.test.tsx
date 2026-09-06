@@ -15,6 +15,8 @@ import { useMemo, useState } from 'react';
 import { CommandPalette } from '../../../components/CommandPalette';
 import { GolemPanel } from '../../../components/Golem';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { useDraftStore } from '../../../golem/draftStore';
+import { useGitStore } from '../../../stores/gitStore';
 import { __resetGolemStore, useGolemStore } from '../../../stores/golemStore';
 import { useIDEStore } from '../../../stores/ideStore';
 import { parseGolemStatus } from '../../../types/golem';
@@ -233,6 +235,9 @@ const fakeScroll = (
 
 beforeEach(() => {
   __resetGolemStore();
+  // Composer drafts are host-lifetime now (#271 B4), so they outlive a store
+  // reset by design — which is exactly why each test has to clear them.
+  useDraftStore.setState({ drafts: {} });
   useIDEStore.setState(useIDEStore.getInitialState());
   jest.clearAllMocks();
   uuidQueue = [RUN_A, RUN_B];
@@ -256,33 +261,37 @@ beforeEach(() => {
 // ── identity and destination ──────────────────────────────────────────────────
 
 describe('GolemPanel destination', () => {
-  it('shows the backend workspace label, classification, provider, model, and endpoint', () => {
+  it('shows the backend workspace label, classification, provider, model, and endpoint', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(screen.getByText('Frontend')).toBeInTheDocument();
     expect(screen.getByText('Local')).toBeInTheDocument();
     expect(screen.getByText('ollama')).toBeInTheDocument();
     expect(screen.getByText('qwen3')).toBeInTheDocument();
-    expect(screen.getByText('http://127.0.0.1:11434')).toBeInTheDocument();
+
+    // The endpoint moved behind the Connection disclosure (#271 D5).
+    await userEvent.click(screen.getByText('Connection'));
+    expect(screen.getByText('http://127.0.0.1:11434')).toBeVisible();
   });
 
   it('classifies a remote destination as Remote', () => {
     hydrate({ destination: remoteDestination });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(screen.getByText('Remote')).toBeInTheDocument();
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
   });
 
-  it('states the fixed Phase 1 context scope', () => {
+  it('states the fixed Phase 1 context scope', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
-    expect(screen.getByText('Context: prompt only')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Connection'));
+    expect(screen.getByText('Context: prompt only')).toBeVisible();
   });
 });
 
@@ -292,7 +301,7 @@ describe('GolemPanel live indicator', () => {
   it('names the live phase and breathes the logo, and is quiet while idle', async () => {
     hydrate();
     selectFocused();
-    const { container } = render(<GolemPanel />);
+    const { container } = render(<GolemPanel visible />);
     // The logo is decorative (alt="", aria-hidden) so it has no role; query it
     // directly to read its live-pulse attribute.
     const logo = () => container.querySelector('img') as HTMLImageElement;
@@ -328,7 +337,7 @@ describe('GolemPanel live indicator', () => {
   it('shows a working notice while a run is live and removes it on terminal', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(screen.queryByText(/Thinking|Responding|Running/)).not.toBeInTheDocument();
 
@@ -362,7 +371,7 @@ describe('GolemPanel live indicator', () => {
   it('announces a stable working state without exposing the ticking elapsed time', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('do the thing');
     pressEnter();
@@ -391,7 +400,7 @@ describe('GolemPanel live indicator', () => {
     try {
       hydrate();
       selectFocused();
-      render(<GolemPanel />);
+      render(<GolemPanel visible />);
 
       type('first');
       pressEnter();
@@ -418,7 +427,7 @@ describe('GolemPanel live indicator', () => {
   it('announces a terminal run before the queued run working state', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('first');
     pressEnter();
@@ -456,7 +465,7 @@ describe('GolemPanel live indicator', () => {
     hydrate({ destination: remoteDestination });
     selectFocused();
     mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('send this remotely');
     pressEnter();
@@ -472,14 +481,14 @@ describe('GolemPanel blocked states', () => {
   it('sends when nothing blocks the conversation', () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('hello');
 
     expect(sendButton()).toBeEnabled();
   });
 
   it('reports no workspace and disables send', () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(screen.getByText('Open a workspace to chat with Golem.')).toBeInTheDocument();
     expect(sendButton()).toBeDisabled();
@@ -488,7 +497,7 @@ describe('GolemPanel blocked states', () => {
   it('reports a binding still in flight and disables send', () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('hello');
     act(() => {
       useGolemStore.setState({ bridgePhase: 'binding' });
@@ -505,7 +514,7 @@ describe('GolemPanel blocked states', () => {
       workspaceLabel: 'Backend',
     });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('hello');
 
     expect(screen.getByText('This workspace is no longer open.')).toBeInTheDocument();
@@ -515,7 +524,7 @@ describe('GolemPanel blocked states', () => {
   it('reports an unavailable backend and disables send', () => {
     hydrate({ available: false });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('hello');
 
     expect(screen.getByText('Golem is unavailable in this workspace.')).toBeInTheDocument();
@@ -530,7 +539,7 @@ describe('GolemPanel blocked states', () => {
       initError: 'golem.yaml could not be read.',
     });
     selectFocused();
-    const { container } = render(<GolemPanel />);
+    const { container } = render(<GolemPanel visible />);
 
     expect(within(container).getByText('Policy blocks remote providers.')).toBeInTheDocument();
     expect(within(container).getByText('No API key is configured.')).toBeInTheDocument();
@@ -545,7 +554,7 @@ describe('GolemPanel blocked states', () => {
   it('prefers the backend init error over the generic unavailable copy', () => {
     hydrate({ available: false, initError: 'golem.yaml could not be read.' });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(screen.queryByText('Golem is unavailable in this workspace.')).not.toBeInTheDocument();
     expect(screen.getByText('golem.yaml could not be read.')).toBeInTheDocument();
@@ -561,7 +570,7 @@ describe('GolemPanel composer', () => {
   });
 
   it('sends on Enter and stages the prompt visibly while clearing the draft', async () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('hello there');
     pressEnter();
@@ -578,7 +587,7 @@ describe('GolemPanel composer', () => {
   });
 
   it('leaves Shift+Enter to the textarea so it inserts a newline', () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('first line');
     const event = fireEvent.keyDown(composer(), {
@@ -594,7 +603,7 @@ describe('GolemPanel composer', () => {
   });
 
   it('disables send for a blank or whitespace-only draft', () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(sendButton()).toBeDisabled();
     type('   ');
@@ -607,7 +616,7 @@ describe('GolemPanel composer', () => {
   });
 
   it('does not send an Enter that is committing an IME composition, but does send the next one', async () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('こんにちは');
     // `isComposing` is on the native event; the key is identical either way.
@@ -623,7 +632,7 @@ describe('GolemPanel composer', () => {
   });
 
   it('sends from the Send button too', async () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('via button');
     fireEvent.click(sendButton());
@@ -633,17 +642,54 @@ describe('GolemPanel composer', () => {
   });
 });
 
+// ── composer focus requests ───────────────────────────────────────────────────
+
+describe('GolemPanel composer focus', () => {
+  // ⌘⇧I in the first second of a repository arrives while the bridge is still
+  // binding, so the textarea is disabled and cannot take focus. The request has
+  // to stay armed until it can be honoured.
+  it('honours a focus request raised before the conversation bound', () => {
+    render(<GolemPanel visible />);
+    expect(composer()).toBeDisabled();
+
+    act(() => store().requestComposerFocus());
+    expect(document.activeElement).not.toBe(composer());
+
+    // The bind path: `hydrateStatus` selects the conversation without raising a
+    // focus request of its own, so only the armed one can move focus here.
+    hydrate();
+
+    expect(composer()).toBeEnabled();
+    expect(document.activeElement).toBe(composer());
+  });
+
+  it('does not re-spend an honoured request on a later visibility flip', () => {
+    hydrate();
+    selectFocused();
+    const { rerender } = render(<GolemPanel visible />);
+
+    act(() => store().requestComposerFocus());
+    expect(document.activeElement).toBe(composer());
+
+    act(() => composer().blur());
+    rerender(<GolemPanel visible={false} />);
+    rerender(<GolemPanel visible />);
+
+    expect(document.activeElement).not.toBe(composer());
+  });
+});
+
 // ── draft durability ──────────────────────────────────────────────────────────
 
 describe('GolemPanel draft', () => {
-  it('survives an unmount, which is what collapsing the panel or showing Runs does', () => {
+  it('survives an unmount, so the draft outlives any remount of the panel', () => {
     hydrate();
     selectFocused();
-    const { unmount } = render(<GolemPanel />);
+    const { unmount } = render(<GolemPanel visible />);
 
     type('half-written thought');
     unmount();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(composer()).toHaveValue('half-written thought');
   });
@@ -655,7 +701,7 @@ describe('GolemPanel draft', () => {
       workspaceLabel: 'Backend',
     });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('frontend draft');
 
     act(() => {
@@ -670,6 +716,103 @@ describe('GolemPanel draft', () => {
   });
 });
 
+// ── host admission (#271 B4) ──────────────────────────────────────────────────
+//
+// The docked host owns the composer text and drops it only when the store's
+// admission accepted it. A refusal keeps what the user typed and says why.
+
+describe('GolemPanel admission', () => {
+  const newChatButton = () => screen.getByRole('button', { name: 'New chat' });
+  const toast = () => useIDEStore.getState().toast;
+
+  beforeEach(() => {
+    hydrate();
+    selectFocused();
+  });
+
+  it('clears an accepted draft immediately, before the provider has answered', () => {
+    // Never resolves: the draft must go on local admission alone.
+    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
+    render(<GolemPanel visible />);
+
+    type('hello there');
+    pressEnter();
+
+    expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
+    expect(composer()).toHaveValue('');
+    expect(toast()).toBeNull();
+  });
+
+  it('keeps a refused draft and explains the refusal', () => {
+    render(<GolemPanel visible />);
+    type('keep this');
+
+    // The binding is gone, so the store refuses. The textarea stays enabled —
+    // the conversation is still known — so Enter really does reach the adapter.
+    act(() => {
+      store().invalidateBinding();
+    });
+    pressEnter();
+
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue('keep this');
+    expect(toast()).toMatchObject({ type: 'error' });
+    expect(toast()?.message).toEqual(expect.any(String));
+    expect(toast()?.message).not.toBe('');
+  });
+
+  it('refuses New chat while a run is live and keeps the draft', () => {
+    mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
+    render(<GolemPanel visible />);
+
+    type('first');
+    pressEnter();
+    type('leftover');
+
+    // The store would refuse a clear here (a live run could re-hydrate a
+    // cleared conversation), so the button is disabled rather than lying.
+    expect(newChatButton()).toBeDisabled();
+    expect(composer()).toHaveValue('leftover');
+  });
+
+  it('accepts New chat when the only thing to clear is the draft', () => {
+    render(<GolemPanel visible />);
+
+    // An empty transcript and no queue: only this host knows there is anything
+    // to clear at all, and the store accepts on its idle guard alone.
+    type('just a draft');
+    expect(newChatButton()).toBeEnabled();
+    fireEvent.click(newChatButton());
+
+    expect(composer()).toHaveValue('');
+    expect(toast()).toBeNull();
+  });
+
+  it('freezes every action the moment a handoff starts', () => {
+    const { rerender } = render(<GolemPanel visible />);
+    type('mid-thought');
+
+    rerender(<GolemPanel visible frozen />);
+
+    expect(composer()).toBeDisabled();
+    expect(sendButton()).toBeDisabled();
+    expect(newChatButton()).toBeDisabled();
+    // Spec §5.3: a disabled composer says why, in text, until the window is
+    // ready or the attempt is retired.
+    expect(screen.getByText('Moving Golem to its own window…')).toBeInTheDocument();
+
+    // A click or keydown that raced the barrier is refused by the handler too,
+    // not only by `disabled` — and the draft is still here for the new owner.
+    pressEnter();
+    fireEvent.click(sendButton());
+    expect(mockRunGolemTurn).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue('mid-thought');
+
+    rerender(<GolemPanel visible />);
+    expect(screen.queryByText('Moving Golem to its own window…')).toBeNull();
+  });
+});
+
 // ── queue ─────────────────────────────────────────────────────────────────────
 
 describe('GolemPanel queue', () => {
@@ -677,7 +820,7 @@ describe('GolemPanel queue', () => {
     hydrate();
     selectFocused();
     mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('first');
     pressEnter();
     await flush();
@@ -728,7 +871,7 @@ describe('GolemPanel consent', () => {
     hydrate({ destination: remoteDestination });
     selectFocused();
     mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('send this remotely');
     pressEnter();
     await flush();
@@ -842,7 +985,7 @@ describe('GolemPanel transcript', () => {
   const startRun = async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('what is up');
     pressEnter();
     await flush();
@@ -977,7 +1120,7 @@ describe('GolemPanel transcript', () => {
   it('renders a user prompt as literal text, not markdown', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('**x**');
     pressEnter();
     await flush();
@@ -1108,7 +1251,7 @@ describe('GolemPanel focus', () => {
   it('focuses the composer when the focus revision changes, but not on streamed events', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('draft');
     pressEnter();
@@ -1157,7 +1300,7 @@ describe('GolemPanel conversations', () => {
 
   it('lists the focused, background, and failed conversations', () => {
     withBackground();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     const list = screen.getByRole('group', { name: /conversations/i });
     expect(within(list).getByRole('button', { name: /Frontend/ })).toBeInTheDocument();
@@ -1168,7 +1311,7 @@ describe('GolemPanel conversations', () => {
   it('selecting another conversation never changes the IDE workspace', () => {
     withBackground();
     useIDEStore.setState({ activeWorkspaceId: WS });
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     const list = screen.getByRole('group', { name: /conversations/i });
     fireEvent.click(within(list).getByRole('button', { name: /Backend/ }));
@@ -1182,7 +1325,7 @@ describe('GolemPanel conversations', () => {
       activeRuns: [{ identity: runIdentity(RUN_BG), workspaceLabel: 'Frontend', state: 'running' }],
     });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     // The composer's own Cancel already governs this run; repeating it in the
     // strip would offer the same run twice, inches apart.
@@ -1199,7 +1342,7 @@ describe('GolemPanel conversations', () => {
 
   it('cancels a background run through that run own identity', async () => {
     withBackground();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     fireEvent.click(screen.getByRole('button', { name: /cancel the golem run in infra/i }));
     await flush();
@@ -1215,7 +1358,7 @@ describe('GolemPanel conversations', () => {
 
   it('names the background run phase, which no other surface reports', () => {
     withBackground();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     // The visible row reads "Infra · running"; an aria-label that stopped at
     // the workspace would hide the phase from a screen reader entirely, and the
@@ -1227,7 +1370,7 @@ describe('GolemPanel conversations', () => {
 
   it('selects a background run by its own conversation, not the focused one', () => {
     withBackground();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     fireEvent.click(screen.getByRole('button', { name: /show the golem run in infra/i }));
 
@@ -1244,7 +1387,7 @@ describe('GolemPanel cancel and retry', () => {
   it('offers Cancel as a real button while a run is live', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('long one');
     pressEnter();
     await flush();
@@ -1262,7 +1405,7 @@ describe('GolemPanel cancel and retry', () => {
   it('offers Retry as a real button for a failed turn it still holds the request for', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     type('retry me');
     pressEnter();
     await flush();
@@ -1292,7 +1435,7 @@ describe('GolemPanel cancel and retry', () => {
       activeRuns: [{ identity: runIdentity(RUN_BG), workspaceLabel: 'Frontend', state: 'running' }],
     });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     act(() => {
       store().ingestRunStatus({
@@ -1310,20 +1453,21 @@ describe('GolemPanel cancel and retry', () => {
   });
 });
 
-// ── header logo ───────────────────────────────────────────────────────────────
+// ── bar tile ──────────────────────────────────────────────────────────────────
 
 describe('GolemPanel header', () => {
-  it('shows the Golem logo decoratively beside the GOLEM wordmark', () => {
+  it('shows the Golem logo decoratively in the bar tile beside the GOLEM name', () => {
     hydrate();
     selectFocused();
-    const { container } = render(<GolemPanel />);
+    const { container } = render(<GolemPanel visible />);
 
     // GOLEM stays the accessible name; the image is decorative, so it must be
-    // hidden from the accessibility tree with an empty alt.
+    // hidden from the accessibility tree — empty alt, inside the hidden tile.
     expect(screen.getByText('GOLEM')).toBeInTheDocument();
-    const logo = container.querySelector('img[aria-hidden="true"]');
+    const logo = container.querySelector('img');
     expect(logo).not.toBeNull();
     expect(logo).toHaveAttribute('alt', '');
+    expect(logo?.closest('[aria-hidden="true"]')).not.toBeNull();
   });
 });
 
@@ -1336,7 +1480,7 @@ describe('GolemPanel tool clustering', () => {
   });
 
   const startRun = async () => {
-    const view = render(<GolemPanel />);
+    const view = render(<GolemPanel visible />);
     type('go');
     pressEnter();
     await flush();
@@ -1446,7 +1590,7 @@ describe('GolemPanel tool clustering', () => {
     expect(screen.getByText('running')).toBeInTheDocument();
   });
 
-  it('reveals a tool chip raw detail as text, rendering markup literally', async () => {
+  it('reveals a tool chip detail as text, rendering markup literally', async () => {
     const { container } = await startRun();
     toolFinished(2, { toolCallId: 'call-x', name: 'search', preview: '<b>x</b>' });
 
@@ -1458,13 +1602,20 @@ describe('GolemPanel tool clustering', () => {
     // The preview renders as literal text, never a real <b> element.
     const preview = screen.getByText('<b>x</b>');
     expect(preview.querySelector('b')).toBeNull();
+    expect(screen.getByText('call-x')).toBeInTheDocument();
 
-    // The raw payload is pretty-printed JSON, also text inside a <pre>.
-    const raw = container.querySelector('pre');
-    expect(raw).not.toBeNull();
-    expect(raw?.textContent).toContain('"toolCallId": "call-x"');
-    expect(raw?.textContent).toContain('"preview": "<b>x</b>"');
-    expect(raw?.querySelector('b')).toBeNull();
+    // The raw provider event body is owner-only and never projected (#271 B4),
+    // so the surface — which renders the same projection in both windows —
+    // has nothing to dump. No <pre> means no route for unsanitized markup.
+    expect(container.querySelector('pre')).toBeNull();
+  });
+
+  it('says so when a tool call reported no preview, rather than inventing detail', async () => {
+    await startRun();
+    toolFinished(2, { toolCallId: 'call-y', name: 'read', preview: '' });
+
+    fireEvent.click(screen.getByRole('button', { name: /read/i }));
+    expect(screen.getByText('This tool call reported no preview.')).toBeInTheDocument();
   });
 
   it('keeps the streaming assistant reply as the transcript last child after a tool cluster', async () => {
@@ -1492,7 +1643,7 @@ describe('GolemPanel composer auto-grow', () => {
   });
 
   it('grows the composer to fit a multi-line draft and shrinks back when it clears', () => {
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
     const box = composer();
     // jsdom has no layout, so the grow target has to be supplied — the assertion
     // is whether the panel wrote a clamped scrollHeight to the inline height.
@@ -1523,7 +1674,7 @@ describe('GolemPanel new chat', () => {
   it('clears a populated transcript and returns focus to the composer', async () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('hello there');
     pressEnter();
@@ -1557,7 +1708,7 @@ describe('GolemPanel new chat', () => {
     hydrate();
     selectFocused();
     mockRunGolemTurn.mockReturnValue(new Promise(() => {}));
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('long one');
     pressEnter();
@@ -1572,7 +1723,7 @@ describe('GolemPanel new chat', () => {
     hydrate({ destination: remoteDestination });
     selectFocused();
     mockRunGolemTurn.mockResolvedValueOnce(consentAdmission(RUN_A));
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     type('send this remotely');
     pressEnter();
@@ -1584,52 +1735,29 @@ describe('GolemPanel new chat', () => {
   it('is disabled when the conversation is already empty', () => {
     hydrate();
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     expect(newChatButton()).toBeDisabled();
   });
 });
 
-// ── configuration view ───────────────────────────────────────────────────────
+// ── configuration routing ────────────────────────────────────────────────────
 
-describe('configuration view', () => {
-  it('toggles to the configuration view from the header control', async () => {
-    hydrate();
-    selectFocused();
-    render(<GolemPanel />);
-
-    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
-
-    expect(useGolemStore.getState().golemView).toBe('configuration');
-    expect(await screen.findByRole('heading', { name: /configuration/i })).toBeInTheDocument();
-    expect(await screen.findByText(/No models\.json was found/)).toBeInTheDocument();
-    expect(screen.queryByText('Golem returned an unexpected response.')).not.toBeInTheDocument();
-  });
-
+describe('configuration routing', () => {
   it('offers Review configuration from the unavailable state', async () => {
     hydrate({ available: false, initError: 'golem.yaml could not be read.' });
     selectFocused();
-    render(<GolemPanel />);
+    render(<GolemPanel visible />);
 
     await userEvent.click(screen.getByRole('button', { name: /review configuration/i }));
 
-    expect(await screen.findByRole('heading', { name: /configuration/i })).toHaveFocus();
-  });
-
-  it('restores focus to the header toggle after closing the view', async () => {
-    hydrate();
-    selectFocused();
-    render(<GolemPanel />);
-
-    await userEvent.click(screen.getByRole('button', { name: /^configuration$/i }));
-    await screen.findByRole('heading', { name: /configuration/i });
-
-    await userEvent.click(screen.getByRole('button', { name: /back to chat/i }));
-
-    expect(useGolemStore.getState().golemView).toBe('chat');
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^configuration$/i })).toHaveFocus()
-    );
+    // The editor-area tab is the one configuration surface now (#271 D1): the
+    // panel keeps showing the chat, it does not swap itself out for a readout.
+    expect(useGolemStore.getState()).toMatchObject({
+      configTabOpen: true,
+      configTabFocused: true,
+    });
+    expect(screen.queryByRole('heading', { name: /configuration/i })).toBeNull();
   });
 });
 
@@ -1651,7 +1779,7 @@ function PaletteAndPanelHarness() {
       <button type="button" onClick={() => setOpen(true)}>
         Open palette
       </button>
-      <GolemPanel />
+      <GolemPanel visible />
       {configTabOpen && <GolemConfigWorkspace onClose={() => {}} />}
       <CommandPalette open={open} commands={commands} onClose={() => setOpen(false)} />
     </>
@@ -1671,10 +1799,53 @@ describe('configuration workspace and command palette focus interplay', () => {
     await user.keyboard('{Enter}');
 
     expect(useGolemStore.getState().configTabOpen).toBe(true);
-    // The dock is untouched: the workspace tab is the surface the palette owns.
-    expect(useGolemStore.getState().golemView).toBe('chat');
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: 'Golem Configuration' })).toHaveFocus()
     );
+  });
+});
+
+// ── the GOLEM command bar (#271 Task A6) ─────────────────────────────────────
+
+describe('#271 command bar', () => {
+  it('renders the GOLEM bar and routes the gear to the configuration tab', () => {
+    render(<GolemPanel visible />);
+    expect(screen.getByRole('group', { name: 'Golem panel header' })).toBeInTheDocument();
+    expect(screen.getByText('GOLEM')).toBeInTheDocument();
+    // No hydrated destination: the chips row still says which machine it is,
+    // honestly, rather than dropping the classification badge entirely.
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Configuration' }));
+    expect(useGolemStore.getState()).toMatchObject({ configTabOpen: true, configTabFocused: true });
+    expect(useGitStore.getState().diffFocused).toBe(false);
+    // The in-panel readout is gone (D1): nothing switches the panel's view.
+    expect(screen.queryByRole('heading', { name: /configuration/i })).toBeNull();
+  });
+
+  it('collapses the island from the bar', () => {
+    useIDEStore.getState().revealCenterPanel('golem');
+    render(<GolemPanel visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Golem panel' }));
+    expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(true);
+  });
+
+  it('keeps the connection details behind an accessible disclosure closed by Escape', async () => {
+    hydrate();
+    render(<GolemPanel visible />);
+    const summary = screen.getByText('Connection');
+    expect(screen.getByText('Context: prompt only')).not.toBeVisible();
+    await userEvent.click(summary);
+    expect(screen.getByText('Context: prompt only')).toBeVisible();
+
+    // Escape reaches the disclosure from anywhere inside it, so the assertion
+    // starts from focus that is not already on the summary.
+    summary.blur();
+    fireEvent.keyDown(summary.closest('details') as HTMLElement, { key: 'Escape' });
+
+    expect(screen.getByText('Context: prompt only')).not.toBeVisible();
+    // Dismissing a disclosure must hand the keyboard back to the control that
+    // opened it, not drop focus on the document (spec §7).
+    expect(document.activeElement).toBe(summary);
   });
 });

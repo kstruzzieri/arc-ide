@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"firn/internal/ai"
+	"firn/internal/appstate"
 	"firn/internal/filesystem"
 	"firn/internal/git"
 	"firn/internal/lsp"
@@ -46,12 +47,15 @@ type App struct {
 	quitFn func()
 	// v3app and mainWindow are the v3 host handles, set in main() before Run.
 	// Both are nil in tests, so every use of them is nil-guarded.
-	v3app           *application.App
-	mainWindow      *application.WebviewWindow
+	v3app *application.App
+	// mainWindow is stored as the runtime interface, not the concrete window,
+	// so #271's caller verification can be exercised against a fake handle.
+	mainWindow      application.Window
 	executor        *runprofile.Executor
 	osFS            filesystem.FileSystem
 	workspaceStore  *workspace.Store
 	runHistoryStore *runhistory.Store
+	appStateStore   *appstate.Store
 	lspManager      *lsp.Manager
 	searchManager   *search.Manager
 	gitService      *git.Service
@@ -79,6 +83,26 @@ type App struct {
 	// closeMu.
 	shutdownHistoryWorkspace string
 	shutdownHistoryEpoch     uint64
+
+	// #271 Golem satellite window. golemWinMu guards golemWin alone; no native
+	// call, no disk write and no callback into the App may run while it is
+	// held, and quitPermitted() (closeMu) is always read before it.
+	golemWinMu sync.Mutex
+	golemWin   golemWindowRuntime
+	// golemSaveMu serializes app.json writes; golemSavedGen drops a write that
+	// carries an older generation than one already applied.
+	golemSaveMu   sync.Mutex
+	golemSavedGen uint64
+	// Last reported save failure, cleared on success; guarded by golemSaveMu.
+	golemSaveError string
+	// Native seams, installed once in main() before Run. Tests inject them
+	// directly; they are never mutated from a concurrent bound call.
+	golemWindowFactory func(application.WebviewWindowOptions) application.Window
+	screenBounds       func() []application.Rect
+	golemWindowPresent func(uint) bool
+	// golemAfterFunc is the test seam for the bounded transition timers. A nil
+	// value means the production clock.
+	golemAfterFunc func(time.Duration, func()) golemTimer
 }
 
 // closeState is the spec §5.5 app-close state machine. The first OS close
@@ -139,6 +163,7 @@ func NewApp() *App {
 		firnDir:         firnDir,
 		workspaceStore:  workspace.NewStore(osFS, workspaceBaseDir),
 		runHistoryStore: runhistory.NewStore(osFS, firnDir),
+		appStateStore:   appstate.NewStore(osFS, firnDir),
 		searchManager:   search.NewManager(),
 		gitService:      git.NewService(),
 		gitMsgGen:       git.NewMessageGenerator(),
@@ -422,6 +447,11 @@ func (a *App) permitAndQuit() {
 	a.closeMu.Lock()
 	a.closePhase = closePermitted
 	a.closeMu.Unlock()
+	// The Golem window's frame is saved here, on the drain goroutine, because
+	// the platform's own shutdown never reaches that window's closing hook
+	// (see handleGolemWindowClosing). closeMu is released first: the save reads
+	// quitPermitted() itself and takes golemWinMu after it.
+	a.saveGolemFrameForShutdown()
 	a.quit()
 }
 

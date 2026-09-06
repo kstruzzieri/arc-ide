@@ -13,6 +13,10 @@
  */
 
 import { ai } from '../wails/bindings';
+import { GOLEM_UNAVAILABLE } from '../golem/projection';
+// Type-only, so the cycle with `types/golemWindow.ts` (which imports this
+// module's validators at runtime) is erased rather than made circular.
+import type { GolemWindowState } from './golemWindow';
 
 export interface ConversationIdentity {
   repoEpoch: number;
@@ -157,7 +161,6 @@ export interface ConversationView {
   transcript: TranscriptEntry[];
   runs: Record<string, RunView>;
   activeRunId: string | null;
-  draft: string;
   queuedTurns: QueuedTurn[];
   pendingConsentTurn: PendingConsentTurn | null;
   lastFailedTurn: RetryTurn | null;
@@ -174,9 +177,6 @@ export interface GolemStoreState {
   activityRevision: number;
   lastFailureConversationId: string | null;
   failureRevision: number;
-  panelMode: 'golem' | 'runs'; // initialize to 'runs'
-  golemView: 'chat' | 'configuration'; // panel-level view; initialize to 'chat'
-  setGolemView(view: GolemStoreState['golemView']): void;
   /**
    * The one app-global configuration tab (#263 spec §3.1). Only its open/focus
    * flags live here: the draft and any pending API-key value stay inside the
@@ -189,20 +189,66 @@ export interface GolemStoreState {
   closeConfigTab(): void;
   setConfigTabFocused(focused: boolean): void;
   composerFocusRevision: number;
+  /** Arms the composer of the visible Golem host (replaces setPanelMode's bump). */
+  requestComposerFocus(): void;
+  /**
+   * The undocked-window lifecycle (#271 spec §5), as Go last published it.
+   *
+   * These three are app-scoped: a repository unbind, rebind or status
+   * hydration must leave them exactly as they were, because the satellite
+   * window outlives every one of those. Only `golem/windowRelay.ts` writes
+   * them, and only from an authoritative Go snapshot.
+   */
+  windowState: GolemWindowState;
+  /**
+   * The docked host's interaction barrier. True from the moment an undock is
+   * requested until the authoritative transition settles it, so the text a
+   * user is typing can never be edited while ownership is uncertain.
+   * Deliberately not derived from `windowState.phase` alone: the barrier goes
+   * up synchronously, before Go has said anything.
+   */
+  hostFrozen: boolean;
+  /**
+   * The last window failure the user has not been shown past, or null.
+   * Distinct from `bridgeError`: a window that would not open must not make a
+   * working docked AI look broken.
+   */
+  windowError: string | null;
+  setWindowState(state: GolemWindowState): void;
+  setHostFrozen(frozen: boolean): void;
+  setWindowError(error: string | null): void;
   hydrateStatus(status: GolemStatus): void;
   invalidateBinding(): void;
   ingestEvent(value: unknown): void;
   ingestRunStatus(value: unknown): void;
-  selectConversation(conversationId: string): void;
-  clearConversation(conversationId: string): void;
-  setPanelMode(mode: GolemStoreState['panelMode']): void;
-  setDraft(conversationId: string, value: string): void;
-  submitTurn(conversationId: string): Promise<void>;
-  allowAndSend(conversationId: string): Promise<void>;
-  retryLastFailed(conversationId: string): Promise<void>;
-  updateQueuedTurn(conversationId: string, queueId: string, message: string): void;
-  removeQueuedTurn(conversationId: string, queueId: string): void;
-  cancelRun(runId: string): Promise<void>;
+  /**
+   * Local admission (#271 spec §5.2). Each of these answers for the state
+   * transition it just made or refused, synchronously, before the provider has
+   * said anything: the visible host needs a definitive yes/no *now* to decide
+   * whether to drop the text the user typed. Provider completion and failure
+   * keep landing through the transcript, `lastFailedTurn` and the run phases,
+   * exactly as before — a rejected provider promise is not a refusal, because
+   * admission already took ownership of that prompt.
+   */
+  selectConversation(conversationId: string): GolemActionResult;
+  clearConversation(conversationId: string): GolemActionResult;
+  submitTurn(conversationId: string, text: string): GolemActionResult;
+  allowAndSend(conversationId: string, runId: string, challengeId: string): GolemActionResult;
+  retryLastFailed(conversationId: string): GolemActionResult;
+  updateQueuedTurn(conversationId: string, queueId: string, message: string): GolemActionResult;
+  removeQueuedTurn(conversationId: string, queueId: string): GolemActionResult;
+  cancelRun(runId: string): GolemActionResult;
+}
+
+/**
+ * The outcome of admitting one user intent against the executing owner
+ * (#271 spec §5.2). `ok: false` is a *definitive* refusal the host may act
+ * on — it never encodes "not yet known": an uncertain relay timeout keeps the
+ * action pending instead. `reason` is already bounded by the producer.
+ */
+export interface GolemActionResult {
+  ok: boolean;
+  reason?: string;
 }
 
 // ── Wails inputs ──────────────────────────────────────────────────────────────
@@ -268,8 +314,13 @@ export const contractError = (): never => {
 
 const MAX_ERROR_CHARS = 200;
 
-/** Shown whenever a failure carries no usable message of its own. */
-export const GOLEM_UNAVAILABLE = 'Golem is unavailable.';
+/**
+ * Shown whenever a failure carries no usable message of its own. Defined in
+ * `golem/projection` — the bindings-free half — because the satellite's chat
+ * surface needs it and must never reach this module; re-exported here so the
+ * store and the validators keep their single import surface.
+ */
+export { GOLEM_UNAVAILABLE };
 
 /**
  * Clamps any rejection value to a short, displayable string. The backend
@@ -293,7 +344,7 @@ const isNumber = (value: unknown): value is number =>
 /** Absent means absent: `undefined` and `null` are the same missing optional. */
 const isAbsent = (value: unknown): boolean => value === undefined || value === null;
 
-function readConversationIdentity(value: unknown): ConversationIdentity | null {
+export function readConversationIdentity(value: unknown): ConversationIdentity | null {
   if (!isRecord(value)) return null;
   if (!isNumber(value.repoEpoch) || !isString(value.workspaceId) || !isString(value.conversationId))
     return null;
@@ -304,14 +355,14 @@ function readConversationIdentity(value: unknown): ConversationIdentity | null {
   };
 }
 
-function readRunIdentity(value: unknown): RunIdentity | null {
+export function readRunIdentity(value: unknown): RunIdentity | null {
   const base = readConversationIdentity(value);
   if (!base || !isRecord(value)) return null;
   if (!isString(value.runId) || value.runId === '') return null;
   return { ...base, runId: value.runId };
 }
 
-function readDestination(value: unknown): ProviderDestination | null {
+export function readDestination(value: unknown): ProviderDestination | null {
   if (!isRecord(value)) return null;
   const { provider, model, endpoint, classification, digest } = value;
   if (!isString(provider) || !isString(model) || !isString(endpoint) || !isString(digest))
@@ -326,7 +377,7 @@ function readContextReceipt(value: unknown): ContextReceipt | null {
   return { included: value.included, bytes: value.bytes, excluded: value.excluded };
 }
 
-function readConsentChallenge(value: unknown): ConsentChallenge | null {
+export function readConsentChallenge(value: unknown): ConsentChallenge | null {
   if (!isRecord(value)) return null;
   if (!isString(value.id) || value.id === '') return null;
   if (!isString(value.destinationDigest) || !isNumber(value.expiresAt)) return null;

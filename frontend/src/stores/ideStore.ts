@@ -5,6 +5,13 @@ import type { filesystem, runhistory, workspace } from '../wails/bindings';
 import type { RunProfile, RunProfileUIState } from '../types/runProfile';
 import type { FormState } from '../utils/runProfileForm';
 import { LineAssembler } from '../utils/lineAssembler';
+import {
+  DEFAULT_CENTER_LAYOUT,
+  initialCenterReveal,
+  type CenterLayoutPrefs,
+  type CenterOrder,
+  type CenterPanel,
+} from '../utils/centerLayout';
 import type {
   CompoundRun,
   CompoundRunEvent,
@@ -101,7 +108,12 @@ export interface NavigationLocation {
 
 const MAX_NAVIGATION_HISTORY = 50;
 
-const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
+const defaultPanelSizes = {
+  left: 260,
+  right: 280,
+  bottom: 200,
+  golem: DEFAULT_CENTER_LAYOUT.golemWidth,
+};
 
 function createDefaultWorkspaceSessionState() {
   return {
@@ -110,6 +122,18 @@ function createDefaultWorkspaceSessionState() {
     isRightPanelCollapsed: false,
     isBottomPanelCollapsed: false,
     panelSizes: { ...defaultPanelSizes },
+    // #271 center pair. Preferences persist per repository session; centerReveal
+    // is the transient "which center panel was explicitly requested" target
+    // that the effective-layout budget protects under window pressure.
+    centerOrder: DEFAULT_CENTER_LAYOUT.centerOrder,
+    isGolemPanelCollapsed: DEFAULT_CENTER_LAYOUT.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: DEFAULT_CENTER_LAYOUT.isFilesPanelCollapsed,
+    // Deliberately not seeded here: the revision is a monotonic marker, not a
+    // session preference. Resetting it to 0 would let a session that was never
+    // restored (no saved state file) hand the next reset an unchanged marker,
+    // and the shell would read that reset as a gesture.
+    centerReveal: 'files' as CenterPanel,
+    centerDrag: null as CenterPanel | null,
     openFiles: [] as EditorFile[],
     activeFileId: null as string | null,
     cursorPosition: { line: 1, column: 1 },
@@ -158,7 +182,20 @@ interface IDEState {
   isLeftPanelCollapsed: boolean;
   isRightPanelCollapsed: boolean;
   isBottomPanelCollapsed: boolean;
-  panelSizes: { left: number; right: number; bottom: number };
+  panelSizes: { left: number; right: number; bottom: number; golem: number };
+  // #271 center pair
+  centerOrder: CenterOrder;
+  isGolemPanelCollapsed: boolean;
+  isFilesPanelCollapsed: boolean;
+  centerReveal: CenterPanel;
+  /**
+   * Counts restores of the center pair; never persisted. A layout that arrives
+   * this way is not a change the user made, and the shell owes it neither an
+   * announcement nor a focus move (spec §2.4, D2, §7).
+   */
+  centerLayoutRevision: number;
+  /** Panel currently being dragged for reorder; never persisted. */
+  centerDrag: CenterPanel | null;
 
   // Editor
   openFiles: EditorFile[];
@@ -270,7 +307,15 @@ interface IDEActions {
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
   toggleBottomPanel: () => void;
-  setPanelSize: (panel: 'left' | 'right' | 'bottom', size: number) => void;
+  setPanelSize: (panel: 'left' | 'right' | 'bottom' | 'golem', size: number) => void;
+  // #271 center pair
+  setCenterOrder: (order: CenterOrder) => void;
+  swapCenterOrder: () => void;
+  setGolemPanelCollapsed: (collapsed: boolean) => void;
+  setFilesPanelCollapsed: (collapsed: boolean) => void;
+  revealCenterPanel: (panel: CenterPanel) => void;
+  applyCenterLayout: (prefs: CenterLayoutPrefs) => void;
+  setCenterDrag: (panel: CenterPanel | null) => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -895,6 +940,23 @@ function mergeRunHistorySnapshot(
   return { runHistory, ...archives };
 }
 
+/**
+ * The whole center-pair truth a reveal writes (#271 §2.3): the requested panel
+ * becomes the explicit intent and stops being a rail, and the peer is left as
+ * the user set it. `revealCenterPanel` and `focusProfileOutput` both go through
+ * here so the pair invariant has one definition rather than one per caller.
+ */
+function revealCenterPatch(
+  state: Pick<IDEState, 'isGolemPanelCollapsed' | 'isFilesPanelCollapsed'>,
+  panel: CenterPanel
+): Pick<IDEState, 'centerReveal' | 'isGolemPanelCollapsed' | 'isFilesPanelCollapsed'> {
+  return {
+    centerReveal: panel,
+    isGolemPanelCollapsed: panel === 'golem' ? false : state.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: panel === 'files' ? false : state.isFilesPanelCollapsed,
+  };
+}
+
 export const useIDEStore = create<IDEStore>()(
   devtools(
     (set, get) => ({
@@ -908,6 +970,10 @@ export const useIDEStore = create<IDEStore>()(
       isLoadingTree: false,
       treeError: null,
       ...createDefaultWorkspaceSessionState(),
+      // Bumped by applyCenterLayout and by every session reset, so a consumer
+      // can tell a restore from a change the user just made. Transient: never
+      // collected into the persisted state and never in the save-subscribe list.
+      centerLayoutRevision: 0,
       toast: null,
       activeTerminalTab: 'terminal',
       terminalSessions: [],
@@ -1149,6 +1215,60 @@ export const useIDEStore = create<IDEStore>()(
           'setPanelSize'
         );
       },
+
+      // #271 center pair. The not-both-collapsed invariant lives in the two
+      // setters, so no caller has to order a collapse against the other panel.
+      setCenterOrder: (centerOrder) => set({ centerOrder }, false, 'setCenterOrder'),
+
+      swapCenterOrder: () =>
+        set(
+          (state) => ({
+            centerOrder: state.centerOrder === 'files-first' ? 'golem-first' : 'files-first',
+          }),
+          false,
+          'swapCenterOrder'
+        ),
+
+      setGolemPanelCollapsed: (collapsed) =>
+        set(
+          (state) => ({
+            isGolemPanelCollapsed: collapsed,
+            isFilesPanelCollapsed: collapsed ? false : state.isFilesPanelCollapsed,
+          }),
+          false,
+          'setGolemPanelCollapsed'
+        ),
+
+      setFilesPanelCollapsed: (collapsed) =>
+        set(
+          (state) => ({
+            isFilesPanelCollapsed: collapsed,
+            isGolemPanelCollapsed: collapsed ? false : state.isGolemPanelCollapsed,
+          }),
+          false,
+          'setFilesPanelCollapsed'
+        ),
+
+      revealCenterPanel: (panel) =>
+        set((state) => revealCenterPatch(state, panel), false, 'revealCenterPanel'),
+
+      // Restore path: one set, already normalized, so the subscribe-and-save
+      // hook never observes a half-applied pair.
+      applyCenterLayout: (prefs) =>
+        set(
+          (state) => ({
+            centerOrder: prefs.centerOrder,
+            isGolemPanelCollapsed: prefs.isGolemPanelCollapsed,
+            isFilesPanelCollapsed: prefs.isFilesPanelCollapsed,
+            panelSizes: { ...state.panelSizes, golem: prefs.golemWidth },
+            centerReveal: initialCenterReveal(prefs),
+            centerLayoutRevision: state.centerLayoutRevision + 1,
+          }),
+          false,
+          'applyCenterLayout'
+        ),
+
+      setCenterDrag: (centerDrag) => set({ centerDrag }, false, 'setCenterDrag'),
 
       // Editor actions
       openFile: (file) =>
@@ -2441,6 +2561,11 @@ export const useIDEStore = create<IDEStore>()(
                 representativeRunInstanceId(state, profileId) ?? compoundRunInstanceId ?? null,
               activeTerminalTab: 'output' as TerminalTab,
               isBottomPanelCollapsed: false,
+              // The output dock is inside the Files column (#271 §6.3), so
+              // un-collapsing the bottom panel is only half the job: the column
+              // itself may be a rail, by preference or by window pressure. Set
+              // in the same object so a repeat click on the same run repeats it.
+              ...revealCenterPatch(state, 'files'),
             };
           },
           false,
@@ -2493,7 +2618,15 @@ export const useIDEStore = create<IDEStore>()(
         set({ isRestoringWorkspace }, false, 'setRestoringWorkspace'),
 
       resetWorkspaceSession: () =>
-        set(createDefaultWorkspaceSessionState(), false, 'resetWorkspaceSession'),
+        set(
+          (state) => ({
+            ...createDefaultWorkspaceSessionState(),
+            // A reset is the first step of a restore, never a gesture: keep the marker moving.
+            centerLayoutRevision: state.centerLayoutRevision + 1,
+          }),
+          false,
+          'resetWorkspaceSession'
+        ),
 
       // Recent workspaces actions
       setRecentWorkspaces: (recentWorkspaces) =>
@@ -2612,6 +2745,10 @@ export const useSidebarView = () => useIDEStore((state) => state.activeSidebarVi
 export const useIsLeftPanelCollapsed = () => useIDEStore((state) => state.isLeftPanelCollapsed);
 export const useIsRightPanelCollapsed = () => useIDEStore((state) => state.isRightPanelCollapsed);
 export const useIsBottomPanelCollapsed = () => useIDEStore((state) => state.isBottomPanelCollapsed);
+export const useCenterOrder = () => useIDEStore((state) => state.centerOrder);
+export const useIsGolemPanelCollapsed = () => useIDEStore((state) => state.isGolemPanelCollapsed);
+export const useIsFilesPanelCollapsed = () => useIDEStore((state) => state.isFilesPanelCollapsed);
+export const useCenterReveal = () => useIDEStore((state) => state.centerReveal);
 export const useOpenFiles = () => useIDEStore((state) => state.openFiles);
 export const useActiveFileId = () => useIDEStore((state) => state.activeFileId);
 export const useActiveFile = () =>
