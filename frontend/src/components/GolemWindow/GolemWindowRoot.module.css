@@ -136,6 +136,11 @@
   cursor: pointer;
 }
 
+.retry:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
 .retry:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;

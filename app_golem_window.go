@@ -598,6 +598,17 @@ func releaseGolemHooks(unhook []func()) {
 	}
 }
 
+// uncommittedLocked reports that the live mode is not persistable yet: it only
+// turns undocked at `ready`, so while an attempt is bootstrapping it still reads
+// docked even when the file on disk says undocked and the frame in hand came out
+// of that same file. Nothing newer than the file exists to write, and writing the
+// live mode would silently drop the preference a restore is serving (§5.3 "not
+// persisting mode: docked"). Every writer of snapshot().Mode asks this first.
+// Call with golemWinMu held.
+func (r *golemWindowRuntime) uncommittedLocked() bool {
+	return r.phase == golemPhaseBootstrapping || r.phase == golemPhaseBootstrapped
+}
+
 // retireLocked clears exactly the retired instance and commits docked mode. It
 // never releases hooks itself; the caller does that after unlocking.
 func (r *golemWindowRuntime) retireLocked() GolemWindowState {
@@ -669,9 +680,12 @@ func (a *App) showGolemWindow(handle application.Window) application.Window {
 	return handle
 }
 
-// focusMainWindow brings main forward for a validated satellite config request
-// and for B6's native menu handlers. mainWindow is installed once before App
-// startup; call this with no lifecycle or state mutex held.
+// focusMainWindow brings main forward and gives it the keyboard, for the two
+// gestures that ask for it by name: a validated satellite config request, and
+// the native menu handlers. It is deliberately not on the startup restore path
+// — Focus() activates the whole application (§7 forbids that), which is why the
+// restore hands key back with Show() alone. mainWindow is installed once before
+// App startup; call this with no lifecycle or state mutex held.
 func (a *App) focusMainWindow() {
 	if a.quitPermitted() {
 		return
@@ -763,11 +777,8 @@ func (a *App) saveGolemFrameForShutdown() {
 // retirement persists docked, exactly what the retirement would have.
 //
 // A quit that lands while an attempt is still bootstrapping writes nothing at
-// all (§5.3 "not persisting mode: docked"). The live mode only turns undocked
-// at ready, so during a startup restore it still reads docked while the file
-// says undocked — and the frame in hand is the one just placed from that same
-// file. There is nothing newer than the file to save, and writing the live
-// mode would silently drop the preference the restore was serving.
+// all: see uncommittedLocked for why the live mode is not the news it looks
+// like there.
 func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 	frame, normal := a.readGolemFrame()
 
@@ -794,8 +805,7 @@ func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 	if a.golemWin.closeAuthorized {
 		mode = appstate.ModeDocked
 	}
-	uncommitted := a.golemWin.phase == golemPhaseBootstrapping ||
-		a.golemWin.phase == golemPhaseBootstrapped
+	uncommitted := a.golemWin.uncommittedLocked()
 	a.golemWinMu.Unlock()
 
 	if uncommitted {
@@ -809,13 +819,19 @@ func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 }
 
 // scheduleGolemBoundsSave debounces a move/resize burst into one geometry read.
+// The hooks are installed before Run(), and every platform moves the window
+// while creating it (Windows setPosition → WM_MOVE; macOS installs the delegate
+// in windowNew and then setPosition), so this fires for a window that is still
+// Hidden and has no user-driven geometry to debounce yet. Nothing is armed
+// while the mode is uncommitted; captureGolemFrame checks again when it runs.
 func (a *App) scheduleGolemBoundsSave(instance uint64) {
 	if a.quitPermitted() {
 		return
 	}
 	a.golemWinMu.Lock()
 	defer a.golemWinMu.Unlock()
-	if a.golemWin.instance != instance || a.golemWin.closeAuthorized {
+	if a.golemWin.instance != instance || a.golemWin.closeAuthorized ||
+		a.golemWin.uncommittedLocked() {
 		return
 	}
 	stopGolemTimer(a.golemWin.saveTimer)
@@ -838,6 +854,13 @@ func (a *App) captureGolemFrame(instance uint64) {
 		return
 	}
 	a.golemWin.lastNormal = frame
+	if a.golemWin.uncommittedLocked() {
+		// The frame is worth remembering; the mode beside it is not writable yet
+		// (uncommittedLocked). Spending no generation leaves the file exactly as
+		// the restore found it.
+		a.golemWinMu.Unlock()
+		return
+	}
 	a.golemWin.saveGen++
 	gen := a.golemWin.saveGen
 	mode := a.golemWin.snapshot().Mode
@@ -1299,18 +1322,24 @@ func (a *App) acceptGolemReady(instance uint64, msg GolemWindowMessage) error {
 	})
 	a.emitGolemState(state)
 	if restoring {
-		// §7: a startup restore is not the user's gesture, so it may appear but
-		// never take OS focus from the window they are working in. Skipping
-		// Focus() is not enough on its own: every platform's Show() activates the
-		// window it reveals (macOS makeKeyAndOrderFront, Windows SW_SHOW, Linux
-		// gtk_window_present). So main's key status is read first and handed back
-		// after the show — an intra-app move, no cross-app activation. When main
-		// was not key (Firn in the background), nothing is focused at all.
-		main := asLiveWindow(a.mainWindow)
-		wasKey := main != nil && main.IsFocused()
+		// §7: a startup restore is not the user's gesture, so the window may
+		// appear but must never take OS focus. Skipping Focus() is not enough on
+		// its own — every platform's Show() makes the window it reveals key
+		// within the app (macOS makeKeyAndOrderFront:, Windows SW_SHOW, Linux
+		// gtk_window_present) — so main is ordered back in front afterwards with
+		// that same Show(). It is the same call the satellite just made, and it
+		// is deliberately not Focus(): Focus activates the whole application over
+		// whatever the user switched to (macOS activateIgnoringOtherApps:YES,
+		// Windows SetForegroundWindow), which is exactly what §7 forbids. So the
+		// hand-back is unconditional — main's key status is never read, and there
+		// is nothing to go stale between the two calls. A minimised main is left
+		// alone: un-minimising a window the user put away would be a larger
+		// intrusion than the satellite keeping key. On one display the restored
+		// window ends up behind main when their frames overlap; the rail's
+		// "Focus Golem window" is the way to it.
 		a.showGolemWindow(handle)
-		if wasKey {
-			a.focusMainWindow()
+		if main := asLiveWindow(a.mainWindow); main != nil && !main.IsMinimised() {
+			main.Show()
 		}
 	} else {
 		a.revealGolemWindow(handle)
@@ -1699,7 +1728,11 @@ func (a *App) PostGolemWindowMessage(ctx context.Context, msg GolemWindowMessage
 //     the satellite's drafts follow. Both relays hold an envelope that names a
 //     revision they have not seen and replay it after the state catches up,
 //     and the satellite buffers everything until its own bootstrap answers, so
-//     nothing is delivered against a stale snapshot.
+//     nothing is delivered against a stale snapshot. Both holds are bounded —
+//     PENDING_ENVELOPE_LIMIT = 32 envelopes in main, SATELLITE_STARTUP_BUFFER =
+//     64 in the satellite — and an overflow fails loudly (main toasts and drops
+//     the envelope, the satellite fails its startup) rather than delivering the
+//     message against a snapshot it does not match.
 //   - The bound call now blocks on the recipient's own event queue instead of
 //     the app-wide mailbox. A satellite whose UI thread is not draining (a
 //     macOS window drag is a tracking loop) stalls this relay alone, where it

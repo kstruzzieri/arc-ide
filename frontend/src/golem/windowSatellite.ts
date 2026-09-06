@@ -4,6 +4,7 @@ import {
   parseGolemWindowBootstrap,
   parseGolemWindowEnvelope,
   parseGolemWindowState,
+  retryChangesNothing,
   type GolemAck,
   type GolemDraftMap,
   type GolemView,
@@ -620,13 +621,9 @@ export function retryGolemConnection(): void {
   const own = active;
   if (own === null || own.cancelled) return;
   const state = useViewStore.getState().state;
-  // Only a `closing` that names a reason is a stalled retirement. Any other
-  // `closing` is a transfer Go still believes is running, and its re-dock
-  // branch refuses a second request outright — so a retry there would clear the
-  // strip and do nothing, leaving the user with a frozen window and no reason
-  // on screen. Keep the reason instead; Go's deadline or the abort already
-  // posted is what ends that wait.
-  if (own.core !== null && state?.phase === 'closing' && state.reason === undefined) return;
+  // The same predicate the root disables the control on (retryChangesNothing):
+  // keep the reason on screen rather than clearing it for nothing.
+  if (own.core !== null && retryChangesNothing(state)) return;
   useViewStore.setState({ error: null }, false, 'golem/retry');
   if (own.core === null) {
     own.generation += 1;

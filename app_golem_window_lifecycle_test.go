@@ -45,7 +45,6 @@ type fakeNative struct {
 	minimised  bool
 	maximised  bool
 	fullscreen bool
-	focused    bool
 	reenter    func()
 	// onRun runs inside Run(), which is where the production code registers and
 	// starts the window. It is the only point a test can act between publishing
@@ -159,19 +158,6 @@ func (f *fakeNative) IsFullscreen() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.fullscreen
-}
-
-func (f *fakeNative) IsFocused() bool {
-	f.probe()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.focused
-}
-
-func (f *fakeNative) setFocused(v bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.focused = v
 }
 
 func (f *fakeNative) Bounds() application.Rect {
@@ -1537,10 +1523,17 @@ func TestQuitDuringTransfer(t *testing.T) {
 
 // TestQuitDuringRestoreKeepsUndockedPreference pins spec §5.3 "not persisting
 // mode: docked" for the window the startup restore has not finished opening.
-// The live mode is docked until `ready` commits the undock, so a quit landing
-// inside the restore's bootstrap must not write that live mode over the saved
+// The live mode is docked until `ready` commits the undock, so nothing that
+// runs inside the restore's bootstrap may write that live mode over the saved
 // undocked preference: the restore attempt is not news, and the placed frame
 // came out of the very file it would overwrite.
+//
+// The quit is only one of the writers. The bounds hooks are installed before
+// Run(), and every platform moves the window while creating it (Windows
+// setPosition → WM_MOVE → WindowDidMove; macOS installs the delegate in
+// windowNew and then setPosition), so the debounced geometry save fires during
+// the bootstrap on an ordinary launch. Both writers go through the same
+// uncommitted check, so the sub-test drives the creation move as well.
 func TestQuitDuringRestoreKeepsUndockedPreference(t *testing.T) {
 	const saved = `{"version":1,"state":{"golemWindow":` +
 		`{"mode":"undocked","x":40,"y":50,"width":500,"height":760}}}`
@@ -1572,6 +1565,21 @@ func TestQuitDuringRestoreKeepsUndockedPreference(t *testing.T) {
 			}
 			if h.mode() != appstate.ModeDocked {
 				t.Fatalf("mode = %s during the restore, want docked until ready", h.mode())
+			}
+
+			// The platform's own creation move, at the frame it just placed.
+			satellite := h.satellite()
+			satellite.setFrame(application.Rect{X: 41, Y: 51, Width: 500, Height: 760})
+			armed := len(h.liveTimers())
+			satellite.fire(events.Common.WindowDidMove)
+			if got := len(h.liveTimers()); got != armed {
+				t.Fatalf("the creation move armed %d bounds save(s) during the bootstrap, want none",
+					got-armed)
+			}
+			// And the debounced write refuses on its own, however it is reached.
+			h.app.captureGolemFrame(h.instance())
+			if got := h.savedMode(); got != appstate.ModeUndocked {
+				t.Fatalf("the creation move saved mode %q, want the undocked preference kept", got)
 			}
 
 			h.app.quitFn = func() {}
@@ -1712,12 +1720,16 @@ func TestRelayTargetsTheRecipientWindow(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestRestoreShowsWithoutFocus pins spec §7 for the startup restore of a saved
-// undocked window: it is shown, never focused, and the key window the user was
-// working in keeps the keyboard. The platform's Show() activates the window it
-// reveals on all three targets (macOS makeKeyAndOrderFront, Windows SW_SHOW,
-// Linux gtk_window_present), so "no Focus() call" is not enough on its own: the
-// restore hands main's key status back when main had it. A user's own undock,
-// and an explicit open of the live window, still focus the satellite.
+// undocked window: it is shown, never focused, and the window the user was
+// working in gets the keyboard back. Every platform's Show() makes the window
+// it reveals key WITHIN the app (macOS makeKeyAndOrderFront, Windows SW_SHOW,
+// Linux gtk_window_present) without activating the app, so "no Focus() call" is
+// not enough on its own — the restore orders main back in front afterwards with
+// the same Show(). Focus() is the one call that would activate Firn over
+// whatever the user switched to (macOS activateIgnoringOtherApps:YES, Windows
+// SetForegroundWindow), so the restore path must never make it, on either
+// window, whether or not main happened to be key. A user's own undock, and an
+// explicit open of the live window, still focus the satellite.
 func TestRestoreShowsWithoutFocus(t *testing.T) {
 	h := newGolemHarness(t)
 	h.writeFile(h.appStatePath(), []byte(
@@ -1726,16 +1738,14 @@ func TestRestoreShowsWithoutFocus(t *testing.T) {
 	if !h.state().RestorePending {
 		t.Fatal("an undocked preference did not mark the restore pending")
 	}
-	// The ordinary launch: main is the key window when the restore completes.
-	h.mainWin.setFocused(true)
 	h.undock()
 	satellite := h.satellite()
 	if got := satellite.recorded(); !equalStrings(got, []string{"run", "show"}) {
 		t.Fatalf("restore made %v, want run then show alone (no focus)", got)
 	}
-	if h.mainWin.countOf("focus") != 1 {
-		t.Fatalf("main made %v, want the restore to hand its key status back exactly once",
-			h.mainWin.recorded())
+	if got := h.mainWin.recorded(); !equalStrings(got, []string{"show"}) {
+		t.Fatalf("main made %v, want one show alone: key back inside the app, never an activation",
+			got)
 	}
 	h.mainWin.mu.Lock()
 	h.mainWin.calls = nil
@@ -1764,23 +1774,24 @@ func TestRestoreShowsWithoutFocus(t *testing.T) {
 	}
 }
 
-// TestRestoreWithMainUnfocusedFocusesNothing is the other half of §7: when the
-// app is in the background at the moment the restore completes, nothing the
-// restore does may pull focus to Firn at all — not to the satellite, and not
-// back to main, whose key status was not the restore's to take.
-func TestRestoreWithMainUnfocusedFocusesNothing(t *testing.T) {
+// TestRestoreLeavesMinimisedMainAlone is the other half of §7: the hand-back is
+// an ordering move inside the app, not a reason to put a window the user put
+// away back on screen. A minimised main is left minimised — the satellite keeps
+// key, which is a smaller intrusion than un-minimising main would be — and no
+// window is ever un-minimised, shown or focused on main's behalf.
+func TestRestoreLeavesMinimisedMainAlone(t *testing.T) {
 	h := newGolemHarness(t)
 	h.writeFile(h.appStatePath(), []byte(
 		`{"version":1,"state":{"golemWindow":{"mode":"undocked","x":40,"y":50,"width":500,"height":760}}}`))
 	h.app.loadGolemWindowPreference()
-	h.mainWin.setFocused(false)
+	h.mainWin.minimised = true
 	h.undock()
 
 	if got := h.satellite().recorded(); !equalStrings(got, []string{"run", "show"}) {
 		t.Fatalf("restore made %v, want run then show alone", got)
 	}
 	if got := h.mainWin.recorded(); len(got) != 0 {
-		t.Fatalf("main made %v while unfocused, want no native call at all", got)
+		t.Fatalf("main made %v while minimised, want no native call at all", got)
 	}
 }
 

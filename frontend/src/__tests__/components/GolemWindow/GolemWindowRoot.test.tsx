@@ -177,7 +177,39 @@ describe('lifecycle', () => {
     install(viewOf(), { error: 'The main window stopped answering.' });
     render(<GolemWindowRoot />);
     expect(screen.getByRole('alert')).toHaveTextContent('The main window stopped answering.');
-    fireEvent.click(screen.getByRole('button', { name: /retry connection/i }));
+    const retry = screen.getByRole('button', { name: /retry connection/i });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(retryConnectionMock).toHaveBeenCalledTimes(1);
+  });
+
+  // A `closing` with no reason is a transfer Go still believes is running, and
+  // windowSatellite refuses to act on it. Rendering the control live there would
+  // read as broken: pressed, nothing happens, the strip stays.
+  it('disables retry while a reason-less closing is still in flight', () => {
+    install(viewOf(), {
+      state: { ...readyState, phase: 'closing' },
+      error: 'The main window stopped answering.',
+    });
+    render(<GolemWindowRoot />);
+    const retry = screen.getByRole('button', { name: /retry connection/i });
+    expect(retry).toBeDisabled();
+    expect(retry).toHaveAttribute('title', expect.stringMatching(/waiting for the main window/i));
+    fireEvent.click(retry);
+    expect(retryConnectionMock).not.toHaveBeenCalled();
+  });
+
+  // The same phase once Go names why is a stalled retirement, and Retry there
+  // is a fresh close request that does something.
+  it('keeps retry live once the stalled close names a reason', () => {
+    install(viewOf(), {
+      state: { ...readyState, phase: 'closing', reason: 'The window would not close.' },
+      error: 'The window would not close.',
+    });
+    render(<GolemWindowRoot />);
+    const retry = screen.getByRole('button', { name: /retry connection/i });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
     expect(retryConnectionMock).toHaveBeenCalledTimes(1);
   });
 });

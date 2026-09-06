@@ -43,6 +43,24 @@ export interface GolemWindowState {
   reason?: string;
 }
 
+/**
+ * Whether "Retry connection" would change nothing at all in this state.
+ *
+ * Only a `closing` that names a reason is a stalled retirement, which a retry
+ * can act on with a fresh close request. Any other `closing` is a transfer Go
+ * still believes is running, and its re-dock branch refuses a second request
+ * outright — so retrying there would clear the reason strip and do nothing,
+ * leaving the user a frozen window with no explanation on screen. Go's own
+ * deadline, or the abort already posted, is what ends that wait.
+ *
+ * `windowSatellite.retryGolemConnection` refuses on this, and
+ * `GolemWindowRoot` disables the control on it, so the surfaced affordance and
+ * the action behind it can never disagree.
+ */
+export function retryChangesNothing(state: GolemWindowState | null | undefined): boolean {
+  return state?.phase === 'closing' && state.reason === undefined;
+}
+
 export type GolemWindowKind = 'view' | 'drafts' | 'action' | 'ack' | 'ready' | 'abort';
 export type GolemWindowRole = 'main' | 'satellite';
 

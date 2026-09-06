@@ -14,6 +14,7 @@ import {
   satelliteActions,
   startGolemSatellite,
 } from '../../golem/windowSatellite';
+import { retryChangesNothing } from '../../types/golemWindow';
 import { isMac } from '../../utils/platform';
 import { GolemSurface } from '../Golem/GolemSurface';
 import { PlusIcon, SettingsIcon } from '../icons';
@@ -39,6 +40,7 @@ import styles from './GolemWindowRoot.module.css';
 const WINDOW_TITLE = 'Firn — Golem';
 const CONNECTING = 'Connecting to the main window…';
 const BUSY_HINT = 'Finish or cancel the current run first';
+const RETRY_WAIT_HINT = 'Waiting for the main window to give up the transfer';
 
 /**
  * Escape closes the connection disclosure and hands focus back to its summary —
@@ -118,6 +120,7 @@ export function GolemWindowRoot() {
   // Only Go's own `ready` makes this window the visible host. While it is
   // bootstrapping or closing, main is still the one announcing.
   const visible = windowState?.phase === 'ready';
+  const canRetry = !retryChangesNothing(windowState);
   const composerPending = conversationId !== null && pendingComposers.has(conversationId);
 
   const clearBusy =
@@ -217,7 +220,15 @@ export function GolemWindowRoot() {
       {error !== null && (
         <p className={styles.error} role="alert">
           <span className={styles.reason}>{error}</span>
-          <button type="button" className={styles.retry} onClick={retryGolemConnection}>
+          {/* Retry is a deliberate no-op while Go still believes the transfer is
+              running; a live button there reads as broken. Say why instead. */}
+          <button
+            type="button"
+            className={styles.retry}
+            title={canRetry ? 'Retry connection' : RETRY_WAIT_HINT}
+            disabled={!canRetry}
+            onClick={retryGolemConnection}
+          >
             Retry connection
           </button>
         </p>
