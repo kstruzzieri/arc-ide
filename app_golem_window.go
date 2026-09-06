@@ -366,8 +366,11 @@ func (a *App) loadGolemWindowPreference() {
 		// state main installs before any attempt, so its reason is the channel
 		// this failure has; the store keeps refusing writes for the session, and
 		// the text says so.
+		// The consequence leads: boundedGolemMessage cuts this text at 200
+		// characters, and a long Go error must only ever cost its own tail, never
+		// the half that tells the user what it means for the session.
 		a.golemWin.reason = fmt.Sprintf(
-			"The Golem window preference could not be read (%v); this session runs docked and will not save window changes.",
+			"This session runs docked and will not save window changes: the Golem window preference could not be read (%v).",
 			err)
 	}
 	loaded := a.golemWin.snapshot()
@@ -758,6 +761,13 @@ func (a *App) saveGolemFrameForShutdown() {
 // The saved mode is the one the drafts are in: an authorized close has already
 // handed them to main, so a quit landing between the authorization and the
 // retirement persists docked, exactly what the retirement would have.
+//
+// A quit that lands while an attempt is still bootstrapping writes nothing at
+// all (§5.3 "not persisting mode: docked"). The live mode only turns undocked
+// at ready, so during a startup restore it still reads docked while the file
+// says undocked — and the frame in hand is the one just placed from that same
+// file. There is nothing newer than the file to save, and writing the live
+// mode would silently drop the preference the restore was serving.
 func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 	frame, normal := a.readGolemFrame()
 
@@ -784,8 +794,15 @@ func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 	if a.golemWin.closeAuthorized {
 		mode = appstate.ModeDocked
 	}
+	uncommitted := a.golemWin.phase == golemPhaseBootstrapping ||
+		a.golemWin.phase == golemPhaseBootstrapped
 	a.golemWinMu.Unlock()
 
+	if uncommitted {
+		// The timers above are stopped and saveGen is spent, so no later save can
+		// land either; the file keeps exactly the preference it already held.
+		return
+	}
 	a.saveGolemPreference(gen, appstate.GolemWindow{
 		Mode: mode, X: saved.X, Y: saved.Y, Width: saved.Width, Height: saved.Height,
 	})
@@ -1283,8 +1300,18 @@ func (a *App) acceptGolemReady(instance uint64, msg GolemWindowMessage) error {
 	a.emitGolemState(state)
 	if restoring {
 		// §7: a startup restore is not the user's gesture, so it may appear but
-		// never take OS focus from the window they are working in.
+		// never take OS focus from the window they are working in. Skipping
+		// Focus() is not enough on its own: every platform's Show() activates the
+		// window it reveals (macOS makeKeyAndOrderFront, Windows SW_SHOW, Linux
+		// gtk_window_present). So main's key status is read first and handed back
+		// after the show — an intra-app move, no cross-app activation. When main
+		// was not key (Firn in the background), nothing is focused at all.
+		main := asLiveWindow(a.mainWindow)
+		wasKey := main != nil && main.IsFocused()
 		a.showGolemWindow(handle)
+		if wasKey {
+			a.focusMainWindow()
+		}
 	} else {
 		a.revealGolemWindow(handle)
 	}
@@ -1661,9 +1688,22 @@ func (a *App) PostGolemWindowMessage(ctx context.Context, msg GolemWindowMessage
 // The app-wide event bus fans every emit out to both windows, which made main
 // JSON-parse its own projection on every publish and the satellite parse every
 // action echo; WebviewWindow.DispatchWailsEvent is the per-window leg of that
-// same fan-out (event_manager.go dispatch → listener.DispatchWailsEvent), so
-// targeting it drops the waste without changing how the envelope arrives.
+// same fan-out (event_manager.go dispatch → listener.DispatchWailsEvent).
 // The lifecycle state (golem:window-mode) stays app-wide: both windows read it.
+//
+// Two consequences of skipping the app-wide mailbox, both deliberate:
+//   - A relayed message may arrive BEFORE the state emitted just ahead of it
+//     (Event.Emit queues on the single frontendEvents mailbox; this call does
+//     not). That is the normal order here, not an exception: acceptGolemReady
+//     emits ready then relays it, and requestGolemReDock emits closing before
+//     the satellite's drafts follow. Both relays hold an envelope that names a
+//     revision they have not seen and replay it after the state catches up,
+//     and the satellite buffers everything until its own bootstrap answers, so
+//     nothing is delivered against a stale snapshot.
+//   - The bound call now blocks on the recipient's own event queue instead of
+//     the app-wide mailbox. A satellite whose UI thread is not draining (a
+//     macOS window drag is a tracking loop) stalls this relay alone, where it
+//     used to park every window's events behind the same queue.
 func (a *App) relayGolemEnvelope(envelope GolemWindowEnvelope) error {
 	a.golemWinMu.Lock()
 	satellite := asLiveWindow(a.golemWin.handle)

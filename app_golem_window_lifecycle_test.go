@@ -45,6 +45,7 @@ type fakeNative struct {
 	minimised  bool
 	maximised  bool
 	fullscreen bool
+	focused    bool
 	reenter    func()
 	// onRun runs inside Run(), which is where the production code registers and
 	// starts the window. It is the only point a test can act between publishing
@@ -158,6 +159,19 @@ func (f *fakeNative) IsFullscreen() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.fullscreen
+}
+
+func (f *fakeNative) IsFocused() bool {
+	f.probe()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.focused
+}
+
+func (f *fakeNative) setFocused(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.focused = v
 }
 
 func (f *fakeNative) Bounds() application.Rect {
@@ -1521,6 +1535,69 @@ func TestQuitDuringTransfer(t *testing.T) {
 	}
 }
 
+// TestQuitDuringRestoreKeepsUndockedPreference pins spec §5.3 "not persisting
+// mode: docked" for the window the startup restore has not finished opening.
+// The live mode is docked until `ready` commits the undock, so a quit landing
+// inside the restore's bootstrap must not write that live mode over the saved
+// undocked preference: the restore attempt is not news, and the placed frame
+// came out of the very file it would overwrite.
+func TestQuitDuringRestoreKeepsUndockedPreference(t *testing.T) {
+	const saved = `{"version":1,"state":{"golemWindow":` +
+		`{"mode":"undocked","x":40,"y":50,"width":500,"height":760}}}`
+	for _, tc := range []struct {
+		name      string
+		bootstrap bool
+		phase     GolemWindowPhase
+	}{
+		{"bootstrapping", false, golemPhaseBootstrapping},
+		{"bootstrapped", true, golemPhaseBootstrapped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newGolemHarness(t)
+			h.writeFile(h.appStatePath(), []byte(saved))
+			h.app.loadGolemWindowPreference()
+			if !h.state().RestorePending {
+				t.Fatal("an undocked preference did not mark the restore pending")
+			}
+			if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+				t.Fatalf("OpenGolemWindow: %v", err)
+			}
+			if tc.bootstrap {
+				if _, err := h.app.BootstrapGolemWindow(h.satCtx()); err != nil {
+					t.Fatalf("BootstrapGolemWindow: %v", err)
+				}
+			}
+			if h.phase() != tc.phase {
+				t.Fatalf("phase = %s, want %s", h.phase(), tc.phase)
+			}
+			if h.mode() != appstate.ModeDocked {
+				t.Fatalf("mode = %s during the restore, want docked until ready", h.mode())
+			}
+
+			h.app.quitFn = func() {}
+			h.app.permitAndQuit()
+
+			state, ok := h.savedState()
+			if !ok {
+				t.Fatal("the quit removed the saved preference")
+			}
+			if state.GolemWindow.Mode != appstate.ModeUndocked {
+				t.Fatalf("saved mode = %s, want the undocked preference the restore came from",
+					state.GolemWindow.Mode)
+			}
+			if state.GolemWindow.X != 40 || state.GolemWindow.Y != 50 ||
+				state.GolemWindow.Width != 500 || state.GolemWindow.Height != 760 {
+				t.Fatalf("saved bounds = %+v, want the saved frame untouched", state.GolemWindow)
+			}
+			for _, timer := range h.liveTimers() {
+				if !timer.isStopped() {
+					t.Error("a transition timer survived the permitted quit")
+				}
+			}
+		})
+	}
+}
+
 func TestCanceledQuitChangesNeitherModeNorInput(t *testing.T) {
 	h := newGolemHarness(t)
 	h.undock()
@@ -1635,8 +1712,12 @@ func TestRelayTargetsTheRecipientWindow(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestRestoreShowsWithoutFocus pins spec §7 for the startup restore of a saved
-// undocked window: it is shown, never focused. A user's own undock, and an
-// explicit open of the live window, still focus it.
+// undocked window: it is shown, never focused, and the key window the user was
+// working in keeps the keyboard. The platform's Show() activates the window it
+// reveals on all three targets (macOS makeKeyAndOrderFront, Windows SW_SHOW,
+// Linux gtk_window_present), so "no Focus() call" is not enough on its own: the
+// restore hands main's key status back when main had it. A user's own undock,
+// and an explicit open of the live window, still focus the satellite.
 func TestRestoreShowsWithoutFocus(t *testing.T) {
 	h := newGolemHarness(t)
 	h.writeFile(h.appStatePath(), []byte(
@@ -1645,11 +1726,20 @@ func TestRestoreShowsWithoutFocus(t *testing.T) {
 	if !h.state().RestorePending {
 		t.Fatal("an undocked preference did not mark the restore pending")
 	}
+	// The ordinary launch: main is the key window when the restore completes.
+	h.mainWin.setFocused(true)
 	h.undock()
 	satellite := h.satellite()
 	if got := satellite.recorded(); !equalStrings(got, []string{"run", "show"}) {
 		t.Fatalf("restore made %v, want run then show alone (no focus)", got)
 	}
+	if h.mainWin.countOf("focus") != 1 {
+		t.Fatalf("main made %v, want the restore to hand its key status back exactly once",
+			h.mainWin.recorded())
+	}
+	h.mainWin.mu.Lock()
+	h.mainWin.calls = nil
+	h.mainWin.mu.Unlock()
 	// An explicit open of the live window is the user's gesture.
 	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
 		t.Fatalf("OpenGolemWindow while ready: %v", err)
@@ -1671,6 +1761,26 @@ func TestRestoreShowsWithoutFocus(t *testing.T) {
 	h.undock()
 	if got := h.satellite().recorded(); !equalStrings(got, []string{"run", "show", "focus"}) {
 		t.Fatalf("a user undock made %v, want show then focus", got)
+	}
+}
+
+// TestRestoreWithMainUnfocusedFocusesNothing is the other half of §7: when the
+// app is in the background at the moment the restore completes, nothing the
+// restore does may pull focus to Firn at all — not to the satellite, and not
+// back to main, whose key status was not the restore's to take.
+func TestRestoreWithMainUnfocusedFocusesNothing(t *testing.T) {
+	h := newGolemHarness(t)
+	h.writeFile(h.appStatePath(), []byte(
+		`{"version":1,"state":{"golemWindow":{"mode":"undocked","x":40,"y":50,"width":500,"height":760}}}`))
+	h.app.loadGolemWindowPreference()
+	h.mainWin.setFocused(false)
+	h.undock()
+
+	if got := h.satellite().recorded(); !equalStrings(got, []string{"run", "show"}) {
+		t.Fatalf("restore made %v, want run then show alone", got)
+	}
+	if got := h.mainWin.recorded(); len(got) != 0 {
+		t.Fatalf("main made %v while unfocused, want no native call at all", got)
 	}
 }
 

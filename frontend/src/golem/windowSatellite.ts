@@ -619,13 +619,21 @@ export function requestReDock(): Promise<void> {
 export function retryGolemConnection(): void {
   const own = active;
   if (own === null || own.cancelled) return;
+  const state = useViewStore.getState().state;
+  // Only a `closing` that names a reason is a stalled retirement. Any other
+  // `closing` is a transfer Go still believes is running, and its re-dock
+  // branch refuses a second request outright — so a retry there would clear the
+  // strip and do nothing, leaving the user with a frozen window and no reason
+  // on screen. Keep the reason instead; Go's deadline or the abort already
+  // posted is what ends that wait.
+  if (own.core !== null && state?.phase === 'closing' && state.reason === undefined) return;
   useViewStore.setState({ error: null }, false, 'golem/retry');
   if (own.core === null) {
     own.generation += 1;
     runBootstrap(own);
     return;
   }
-  if (useViewStore.getState().state?.phase === 'closing') {
+  if (state?.phase === 'closing') {
     // The transfer is over; it is the native close that stalled. The retry
     // for that is Go's own re-arm leg, which CloseGolemWindow reaches.
     void requestReDock();

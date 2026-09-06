@@ -167,6 +167,10 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
         // A throwing store method is a defect in this window, not a refusal
         // the satellite earned: main hears about it, and the satellite's
         // waiter settles with the real message rather than hanging.
+        // The toast and the refusal both carry a bounded string, so the only
+        // record with a stack is this one — logged once, naming the action
+        // kind, so a programming bug cannot hide behind the toast.
+        console.error(`golem: ${action.type} action ${id} failed`, error);
         report(error);
         return { id, ok: false, reason: boundedGolemMessage(error) };
       })

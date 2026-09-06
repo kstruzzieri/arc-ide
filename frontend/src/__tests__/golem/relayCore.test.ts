@@ -212,6 +212,9 @@ describe('main relay core', () => {
   it('answers a throwing execute with a refusal that carries the error and reports it', async () => {
     const bus = new Bus();
     const onError = jest.fn();
+    // The refusal and the toast both carry a bounded string; the console is the
+    // only place the stack survives, so the log is part of the contract.
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
     const core = createMainRelayCore({
       instance: 1,
       execute: () => {
@@ -231,7 +234,11 @@ describe('main relay core', () => {
       // satellite's to display as a refusal.
       expect(onError).toHaveBeenCalledTimes(1);
       expect((onError.mock.calls[0][0] as Error).message).toBe('submitTurn exploded');
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(logged.mock.calls[0][0]).toBe('golem: select action 1 failed');
+      expect(logged.mock.calls[0][1]).toBeInstanceOf(Error);
     } finally {
+      logged.mockRestore();
       core.dispose();
     }
   });

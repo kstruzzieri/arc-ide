@@ -697,6 +697,25 @@ describe('re-dock', () => {
     stop();
   });
 
+  it('keeps the error strip when Retry is pressed on a closing that never stalled', async () => {
+    confirmMock.mockImplementation(() => Promise.reject(new Error('close not authorized')));
+    const stop = await startReady();
+    emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
+    await flush();
+    emitMessage(transferAck(posted('drafts')[0].id, 2));
+    await flush();
+    expect(useViewStore.getState().error).toContain('close not authorized');
+
+    // Go is still `closing` and has NOT authorized the native close, so its
+    // re-arm leg would refuse a second CloseGolemWindow. Retry must therefore
+    // leave the reason on screen instead of clearing it for a no-op.
+    retryGolemConnection();
+    await flush();
+    expect(closeMock).not.toHaveBeenCalled();
+    expect(useViewStore.getState().error).toContain('close not authorized');
+    stop();
+  });
+
   it('runs one transfer per handoff no matter how often the snapshot repeats', async () => {
     const stop = await startReady();
     emitMode(stateOf({ phase: 'closing', stateRevision: 4, handoff: 2 }));
