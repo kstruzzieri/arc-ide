@@ -564,6 +564,33 @@ describe('satellite core', () => {
     }
   });
 
+  it('keeps the newest handoff when two transfers are held before the first projection', () => {
+    const { bus, core, onDrafts, onError } = makeSatellite();
+    try {
+      const newer: GolemWindowMessage = {
+        kind: 'drafts',
+        instance: 1,
+        handoff: 3,
+        id: 7,
+        revision: 0,
+        payload: { c1: 'from the live attempt' },
+      };
+      const older: GolemWindowMessage = { ...newer, handoff: 2, id: 5, payload: { c1: 'stale' } };
+      core.receive({ from: 'main', message: newer });
+      // A straggler from a superseded attempt must not displace the live one.
+      core.receive({ from: 'main', message: older });
+      expect(onDrafts).not.toHaveBeenCalled();
+
+      core.receive({ from: 'main', message: viewMessage(1) });
+      expect(onDrafts).toHaveBeenCalledTimes(1);
+      expect(onDrafts).toHaveBeenCalledWith({ c1: 'from the live attempt' }, 3, 7);
+      expect(bus.sent('satellite', 'ready')).toHaveLength(0);
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      core.dispose();
+    }
+  });
+
   it('settles an action once even when its acknowledgement arrives twice', async () => {
     const { bus, core, onAdmission, onError } = makeSatellite();
     try {

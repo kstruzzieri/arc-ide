@@ -118,7 +118,6 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
         // Retain the newest snapshot and wait for the next arrival: an
         // immediate retry here would spin against a window that just died.
         posting = false;
-        dirty = true;
         report(error);
       }
     );
@@ -146,7 +145,6 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       },
       (error: unknown) => {
         posting = false;
-        dirty = true;
         report(error);
       }
     );
@@ -566,11 +564,12 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     if (disposed || revision <= viewRevision) return;
     const first = viewRevision === 0;
     viewRevision = revision;
-    deps.onView(view);
-    if (!first || deferredDrafts === null) return;
-    const pending = deferredDrafts;
+    // Take the held transfer before the host runs: a throwing onView must not
+    // strand it in a slot the `first` guard can never revisit.
+    const pending = first ? deferredDrafts : null;
     deferredDrafts = null;
-    receiveDrafts(pending);
+    deps.onView(view);
+    if (pending !== null) receiveDrafts(pending);
   }
 
   function installBootstrap(view: GolemView | null, revision: number): void {
@@ -703,8 +702,11 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     if (viewRevision === 0) {
       // No projection yet, so `ready` has no revision to quote: hold the
       // transfer — and its key — until the first view arrives. A retry of the
-      // same transfer simply replaces its own held message.
-      deferredDrafts = message;
+      // same transfer simply replaces its own held message; an older handoff
+      // never displaces a newer one.
+      if (deferredDrafts === null || message.handoff >= deferredDrafts.handoff) {
+        deferredDrafts = message;
+      }
       return;
     }
     highestHandoff = message.handoff;
