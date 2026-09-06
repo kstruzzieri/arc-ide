@@ -276,7 +276,19 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     highestInboundHandoff = message.handoff;
     await admissionTail;
     if (disposed) return;
-    deps.onDrafts(map);
+    try {
+      deps.onDrafts(map);
+    } catch (error) {
+      // The host refused the map (it never handed one over, so there is
+      // nothing to take back). Recorded like any settled answer, so a retry of
+      // the same transfer replays the refusal instead of installing on the
+      // second try; reported, so main's own user hears why.
+      const refusal = refusalMessage(message.id, message.handoff, boundedGolemMessage(error));
+      inboundAcks.set(key, refusal);
+      report(error);
+      await deps.transport.post(refusal).catch(report);
+      return;
+    }
     // `revision` names the acknowledged draft id: Go's acceptGolemAck records
     // the transfer against `msg.Revision`, not `msg.ID`, and refuses any other
     // value — so the re-dock can only commit when this is the drafts id.

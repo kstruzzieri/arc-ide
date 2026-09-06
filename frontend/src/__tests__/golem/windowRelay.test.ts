@@ -556,6 +556,33 @@ describe('re-dock', () => {
   const returnedDrafts = (handoff: number, id: number, map: Record<string, string>) =>
     fromSatellite({ kind: 'drafts', id, handoff, payload: map });
 
+  it('keeps the docked map when a retired bootstrap hands back an empty one', async () => {
+    useDraftStore.getState().installAll({ [CONV]: 'half a sentence' });
+    await start();
+    const settled = undockGolem().catch((error: unknown) => error);
+    emit(MODE_EVENT, phase('bootstrapped', 2));
+    await flush();
+    expect(posted('drafts')).toHaveLength(1);
+
+    // The attempt dies before ready: Go's closing still says `docked`, and a
+    // satellite that never owned the map answers it with an empty one under
+    // the same id main used for its own transfer.
+    const reason = 'bootstrap deadline expired';
+    emit(MODE_EVENT, withReason({ ...phase('closing', 3, 1), mode: 'docked' }, reason));
+    emit(MESSAGE_EVENT, returnedDrafts(1, posted('drafts')[0].id, {}));
+    await flush();
+
+    expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'half a sentence' });
+    const refusal = acks().at(-1) as { ok: boolean; reason?: string };
+    expect(refusal.ok).toBe(false);
+    expect(refusal.reason).toBeTruthy();
+
+    emit(MODE_EVENT, withReason(retired(4), reason));
+    expect(((await settled) as Error).message).toBe(reason);
+    expect(useGolemStore.getState().hostFrozen).toBe(false);
+    expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'half a sentence' });
+  });
+
   it('installs the returned map once and reveals Golem only when the close lands', async () => {
     await ready();
     const attempt = dockGolem();

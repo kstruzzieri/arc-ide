@@ -1908,3 +1908,56 @@ func TestFirstUndockPersistsPlacedFrame(t *testing.T) {
 		t.Fatalf("lastNormal = %+v, want the placed frame %+v", held, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// A bootstrap that never reached ready owns no drafts to hand back
+// ---------------------------------------------------------------------------
+
+// TestNeverReadySatelliteCannotTransferDrafts pins spec §5.1/§5.2: an instance
+// that bootstrapped but never committed ready holds main's map only as a
+// deferred transfer, so its "final map" on the abort's closing is empty. Go
+// refuses that transfer and the close confirmation outright, on the same
+// `mode` marker both frontends read (it flips to undocked only on ready).
+func TestNeverReadySatelliteCannotTransferDrafts(t *testing.T) {
+	h := newGolemHarness(t)
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("OpenGolemWindow: %v", err)
+	}
+	if _, err := h.app.BootstrapGolemWindow(h.satCtx()); err != nil {
+		t.Fatalf("BootstrapGolemWindow: %v", err)
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), GolemWindowMessage{
+		Kind: "drafts", Instance: h.instance(), Handoff: h.handoff(), ID: 1,
+		Payload: json.RawMessage(`{"c1":"docked text"}`),
+	}); err != nil {
+		t.Fatalf("main drafts: %v", err)
+	}
+	instance, handoff := h.instance(), h.handoff()
+	// No view was ever published, so ready never came; the deadline aborts.
+	h.pendingTimer().fire()
+	if h.phase() != golemPhaseClosing || h.mode() != appstate.ModeDocked {
+		t.Fatalf("after the abort: phase=%s mode=%s, want closing/docked", h.phase(), h.mode())
+	}
+
+	// The satellite's own outbound id is 1 as well: the collision that let
+	// main record an empty map as the re-dock transfer before this guard.
+	err := h.app.PostGolemWindowMessage(h.satCtx(), GolemWindowMessage{
+		Kind: "drafts", Instance: instance, Handoff: handoff, ID: 1,
+		Payload: json.RawMessage(`{}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "never became ready") {
+		t.Fatalf("satellite drafts during an aborted bootstrap = %v, want a never-ready refusal", err)
+	}
+	for _, envelope := range h.relayed() {
+		if envelope.From == golemWindowRoleSatellite && envelope.Message.Kind == "drafts" {
+			t.Fatalf("an empty satellite map was relayed to main: %+v", envelope)
+		}
+	}
+	err = h.app.ConfirmGolemWindowClose(h.satCtx(), instance, handoff)
+	if err == nil || !strings.Contains(err.Error(), "never became ready") {
+		t.Fatalf("ConfirmGolemWindowClose during an aborted bootstrap = %v, want a never-ready refusal", err)
+	}
+	if h.phase() != golemPhaseClosing {
+		t.Fatalf("phase = %s after the refusals, want closing untouched", h.phase())
+	}
+}

@@ -243,7 +243,13 @@ function installState(own: Owner, next: GolemWindowState): void {
     own.core?.abortHandoff(next.handoff, next.reason ?? TRANSFER_ENDED);
   refreshFrozen(own);
   if (!mine) return;
-  if (next.phase === 'closing' && next.handoff !== 0) void beginReDock(own, next);
+  // Only a window that reached `ready` owns a map to hand back. Go flips
+  // `mode` to undocked on ready alone, so an aborted bootstrap's `closing`
+  // still says `docked`: there is nothing to transfer, Go has already
+  // authorized the close, and a transfer here would hand main an empty map to
+  // install over the user's docked text (§5.1).
+  if (next.phase === 'closing' && next.handoff !== 0 && next.mode === 'undocked')
+    void beginReDock(own, next);
 }
 
 function installView(own: Owner, view: GolemView): void {

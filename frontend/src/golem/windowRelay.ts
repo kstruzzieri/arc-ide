@@ -83,6 +83,8 @@ export const PENDING_ENVELOPE_LIMIT = 32;
 const NO_OWNER = 'The Golem window is not ready to accept that yet.';
 const OWNER_RETIRED = 'The Golem window controls closed before the transition finished.';
 const TRANSFER_UNCONFIRMED = 'Golem could not hand this conversation to the window.';
+const TRANSFER_NOT_OWNED =
+  'The Golem window never owned this conversation, so its returned drafts were not installed.';
 const ABORT_UNEXPLAINED = 'The Golem window ended the transition without a reason.';
 const UNDOCK_FAILED = 'The Golem window closed before it was ready.';
 const REDOCK_FAILED = 'Golem could not move this conversation back to the main window.';
@@ -307,7 +309,15 @@ function bindCore(own: Owner, next: GolemWindowState): void {
     transport,
     execute,
     snapshot: () => buildGolemView(useGolemStore.getState()),
-    onDrafts: (map) => useDraftStore.getState().installAll(map),
+    onDrafts: (map) => {
+      // A returned map is only real once the window owned one. Go flips `mode`
+      // to undocked on ready alone, so a `closing` that still says `docked` is
+      // an aborted bootstrap: whatever the satellite sends back is empty, and
+      // installing it would erase the text the user is still looking at. The
+      // throw becomes a refusal ack; the docked map is left exactly as it is.
+      if (own.state.mode !== 'undocked') throw new Error(TRANSFER_NOT_OWNED);
+      useDraftStore.getState().installAll(map);
+    },
     onError: reportGolemWindowError,
   });
   own.core.publish();

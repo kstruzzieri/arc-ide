@@ -1094,6 +1094,12 @@ func (a *App) acceptGolemDrafts(instance uint64, from string, msg GolemWindowMes
 		}
 	} else if phase != golemPhaseClosing {
 		return fmt.Errorf("golem window: the Golem window may only transfer drafts while re-docking, not in phase %s", phase)
+	} else if a.golemWin.mode != appstate.ModeUndocked {
+		// An aborted bootstrap closes through the same closing phase, but the
+		// satellite never owned main's map (mode flips to undocked only on
+		// ready), so the "final map" it would return is empty. Installing it
+		// would erase the docked composer (§5.1).
+		return fmt.Errorf("golem window: the Golem window never became ready, so it has no drafts to return")
 	}
 	if a.golemWin.transferID != 0 && a.golemWin.transferID != msg.ID {
 		return fmt.Errorf("golem window: draft transfer id %d replaces the recorded %d for this handoff",
@@ -1460,6 +1466,13 @@ func (a *App) ConfirmGolemWindowClose(ctx context.Context, instance uint64, hand
 		a.golemWinMu.Unlock()
 		return fmt.Errorf("golem window: confirm names instance %d/handoff %d, current is %d/%d",
 			instance, handoff, current, currentHandoff)
+	}
+	if a.golemWin.mode != appstate.ModeUndocked {
+		// Before the idempotent short-circuit: an aborted bootstrap already
+		// holds its close authorization, and a confirm from a window that never
+		// became ready is not a repeat of that, it is a transfer that never was.
+		a.golemWinMu.Unlock()
+		return fmt.Errorf("golem window: the Golem window never became ready, so there is no transfer to confirm")
 	}
 	if a.golemWin.closeAuthorized {
 		a.golemWinMu.Unlock()

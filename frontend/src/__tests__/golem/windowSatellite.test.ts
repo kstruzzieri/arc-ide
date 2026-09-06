@@ -268,6 +268,26 @@ describe('startup ordering', () => {
     stop();
   });
 
+  it('does not start a re-dock transfer for a closing that arrives before it was ever ready', async () => {
+    bootstrapMock.mockReturnValue(Promise.resolve(bootstrapOf({ view: null, revision: 0 })));
+    const stop = startGolemSatellite();
+    await flush();
+    // Main's map is held (no view yet), so this window never owned it.
+    emitMessage(draftsMessage(1, 1, { 'conv-a': 'docked text' }));
+    await flush();
+    expect(posted('ready')).toHaveLength(0);
+
+    // Go aborts the bootstrap through the same closing phase a re-dock uses,
+    // but the snapshot still says `docked`: mode flips only on ready.
+    emitMode(stateOf({ phase: 'closing', stateRevision: 3, handoff: 1, mode: 'docked' }));
+    await flush();
+
+    expect(posted('drafts')).toHaveLength(0);
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(useViewStore.getState().frozen).toBe(true);
+    stop();
+  });
+
   it('accepts an unbound first view and still runs window controls', async () => {
     bootstrapMock.mockReturnValue(
       Promise.resolve(
