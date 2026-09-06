@@ -440,12 +440,6 @@ func (h *golemHarness) isPresent(id uint) bool {
 	return h.present[id]
 }
 
-func (h *golemHarness) setScreens(screens []application.Rect) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.screens = screens
-}
-
 // onNewWindow installs a callback the fake factory runs on each window it
 // builds, before OpenGolemWindow has installed the handle.
 func (h *golemHarness) onNewWindow(fn func(*fakeNative)) {
