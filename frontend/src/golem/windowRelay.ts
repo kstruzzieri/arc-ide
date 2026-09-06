@@ -103,6 +103,11 @@ interface Attempt {
   openSettled: boolean;
   /** The lifecycle reason held back while that answer is still outstanding. */
   closedReason: string | null;
+  /**
+   * A startup restore of a saved window rather than the user's own undock.
+   * §7: nobody asked for it just now, so it must not take the caret.
+   */
+  restore: boolean;
 }
 
 type AttemptKind = 'undock' | 'dock';
@@ -187,14 +192,22 @@ function execute(action: GolemViewAction): GolemActionResult {
 
 // ── attempts ─────────────────────────────────────────────────────────────────
 
-function newAttempt(): Attempt {
+function newAttempt(restore = false): Attempt {
   let resolve!: () => void;
   let reject!: (error: Error) => void;
   const promise = new Promise<void>((res, rej) => {
     resolve = res;
     reject = rej;
   });
-  return { promise, resolve, reject, settled: false, openSettled: false, closedReason: null };
+  return {
+    promise,
+    resolve,
+    reject,
+    settled: false,
+    openSettled: false,
+    closedReason: null,
+    restore,
+  };
 }
 
 function settleAttempt(own: Owner, kind: AttemptKind): void {
@@ -484,7 +497,8 @@ function handleMessage(own: Owner, payload: unknown): void {
     reportGolemWindowError(error);
     return;
   }
-  // Go relays main's own posts back to main. That is an echo, not traffic.
+  // Go delivers each relay message to the other window only, so main should
+  // never see its own posts; if one does arrive, it is an echo, not traffic.
   if (envelope.from !== 'satellite') return;
   switch (gate(own.state, envelope.message)) {
     case 'accept':
@@ -512,6 +526,7 @@ function installState(own: Owner, next: GolemWindowState): void {
   // Go's revision only ever counts up, so an older snapshot is a late delivery
   // and must not walk `ready` back to `bootstrapped`.
   if (next.stateRevision <= own.installedRevision) return;
+  const first = own.installedRevision < 0;
   const previous = own.state;
   own.installedRevision = next.stateRevision;
   own.state = next;
@@ -553,7 +568,9 @@ function installState(own: Owner, next: GolemWindowState): void {
       // §7: an opened window is a window the user is about to type in. The
       // satellite has no store, so its caret comes from this bump travelling
       // out with the next projection — once per window, not per state tick.
-      useGolemStore.getState().requestComposerFocus();
+      // A startup restore is the exception: nobody asked for that window just
+      // now, so it appears without taking the caret from where the user is.
+      if (!own.undock?.restore) useGolemStore.getState().requestComposerFocus();
     }
     if (own.closingInstance === next.instance) {
       // The re-dock was abandoned: the satellite keeps the conversation.
@@ -602,7 +619,21 @@ function installState(own: Owner, next: GolemWindowState): void {
     // A saved undocked window, restored once the owner is wired — which is
     // independent of whether the AI bridge ever binds a repository.
     own.restoreTried = true;
-    void undockGolem().catch(reportGolemWindowError);
+    void startUndock(own, true).catch(reportGolemWindowError);
+  }
+
+  if (
+    first &&
+    next.phase === 'closed' &&
+    reason !== null &&
+    own.undock === null &&
+    own.dock === null
+  ) {
+    // The snapshot this owner starts from explains a failure no attempt of
+    // its own produced — at startup, that the saved preference could not be
+    // read (spec §3.2). No attempt will ever settle with it, so this is the
+    // one place the user can hear it.
+    reportGolemWindowError(reason);
   }
 
   replayPending(own);
@@ -689,19 +720,24 @@ export function startMainGolemRelay(): () => void {
 export function undockGolem(): Promise<void> {
   const own = active;
   if (own === null || own.cancelled) return Promise.reject(new Error(NO_OWNER));
+  return startUndock(own, false);
+}
+
+/** The undock attempt itself; `restore` marks the startup restore (§7). */
+function startUndock(own: Owner, restore: boolean): Promise<void> {
   if (own.undock) return own.undock.promise;
   // Go answers an open on a live window by revealing it and publishing no new
   // state, so an attempt started here would wait for a `ready` that has already
   // happened. Same intent, honest call: bring the window forward.
   if (own.state.phase === 'ready') return focusGolemWindow();
-  // Synchronous, before any snapshot is taken: B4 made local admission and
-  // draft clearing synchronous, so the barrier and the map the transfer will
+  // Synchronous, before any snapshot is taken: local admission and draft
+  // clearing are synchronous, so the barrier and the map the transfer will
   // read cannot disagree about what the user typed.
   const golem = useGolemStore.getState();
   golem.setHostFrozen(true);
   golem.setWindowError(null);
   own.failure = null;
-  const attempt = newAttempt();
+  const attempt = newAttempt(restore);
   own.undock = attempt;
   void OpenGolemWindow().then(
     () => {

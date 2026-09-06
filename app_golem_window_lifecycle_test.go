@@ -50,6 +50,37 @@ type fakeNative struct {
 	// starts the window. It is the only point a test can act between publishing
 	// the bootstrapping state and OpenGolemWindow returning.
 	onRun func()
+	// dispatched is every custom event delivered to THIS window: the relay
+	// targets the recipient, so which fake holds an envelope is the assertion.
+	dispatched []*application.CustomEvent
+}
+
+// DispatchWailsEvent is the per-window leg of Wails' event fan-out. Not
+// recorded in `calls`: tests compare those to the exact native calls a
+// transition makes, and delivery is not one of them.
+func (f *fakeNative) DispatchWailsEvent(event *application.CustomEvent) {
+	f.mu.Lock()
+	f.dispatched = append(f.dispatched, event)
+	f.mu.Unlock()
+	f.probe()
+}
+
+// received returns the relay envelopes delivered to this window, in order.
+func (f *fakeNative) received() []GolemWindowEnvelope {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []GolemWindowEnvelope
+	for _, event := range f.dispatched {
+		if event.Name != eventGolemWindowMessage {
+			continue
+		}
+		envelope, ok := event.Data.(GolemWindowEnvelope)
+		if !ok {
+			panic(fmt.Sprintf("%s payload = %T, want GolemWindowEnvelope", eventGolemWindowMessage, event.Data))
+		}
+		out = append(out, envelope)
+	}
+	return out
 }
 
 func newFakeNative(id uint, name string) *fakeNative {
@@ -467,19 +498,16 @@ func (h *golemHarness) modeEvents() []GolemWindowState {
 	return out
 }
 
+// relayed is every envelope delivered to any window: main's first, then each
+// satellite's in creation order. Per-window delivery is asserted through
+// fakeNative.received.
 func (h *golemHarness) relayed() []GolemWindowEnvelope {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	windows := append([]*fakeNative{h.mainWin}, h.created...)
+	h.mu.Unlock()
 	var out []GolemWindowEnvelope
-	for _, e := range h.events {
-		if e.name != eventGolemWindowMessage {
-			continue
-		}
-		envelope, ok := e.data.(GolemWindowEnvelope)
-		if !ok {
-			h.t.Fatalf("%s payload = %T, want GolemWindowEnvelope", eventGolemWindowMessage, e.data)
-		}
-		out = append(out, envelope)
+	for _, window := range windows {
+		out = append(out, window.received()...)
 	}
 	return out
 }
@@ -1398,7 +1426,7 @@ func TestFocusMainWindow(t *testing.T) {
 		if got := h.mainWin.recorded(); !equalStrings(got, []string{"show", "focus"}) {
 			t.Fatalf("main calls = %v, want show then focus", got)
 		}
-		relayed := h.relayed()
+		relayed := h.mainWin.received()
 		if len(relayed) == 0 {
 			t.Fatal("the openConfig action was not relayed to main")
 		}
@@ -1441,20 +1469,26 @@ func TestQuitDuringTransfer(t *testing.T) {
 	// when the quit lands, so the refusals below are the quit's doing.
 	h.transferBackToMain(90, true)
 
-	h.app.closeMu.Lock()
-	h.app.closePhase = closePermitted
-	h.app.closeMu.Unlock()
-
-	// Wails' shutdown Close()es every window; the Golem hook allows it.
+	// The real path: the close drain permits the quit and saves the frame
+	// before asking the platform to quit. beta.16's shutdown never dispatches
+	// the satellite's WindowClosing hook (cleanup nils the window map under the
+	// lock the event consumer needs), so nothing else would save it.
+	h.app.quitFn = func() {}
+	h.app.permitAndQuit()
+	if !h.app.quitPermitted() {
+		t.Fatal("permitAndQuit did not permit the quit")
+	}
+	// Saved by the drain itself, before any hook could run.
+	saved, ok := h.savedState()
+	if !ok {
+		t.Fatal("the drain saved nothing before the platform quit")
+	}
+	// Should a runtime dispatch the hook after all, it allows the close.
 	if cancelled := satellite.fire(events.Common.WindowClosing); cancelled {
 		t.Fatal("the Golem hook cancelled a close during a permitted quit")
 	}
 	if h.mode() != appstate.ModeUndocked {
 		t.Fatalf("mode = %s, want the pre-quit undocked preference", h.mode())
-	}
-	saved, ok := h.savedState()
-	if !ok {
-		t.Fatal("the quit path saved nothing")
 	}
 	if saved.GolemWindow.Mode != appstate.ModeUndocked {
 		t.Fatalf("saved mode = %s, want undocked", saved.GolemWindow.Mode)
@@ -1507,6 +1541,166 @@ func TestCanceledQuitChangesNeitherModeNorInput(t *testing.T) {
 	}
 	if h.satellite().countOf("close") != 0 {
 		t.Fatal("a cancelled quit destroyed the satellite")
+	}
+}
+
+// TestQuitAfterCloseAuthorizationSavesDocked pins the drain's mode choice: once
+// the close is authorized the drafts are main's, so a quit landing before the
+// window has retired persists docked rather than the pre-transfer undocked.
+func TestQuitAfterCloseAuthorizationSavesDocked(t *testing.T) {
+	h := newGolemHarness(t)
+	h.undock()
+	if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("CloseGolemWindow: %v", err)
+	}
+	h.transferBackToMain(90, true)
+	if err := h.app.ConfirmGolemWindowClose(h.satCtx(), h.instance(), h.handoff()); err != nil {
+		t.Fatalf("ConfirmGolemWindowClose: %v", err)
+	}
+	// The window is still in the manager: the retirement has not completed.
+	h.app.quitFn = func() {}
+	h.app.permitAndQuit()
+	saved, ok := h.savedState()
+	if !ok {
+		t.Fatal("the quit path saved nothing")
+	}
+	if saved.GolemWindow.Mode != appstate.ModeDocked {
+		t.Fatalf("saved mode = %s, want docked once the close was authorized", saved.GolemWindow.Mode)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Relay routing
+// ---------------------------------------------------------------------------
+
+// TestRelayTargetsTheRecipientWindow pins that a message goes to the other
+// window only: main never receives its own projection back, and the satellite
+// never receives its own action echo.
+func TestRelayTargetsTheRecipientWindow(t *testing.T) {
+	h := newGolemHarness(t)
+	h.undock()
+	satellite := h.satellite()
+	if err := h.app.PostGolemWindowMessage(h.satCtx(), GolemWindowMessage{
+		Kind: "action", Instance: h.instance(), ID: 1,
+		Payload: json.RawMessage(`{"type":"select","conversationId":"c1"}`),
+	}); err != nil {
+		t.Fatalf("action: %v", err)
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), GolemWindowMessage{
+		Kind: "ack", Instance: h.instance(), ID: 1, Revision: 1,
+		Payload: json.RawMessage(`{"id":1,"ok":true}`),
+	}); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+
+	toMain := h.mainWin.received()
+	if len(toMain) == 0 {
+		t.Fatal("nothing was delivered to main")
+	}
+	for _, envelope := range toMain {
+		if envelope.From != golemWindowRoleSatellite {
+			t.Fatalf("main received its own %s back: %+v", envelope.Message.Kind, envelope)
+		}
+	}
+	toSatellite := satellite.received()
+	if len(toSatellite) == 0 {
+		t.Fatal("nothing was delivered to the satellite")
+	}
+	for _, envelope := range toSatellite {
+		if envelope.From != golemWindowRoleMain {
+			t.Fatalf("the satellite received its own %s back: %+v", envelope.Message.Kind, envelope)
+		}
+	}
+	kinds := func(envelopes []GolemWindowEnvelope) []string {
+		var out []string
+		for _, e := range envelopes {
+			out = append(out, e.Message.Kind)
+		}
+		return out
+	}
+	if got := kinds(toSatellite); !equalStrings(got, []string{"view", "drafts", "ack"}) {
+		t.Fatalf("satellite received %v, want main's view, drafts and ack", got)
+	}
+	if got := kinds(toMain); !equalStrings(got, []string{"ready", "action"}) {
+		t.Fatalf("main received %v, want the satellite's ready and action", got)
+	}
+	// The lifecycle state stays app-wide.
+	if len(h.modeEvents()) == 0 {
+		t.Fatal("no window state reached the app-wide bus")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Startup restore
+// ---------------------------------------------------------------------------
+
+// TestRestoreShowsWithoutFocus pins spec §7 for the startup restore of a saved
+// undocked window: it is shown, never focused. A user's own undock, and an
+// explicit open of the live window, still focus it.
+func TestRestoreShowsWithoutFocus(t *testing.T) {
+	h := newGolemHarness(t)
+	h.writeFile(h.appStatePath(), []byte(
+		`{"version":1,"state":{"golemWindow":{"mode":"undocked","x":40,"y":50,"width":500,"height":760}}}`))
+	h.app.loadGolemWindowPreference()
+	if !h.state().RestorePending {
+		t.Fatal("an undocked preference did not mark the restore pending")
+	}
+	h.undock()
+	satellite := h.satellite()
+	if got := satellite.recorded(); !equalStrings(got, []string{"run", "show"}) {
+		t.Fatalf("restore made %v, want run then show alone (no focus)", got)
+	}
+	// An explicit open of the live window is the user's gesture.
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("OpenGolemWindow while ready: %v", err)
+	}
+	if got := satellite.recorded(); !equalStrings(got, []string{"run", "show", "show", "focus"}) {
+		t.Fatalf("explicit open made %v, want show then focus", got)
+	}
+
+	// The next undock after a re-dock is not a restore any more.
+	if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("CloseGolemWindow: %v", err)
+	}
+	h.transferBackToMain(90, true)
+	if err := h.app.ConfirmGolemWindowClose(h.satCtx(), h.instance(), h.handoff()); err != nil {
+		t.Fatalf("ConfirmGolemWindowClose: %v", err)
+	}
+	h.retire(satellite.id)
+	waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+	h.undock()
+	if got := h.satellite().recorded(); !equalStrings(got, []string{"run", "show", "focus"}) {
+		t.Fatalf("a user undock made %v, want show then focus", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Preference load failures reach the user
+// ---------------------------------------------------------------------------
+
+// TestLoadFailureIsPublishedAsReason pins spec §3.2 "report a read/write
+// failure": an unreadable app.json names itself on the startup snapshot, so
+// main can tell the user, and the next attempt clears it like any reason.
+func TestLoadFailureIsPublishedAsReason(t *testing.T) {
+	h := newGolemHarness(t)
+	h.writeFile(h.appStatePath(), []byte(`{"version":1,"state":{"golemWindow":{"mode":"undocked",}}}`))
+	h.app.loadGolemWindowPreference()
+
+	loaded := h.lastModeEvent()
+	if loaded.Phase != golemPhaseClosed || loaded.Mode != appstate.ModeDocked {
+		t.Fatalf("startup state = %s/%s, want closed/docked", loaded.Phase, loaded.Mode)
+	}
+	if !strings.Contains(loaded.Reason, "could not be read") || !strings.Contains(loaded.Reason, "parsing app state") {
+		t.Fatalf("startup reason = %q, want the load failure named", loaded.Reason)
+	}
+	if got, err := h.app.GetGolemWindowState(h.mainCtx()); err != nil || got.Reason != loaded.Reason {
+		t.Fatalf("GetGolemWindowState = %+v, %v; want the load reason readable", got, err)
+	}
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("OpenGolemWindow: %v", err)
+	}
+	if got := h.lastModeEvent(); got.Reason != "" {
+		t.Fatalf("a fresh attempt still carries %q, want the reason cleared", got.Reason)
 	}
 }
 

@@ -444,6 +444,11 @@ func (a *App) permitAndQuit() {
 	a.closeMu.Lock()
 	a.closePhase = closePermitted
 	a.closeMu.Unlock()
+	// The Golem window's frame is saved here, on the drain goroutine, because
+	// the platform's own shutdown never reaches that window's closing hook
+	// (see handleGolemWindowClosing). closeMu is released first: the save reads
+	// quitPermitted() itself and takes golemWinMu after it.
+	a.saveGolemFrameForShutdown()
 	a.quit()
 }
 

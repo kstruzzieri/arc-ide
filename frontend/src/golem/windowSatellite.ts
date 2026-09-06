@@ -329,7 +329,9 @@ function transferBelongsHere(message: GolemWindowMessage): boolean {
 function deliver(own: Owner, envelope: GolemWindowEnvelope): void {
   if (own.cancelled || own !== active) return;
   const { from, message } = envelope;
-  // Go relays this window's own posts back to it. That is an echo, not traffic.
+  // Go delivers each relay message to the other window only, so this window
+  // should never see its own posts; if one does arrive, it is an echo, not
+  // traffic.
   if (from !== 'main') return;
   if (message.instance !== own.instance) {
     report(own, UNEXPECTED_MESSAGE);

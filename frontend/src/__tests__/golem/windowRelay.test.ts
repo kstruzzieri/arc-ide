@@ -245,6 +245,23 @@ describe('lifecycle installation', () => {
     expect(useDraftStore.getState().drafts).toEqual({});
   });
 
+  it('tells the user once when the saved window preference could not be read', async () => {
+    const reason =
+      'The Golem window preference could not be read (parsing app state: invalid character); this session runs docked and will not save window changes.';
+    stateMock.mockResolvedValue(withReason(closed, reason));
+    await start();
+
+    expect(useGolemStore.getState().windowError).toBe(reason);
+    expect(useIDEStore.getState().toast).toEqual({ message: reason, type: 'error' });
+
+    // Go keeps the reason on the snapshot until the next attempt; a later
+    // delivery of the same closed state is not a second toast.
+    useIDEStore.setState({ toast: null });
+    emit(MODE_EVENT, withReason({ ...closed, stateRevision: 1 }, reason));
+    await flush();
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
   it('binds one core and publishes once when bootstrapped arrives first', async () => {
     await start();
     hydrate();
@@ -908,6 +925,36 @@ describe('owner lifetime', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('does not bump the composer focus for a startup restore, only for a user undock', async () => {
+    stateMock.mockResolvedValue({ ...closed, mode: 'undocked', restorePending: true });
+    await start();
+    expect(openMock).toHaveBeenCalledTimes(1);
+    const before = useGolemStore.getState().composerFocusRevision;
+
+    emit(MODE_EVENT, phase('bootstrapped', 2));
+    await flush();
+    emit(MODE_EVENT, phase('ready', 3));
+    await flush();
+    // §7: the restore is nobody's gesture, so the caret stays where it is.
+    expect(useGolemStore.getState().composerFocusRevision).toBe(before);
+
+    // Re-dock, then a user undock of a second instance: that one asks for it.
+    const dock = dockGolem();
+    emit(MODE_EVENT, phase('closing', 4, 2));
+    emit(MESSAGE_EVENT, fromSatellite({ kind: 'drafts', id: 1, handoff: 2, payload: {} }));
+    await flush();
+    emit(MODE_EVENT, retired(5));
+    await dock;
+    const afterDock = useGolemStore.getState().composerFocusRevision;
+
+    const undock = undockGolem();
+    emit(MODE_EVENT, phase('bootstrapped', 6, 3, 2));
+    await flush();
+    emit(MODE_EVENT, phase('ready', 7, 3, 2));
+    await undock;
+    expect(useGolemStore.getState().composerFocusRevision).toBeGreaterThan(afterDock);
   });
 
   it('rejects a pending transition when the owner is torn down', async () => {

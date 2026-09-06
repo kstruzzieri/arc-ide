@@ -68,8 +68,13 @@ type golemWindowRuntime struct {
 	handoff        uint64
 	stateRevision  uint64
 	restorePending bool
+	// restoring marks the live attempt as the startup restore of a saved
+	// undocked window rather than a user's undock: it is shown without taking
+	// focus (§7), because nobody asked for it just now.
+	restoring bool
 	// reason explains the most recent failed transition (a deadline, an abort,
-	// a stalled retirement) to both hosts; the next attempt clears it.
+	// a stalled retirement) to both hosts, or — before any attempt — why the
+	// saved preference could not be read (§3.2); the next attempt clears it.
 	reason string
 
 	// instanceSeq and handoffSeq only ever increase, so a retired attempt's
@@ -343,6 +348,15 @@ func (a *App) loadGolemWindowPreference() {
 	a.golemWinMu.Lock()
 	a.golemWin.lastNormal = state.GolemWindow
 	a.golemWin.restorePending = state.GolemWindow.Mode == appstate.ModeUndocked
+	if err != nil {
+		// §3.2: reported, not only logged. The startup snapshot is the one
+		// state main installs before any attempt, so its reason is the channel
+		// this failure has; the store keeps refusing writes for the session, and
+		// the text says so.
+		a.golemWin.reason = fmt.Sprintf(
+			"The Golem window preference could not be read (%v); this session runs docked and will not save window changes.",
+			err)
+	}
 	loaded := a.golemWin.snapshot()
 	a.golemWinMu.Unlock()
 	a.emitGolemState(loaded)
@@ -574,6 +588,7 @@ func (r *golemWindowRuntime) retireLocked() GolemWindowState {
 	r.handle, r.handleID = nil, 0
 	r.phase = golemPhaseClosed
 	r.mode = appstate.ModeDocked
+	r.restoring = false
 	r.instance, r.handoff = 0, 0
 	r.view, r.viewRevision = nil, 0
 	r.transferID, r.transferAcked = 0, false
@@ -616,15 +631,25 @@ func (a *App) readGolemFrame() (appstate.GolemWindow, bool) {
 // revealGolemWindow restores, shows and focuses the satellite. Never called
 // with golemWinMu held.
 func (a *App) revealGolemWindow(handle application.Window) {
+	if handle = a.showGolemWindow(handle); handle != nil {
+		handle.Focus()
+	}
+}
+
+// showGolemWindow restores and shows the satellite without asking for focus:
+// the startup restore of a saved window is nobody's gesture (§7), so it must
+// not take the caret from whichever window the user is working in. Answers
+// the live handle, or nil when there is none.
+func (a *App) showGolemWindow(handle application.Window) application.Window {
 	handle = asLiveWindow(handle)
 	if handle == nil {
-		return
+		return nil
 	}
 	if handle.IsMinimised() {
 		handle.UnMinimise()
 	}
 	handle.Show()
-	handle.Focus()
+	return handle
 }
 
 // focusMainWindow brings main forward for a validated satellite config request
@@ -665,11 +690,17 @@ func (a *App) installGolemHooks(window application.Window, instance uint64, id u
 	}
 }
 
-// handleGolemWindowClosing is the satellite's WindowClosing hook. A permitted
-// quit saves the frame and allows destruction with the mode untouched; the one
-// close this instance authorized passes through; anything else is cancelled and
-// turned into the same re-dock request the binding makes. It never calls
+// handleGolemWindowClosing is the satellite's WindowClosing hook. The one
+// close this instance authorized passes through; anything else is cancelled
+// and turned into the same re-dock request the binding makes. It never calls
 // shouldQuit and never starts a second quit handshake.
+//
+// A permitted quit allows destruction. beta.16's cleanup never actually
+// dispatches this hook for it (App.cleanup Close()es every window and nils
+// the window map under the same lock the event consumer needs, so the queued
+// WindowClosing finds no window), which is why the drain saves the frame
+// itself in saveGolemFrameForShutdown before the platform quit; the save here
+// is only a fallback for a runtime that does dispatch it.
 func (a *App) handleGolemWindowClosing(instance uint64, id uint, cancel func()) {
 	if a.quitPermitted() {
 		a.saveGolemFrameForQuit(instance, id)
@@ -693,8 +724,26 @@ func (a *App) handleGolemWindowClosing(instance uint64, id uint, cancel func()) 
 	}
 }
 
+// saveGolemFrameForShutdown is the close drain's last Golem step, run once the
+// quit is permitted and before the platform tears the windows down (§5.3
+// "quit saves bounds"). It runs on the drain goroutine, so the native geometry
+// read is safe, and it is the only reliable point: see handleGolemWindowClosing
+// for why the hook cannot be that.
+func (a *App) saveGolemFrameForShutdown() {
+	a.golemWinMu.Lock()
+	instance, id := a.golemWin.instance, a.golemWin.handleID
+	a.golemWinMu.Unlock()
+	if instance == 0 {
+		return
+	}
+	a.saveGolemFrameForQuit(instance, id)
+}
+
 // saveGolemFrameForQuit is the permitted-quit path: save the last normal frame,
 // stop every transition, save and retirement timer, and change nothing else.
+// The saved mode is the one the drafts are in: an authorized close has already
+// handed them to main, so a quit landing between the authorization and the
+// retirement persists docked, exactly what the retirement would have.
 func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 	frame, normal := a.readGolemFrame()
 
@@ -718,6 +767,9 @@ func (a *App) saveGolemFrameForQuit(instance uint64, id uint) {
 	gen := a.golemWin.saveGen
 	saved := a.golemWin.lastNormal
 	mode := a.golemWin.snapshot().Mode
+	if a.golemWin.closeAuthorized {
+		mode = appstate.ModeDocked
+	}
 	a.golemWinMu.Unlock()
 
 	a.saveGolemPreference(gen, appstate.GolemWindow{
@@ -1201,6 +1253,7 @@ func (a *App) acceptGolemReady(instance uint64, msg GolemWindowMessage) error {
 	stopGolemTimer(a.golemWin.deadline)
 	a.golemWin.deadline = nil
 	handle := a.golemWin.handle
+	restoring := a.golemWin.restoring
 	frame := a.golemWin.lastNormal
 	state := a.golemWin.transition()
 	gen := a.golemWin.saveGen
@@ -1210,7 +1263,13 @@ func (a *App) acceptGolemReady(instance uint64, msg GolemWindowMessage) error {
 		Mode: appstate.ModeUndocked, X: frame.X, Y: frame.Y, Width: frame.Width, Height: frame.Height,
 	})
 	a.emitGolemState(state)
-	a.revealGolemWindow(handle)
+	if restoring {
+		// §7: a startup restore is not the user's gesture, so it may appear but
+		// never take OS focus from the window they are working in.
+		a.showGolemWindow(handle)
+	} else {
+		a.revealGolemWindow(handle)
+	}
 	return nil
 }
 
@@ -1298,7 +1357,9 @@ func (a *App) OpenGolemWindow(ctx context.Context) error {
 	a.golemWin.handoff = a.golemWin.handoffSeq
 	a.golemWin.phase = golemPhaseBootstrapping
 	// Startup restoration stays pending only until the first attempted restore,
-	// so a failure cannot become an automatic reopen loop.
+	// so a failure cannot become an automatic reopen loop. The attempt remembers
+	// that it is the restore: ready then shows the window without focusing it.
+	a.golemWin.restoring = a.golemWin.restorePending
 	a.golemWin.restorePending = false
 	a.golemWin.view, a.golemWin.viewRevision = nil, 0
 	a.golemWin.transferID, a.golemWin.transferAcked = 0, false
@@ -1575,7 +1636,34 @@ func (a *App) PostGolemWindowMessage(ctx context.Context, msg GolemWindowMessage
 	if err != nil {
 		return err
 	}
+	return a.relayGolemEnvelope(GolemWindowEnvelope{From: role, Message: msg})
+}
 
-	a.emit(eventGolemWindowMessage, GolemWindowEnvelope{From: role, Message: msg})
+// relayGolemEnvelope delivers one accepted message to the other window only.
+// The app-wide event bus fans every emit out to both windows, which made main
+// JSON-parse its own projection on every publish and the satellite parse every
+// action echo; WebviewWindow.DispatchWailsEvent is the per-window leg of that
+// same fan-out (event_manager.go dispatch → listener.DispatchWailsEvent), so
+// targeting it drops the waste without changing how the envelope arrives.
+// The lifecycle state (golem:window-mode) stays app-wide: both windows read it.
+func (a *App) relayGolemEnvelope(envelope GolemWindowEnvelope) error {
+	a.golemWinMu.Lock()
+	satellite := asLiveWindow(a.golemWin.handle)
+	a.golemWinMu.Unlock()
+
+	target, name := asLiveWindow(a.mainWindow), golemWindowNameMain
+	if envelope.From == golemWindowRoleMain {
+		target, name = satellite, golemWindowNameGolem
+	}
+	if target == nil {
+		if envelope.Message.Kind == "view" {
+			// Retained by acceptGolemView and served by BootstrapGolemWindow:
+			// a projection that arrives before the handle exists is delivered by
+			// the bootstrap, not lost.
+			return nil
+		}
+		return fmt.Errorf("golem window: no live %s window to relay %s to", name, envelope.Message.Kind)
+	}
+	target.DispatchWailsEvent(&application.CustomEvent{Name: eventGolemWindowMessage, Data: envelope})
 	return nil
 }
