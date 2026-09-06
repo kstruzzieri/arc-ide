@@ -13,7 +13,7 @@ import {
 } from '../types/golemWindow';
 
 /**
- * The transport-agnostic halves of the two-window protocol (#271 spec §5.3).
+ * The transport-agnostic halves of the two-window protocol (#271 spec §5.2).
  *
  * Neither core knows about Wails, React or the Golem store: they own sequence
  * numbers, deduplication, coalescing, retry bounds and the handoff barrier, so
@@ -168,12 +168,14 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
         // Settled either way: the next projection covers this id, so the
         // satellite may drop its pending overlay once it sees the watermark.
         if (id > watermark) watermark = id;
-        const rev = await publishForAck();
+        await publishForAck();
         return {
           kind: 'ack',
           instance: deps.instance,
           id,
-          revision: rev,
+          // Every ack carries the acknowledged id in `revision` (plan contract;
+          // Go's acceptGolemAck reads it there for a transfer ack).
+          revision: id,
           handoff: 0,
           payload: ack,
         };
@@ -190,7 +192,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     kind: 'ack',
     instance: deps.instance,
     id,
-    revision,
+    revision: id,
     handoff,
     payload: { id, ok: false, reason },
   });
@@ -275,11 +277,14 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     await admissionTail;
     if (disposed) return;
     deps.onDrafts(map);
+    // `revision` names the acknowledged draft id: Go's acceptGolemAck records
+    // the transfer against `msg.Revision`, not `msg.ID`, and refuses any other
+    // value — so the re-dock can only commit when this is the drafts id.
     const ackMessage: GolemWindowMessage = {
       kind: 'ack',
       instance: deps.instance,
       id: message.id,
-      revision,
+      revision: message.id,
       handoff: message.handoff,
       payload: { id: message.id, ok: true },
     };
@@ -314,7 +319,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       case 'ack':
         return; // main waits on `ready`, never on a satellite ack
       case 'abort':
-        return; // a legal kind from either role; B5/B6 own the abort handshake
+        return; // a legal kind from either role; windowRelay.handleAbort owns it
       default:
         report(RELAY_UNEXPECTED_MESSAGE);
     }
@@ -748,11 +753,14 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       report(RELAY_STALE_TRANSFER);
       throw relayError(RELAY_STALE_TRANSFER);
     }
+    // `revision` names the installed drafts id: Go's acceptGolemReady compares
+    // `msg.Revision` with the transfer it recorded and refuses anything else.
+    // A view revision was only ever equal to it by coincidence on a quiet open.
     const message: GolemWindowMessage = {
       kind: 'ready',
       instance: deps.instance,
       id: draftID,
-      revision: viewRevision,
+      revision: draftID,
       handoff,
       payload: null,
     };
@@ -792,7 +800,7 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
         receiveDrafts(message);
         return;
       case 'abort':
-        return; // a legal kind from either role; B5/B6 own the abort handshake
+        return; // a legal kind from either role; windowSatellite.handleAbort owns it
       default:
         report(RELAY_UNEXPECTED_MESSAGE);
     }

@@ -1,0 +1,76 @@
+{
+  "comment": "#271 shared wire fixture. One undock and one re-dock of instance 1 after main has published twice, so a view revision (2) can never pass for a draft id (1). Go (app_golem_window_lifecycle_test.go, TestGolemWindowWireFixture) posts these messages verbatim through PostGolemWindowMessage and must commit ready/undocked and then the authorized close; jest (relayCore.test.ts) must make the TS cores EMIT exactly these values. Go records a draft transfer under the drafts message `id` and verifies `ready` and the transfer `ack` against their `revision`, so both carry the draft id there.",
+  "instance": 1,
+  "undock": {
+    "handoff": 1,
+    "views": [
+      {
+        "kind": "view",
+        "instance": 1,
+        "handoff": 0,
+        "id": 0,
+        "revision": 1,
+        "payload": {
+          "bridgePhase": "unbound",
+          "bridgeError": null,
+          "hydratedIdentity": null,
+          "selectedConversationId": null,
+          "conversations": {},
+          "composerFocusRevision": 0,
+          "processedThrough": 0
+        }
+      },
+      {
+        "kind": "view",
+        "instance": 1,
+        "handoff": 0,
+        "id": 0,
+        "revision": 2,
+        "payload": {
+          "bridgePhase": "unbound",
+          "bridgeError": null,
+          "hydratedIdentity": null,
+          "selectedConversationId": null,
+          "conversations": {},
+          "composerFocusRevision": 0,
+          "processedThrough": 0
+        }
+      }
+    ],
+    "drafts": {
+      "kind": "drafts",
+      "instance": 1,
+      "handoff": 1,
+      "id": 1,
+      "revision": 2,
+      "payload": { "c1": "hello" }
+    },
+    "ready": {
+      "kind": "ready",
+      "instance": 1,
+      "handoff": 1,
+      "id": 1,
+      "revision": 1,
+      "payload": null
+    }
+  },
+  "redock": {
+    "handoff": 2,
+    "drafts": {
+      "kind": "drafts",
+      "instance": 1,
+      "handoff": 2,
+      "id": 1,
+      "revision": 2,
+      "payload": { "c1": "bye" }
+    },
+    "ack": {
+      "kind": "ack",
+      "instance": 1,
+      "handoff": 2,
+      "id": 1,
+      "revision": 1,
+      "payload": { "id": 1, "ok": true }
+    }
+  }
+}

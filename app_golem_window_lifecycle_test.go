@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1683,4 +1684,91 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// ---------------------------------------------------------------------------
+// Shared wire fixture
+// ---------------------------------------------------------------------------
+
+// golemWireFixture mirrors frontend/src/__tests__/fixtures/golemWindowWire.json.
+// The same file is read by relayCore.test.ts, which asserts the TS cores EMIT
+// exactly these messages; this side proves Go COMMITS them. A field that moves
+// on either side fails one suite or the other instead of only the live app.
+type golemWireFixture struct {
+	Instance uint64 `json:"instance"`
+	Undock   struct {
+		Handoff uint64               `json:"handoff"`
+		Views   []GolemWindowMessage `json:"views"`
+		Drafts  GolemWindowMessage   `json:"drafts"`
+		Ready   GolemWindowMessage   `json:"ready"`
+	} `json:"undock"`
+	Redock struct {
+		Handoff uint64             `json:"handoff"`
+		Drafts  GolemWindowMessage `json:"drafts"`
+		Ack     GolemWindowMessage `json:"ack"`
+	} `json:"redock"`
+}
+
+func TestGolemWindowWireFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("frontend", "src", "__tests__", "fixtures", "golemWindowWire.json"))
+	if err != nil {
+		t.Fatalf("shared wire fixture: %v", err)
+	}
+	var wire golemWireFixture
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("shared wire fixture is not parseable: %v", err)
+	}
+
+	h := newGolemHarness(t)
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("OpenGolemWindow: %v", err)
+	}
+	if _, err := h.app.BootstrapGolemWindow(h.satCtx()); err != nil {
+		t.Fatalf("BootstrapGolemWindow: %v", err)
+	}
+	if h.instance() != wire.Instance || h.handoff() != wire.Undock.Handoff {
+		t.Fatalf("live instance/handoff = %d/%d, the fixture names %d/%d",
+			h.instance(), h.handoff(), wire.Instance, wire.Undock.Handoff)
+	}
+	for _, view := range wire.Undock.Views {
+		if err := h.app.PostGolemWindowMessage(h.mainCtx(), view); err != nil {
+			t.Fatalf("fixture view %d: %v", view.Revision, err)
+		}
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), wire.Undock.Drafts); err != nil {
+		t.Fatalf("fixture main drafts: %v", err)
+	}
+	if err := h.app.PostGolemWindowMessage(h.satCtx(), wire.Undock.Ready); err != nil {
+		t.Fatalf("fixture ready was refused: %v", err)
+	}
+	if h.phase() != golemPhaseReady || h.mode() != appstate.ModeUndocked {
+		t.Fatalf("after the fixture ready: phase=%s mode=%s, want ready/undocked", h.phase(), h.mode())
+	}
+	waitForGolem(t, func() bool { return h.savedMode() == appstate.ModeUndocked })
+
+	satellite := h.satellite()
+	if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+		t.Fatalf("CloseGolemWindow: %v", err)
+	}
+	if h.phase() != golemPhaseClosing || h.handoff() != wire.Redock.Handoff {
+		t.Fatalf("after the re-dock request: phase=%s handoff=%d, the fixture names closing/%d",
+			h.phase(), h.handoff(), wire.Redock.Handoff)
+	}
+	if err := h.app.PostGolemWindowMessage(h.satCtx(), wire.Redock.Drafts); err != nil {
+		t.Fatalf("fixture satellite drafts: %v", err)
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), wire.Redock.Ack); err != nil {
+		t.Fatalf("fixture transfer ack was refused: %v", err)
+	}
+	if err := h.app.ConfirmGolemWindowClose(h.satCtx(), wire.Instance, wire.Redock.Handoff); err != nil {
+		t.Fatalf("ConfirmGolemWindowClose after the fixture ack: %v", err)
+	}
+	if satellite.countOf("close") != 1 {
+		t.Fatalf("authorized close issued %d native closes, want 1", satellite.countOf("close"))
+	}
+	h.retire(satellite.id)
+	waitForGolem(t, func() bool { return h.phase() == golemPhaseClosed })
+	if h.mode() != appstate.ModeDocked {
+		t.Fatalf("mode = %s after the fixture re-dock, want docked", h.mode())
+	}
 }

@@ -15,6 +15,7 @@ import type {
   GolemWindowEnvelope,
   GolemWindowMessage,
 } from '../../types/golemWindow';
+import wire from '../fixtures/golemWindowWire.json';
 
 const emptyView: GolemView = {
   bridgePhase: 'unbound',
@@ -1019,6 +1020,63 @@ describe('main and satellite over one bus', () => {
       await bus.pump();
       await redock;
       expect(received).toEqual([{ c1: 'edited in the satellite', c2: '' }]);
+    } finally {
+      satellite.dispose();
+      main.dispose();
+    }
+  });
+
+  // The same fixture drives Go's `acceptGolemReady` / `acceptGolemAck` to a
+  // committed transition in app_golem_window_lifecycle_test.go
+  // (TestGolemWindowWireFixture). Go verifies `ready` and the transfer `ack`
+  // against `revision`, so a view revision or a projection counter there is a
+  // refused post — which is exactly what this scenario's second publish exposes.
+  it('emits the wire shapes Go commits, field for field, from the shared fixture', async () => {
+    const bus = new Bus();
+    const main = createMainRelayCore({
+      instance: wire.instance,
+      execute: () => ({ ok: true }),
+      snapshot: () => emptyView,
+      transport: bus.transport('main'),
+      onDrafts: jest.fn(),
+      onError: jest.fn(),
+    });
+    const satellite = createSatelliteCore({
+      instance: wire.instance,
+      transport: bus.transport('satellite'),
+      ackTimeoutMs: 1000,
+      maxAttempts: 3,
+      onView: jest.fn(),
+      onAdmission: jest.fn(),
+      onDrafts: (_map, handoff, id) => {
+        void satellite.ready(handoff, id);
+      },
+      onError: jest.fn(),
+    });
+    bus.main = main;
+    bus.satellite = satellite;
+    try {
+      main.publish();
+      await bus.pump();
+      main.publish();
+      await bus.pump();
+      expect(bus.sent('main', 'view')).toEqual(wire.undock.views);
+
+      const undock = main.sendDrafts(wire.undock.handoff, () => ({
+        ...wire.undock.drafts.payload,
+      }));
+      await bus.pump();
+      await undock;
+      expect(bus.sent('main', 'drafts')).toEqual([wire.undock.drafts]);
+      expect(bus.sent('satellite', 'ready')).toEqual([wire.undock.ready]);
+
+      const redock = satellite.beginHandoff(wire.redock.handoff, () => ({
+        ...wire.redock.drafts.payload,
+      }));
+      await bus.pump();
+      await redock;
+      expect(bus.sent('satellite', 'drafts')).toEqual([wire.redock.drafts]);
+      expect(bus.sent('main', 'ack')).toEqual([wire.redock.ack]);
     } finally {
       satellite.dispose();
       main.dispose();
