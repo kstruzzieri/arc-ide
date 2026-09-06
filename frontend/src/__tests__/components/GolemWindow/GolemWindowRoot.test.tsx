@@ -349,6 +349,9 @@ describe('ownership phases', () => {
 
     // The transfer aborted: the same handoff returns to ready and this window
     // is the host again, with one announcer and the caret back in the composer.
+    // The bumped revision is not fixture convenience — main sends exactly this
+    // on a `closing` → `ready` recovery (§5.1); see windowRelay.ts `installState`
+    // and its "focuses the satellite composer once when the transition aborts".
     act(() =>
       install(armed(answered, 2), {
         state: { ...readyState, stateRevision: 5, handoff: 2 },

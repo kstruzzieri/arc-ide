@@ -530,6 +530,11 @@ function installState(own: Owner, next: GolemWindowState): void {
       own.closingInstance = 0;
       failAttempt(own, 'dock', own.failure ?? REDOCK_FAILED);
       own.failure = null;
+      // §5.1 restores the source interaction on failure, and the source here is
+      // the window the user is still looking at. Clearing `closingInstance`
+      // above is what keeps this to one bump per recovery: an ordinary later
+      // `ready` of the same instance no longer matches.
+      useGolemStore.getState().requestComposerFocus();
     }
     settleAttempt(own, 'undock');
   }

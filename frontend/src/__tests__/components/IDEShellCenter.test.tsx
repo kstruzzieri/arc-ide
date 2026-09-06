@@ -972,25 +972,64 @@ describe('IDEShell center pair, undocked', () => {
     expect(cssVar('--panel-golem-width')).toBe('614px');
   });
 
-  it('says nothing and moves no focus when the chat changes windows', () => {
-    act(() => useIDEStore.getState().revealCenterPanel('golem'));
-    render(undockShell());
-    const announcer = screen.getByRole('status', { name: 'Layout changes' });
-    // A real focus target that survives the transition, inside the column that
-    // stays: a bare div is never focused, so it would prove nothing.
+  /** The one sr-only region the shell owns (spec §7). */
+  const announcer = () => screen.getByRole('status', { name: 'Layout changes' });
+  /**
+   * A real focus target that survives the transition, inside the column that
+   * stays: a bare div is never focused, so it would prove nothing.
+   */
+  const holdFocus = () => {
     const held = screen.getByRole('group', { name: 'Files panel header' });
     act(() => held.focus());
     expect(document.activeElement).toBe(held);
+    return held;
+  };
+
+  it('announces the undock and moves no focus when the user opens the window', () => {
+    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+    render(undockShell());
+    const held = holdFocus();
 
     windowPhase('ready', 2);
 
-    // A window move is not a collapse: no announcement, and focus stays put.
-    expect(announcer.textContent).toBe('');
+    // A window move is not a collapse: it is named for what it is, and the
+    // satellite's own composer — not this shell — is what takes the caret.
+    expect(announcer().textContent).toBe('Golem moved to its own window.');
     expect(document.activeElement).toBe(held);
+  });
 
-    windowPhase('closed', 3);
-    act(() => useIDEStore.getState().revealCenterPanel('golem'));
+  it('announces the re-dock and moves no focus when the window hands back', () => {
+    render(undockShell());
+    windowPhase('ready', 2);
+    const held = holdFocus();
 
-    expect(announcer.textContent).toBe('');
+    windowPhase('closing', 3);
+    windowPhase('closed', 4);
+
+    // The reveal and the caret that follow a completed re-dock are the relay's
+    // explicit act (§5.3); the shell only says the chat came back.
+    expect(announcer().textContent).toBe('Golem docked.');
+    expect(document.activeElement).toBe(held);
+  });
+
+  it('says nothing when a saved undocked window is restored at startup', () => {
+    render(undockShell());
+    // Go publishes the saved preference first; the relay's one restore opens
+    // the window from there, so no user just moved the chat.
+    act(() =>
+      useGolemStore.getState().setWindowState({
+        mode: 'undocked',
+        phase: 'closed',
+        instance: 0,
+        restorePending: true,
+        stateRevision: 1,
+        handoff: 0,
+      })
+    );
+    windowPhase('bootstrapping', 2);
+    windowPhase('bootstrapped', 3);
+    windowPhase('ready', 4);
+
+    expect(announcer().textContent).toBe('');
   });
 });

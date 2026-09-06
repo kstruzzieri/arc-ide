@@ -52,6 +52,10 @@ const CENTER_PANELS: readonly CenterPanel[] = ['files', 'golem'];
 
 const CENTER_LABEL: Record<CenterPanel, string> = { files: 'Files', golem: 'Golem' };
 
+/** The two window transitions the shell announces (spec §7). */
+const UNDOCKED_MESSAGE = 'Golem moved to its own window.';
+const DOCKED_MESSAGE = 'Golem docked.';
+
 /** A collapsed center panel keeps its tree mounted and merely leaves layout. */
 const HIDDEN = { display: 'none' } as const;
 
@@ -105,9 +109,11 @@ export function IDEShell({
   // Visual ownership, not the saved mode (#271 B6). A restored `undocked`
   // preference is still bootstrapping, and until the satellite is actually
   // ready the docked content is what the user must keep seeing.
-  const golemUndocked = useGolemStore(
-    (s) => s.windowState.phase === 'ready' || s.windowState.phase === 'closing'
-  );
+  const golemWindowPhase = useGolemStore((s) => s.windowState.phase);
+  const golemUndocked = golemWindowPhase === 'ready' || golemWindowPhase === 'closing';
+  // Go clears this the moment the restore's open begins, so the flip that ends
+  // it is several phases later — the announcer latches it (spec §7).
+  const golemRestorePending = useGolemStore((s) => s.windowState.restorePending);
   const workspacePath = useIDEStore((s) => s.workspace?.path ?? null);
   const [isCommandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
@@ -509,6 +515,14 @@ export function IDEShell({
   // written directly rather than through state: it is an assistive-technology
   // output, not something any render depends on.
   const announcerRef = useRef<HTMLDivElement>(null);
+  /**
+   * Whether the undocked window now opening is the saved one being restored at
+   * startup rather than a move the user just made. Armed by the `restorePending`
+   * Go publishes before that open, spent by the flip it explains, and disarmed
+   * if the window returns to `closed` without ever getting there — a restore
+   * that failed must not silence the user's own next undock.
+   */
+  const restoringWindow = useRef(false);
   const announced = useRef({
     order: centerOrder,
     files: center.filesCollapsed,
@@ -519,6 +533,8 @@ export function IDEShell({
   });
 
   useEffect(() => {
+    if (golemRestorePending) restoringWindow.current = true;
+    else if (golemWindowPhase === 'closed') restoringWindow.current = false;
     const previous = announced.current;
     const next = {
       order: centerOrder,
@@ -534,9 +550,19 @@ export function IDEShell({
     // The initial mount — and StrictMode's replay of it — compares equal to
     // itself and says nothing.
     if (previous.session !== next.session || previous.revision !== next.revision) return;
-    // Nor is moving the chat to its own window: "Golem panel collapsed" would
-    // be a lie, and the rail that replaced it names what actually happened.
-    if (previous.undocked !== next.undocked) return;
+    // Moving the chat between windows is never "Golem panel collapsed": it is
+    // its own transition, and the only one announced on this tick. Focus is
+    // untouched either way — the satellite's composer takes it on the way out,
+    // and the relay's reveal takes it on the way back (§5.3).
+    if (previous.undocked !== next.undocked) {
+      const restored = restoringWindow.current;
+      restoringWindow.current = false;
+      // A restored window was nobody's gesture, so nothing is announced for it.
+      if (announcerRef.current && !(next.undocked && restored)) {
+        announcerRef.current.textContent = next.undocked ? UNDOCKED_MESSAGE : DOCKED_MESSAGE;
+      }
+      return;
+    }
     const parts: string[] = [];
     if (previous.order !== next.order) {
       parts.push(`Golem panel moved ${next.order === 'golem-first' ? 'left' : 'right'}.`);
@@ -555,6 +581,8 @@ export function IDEShell({
     center.undocked,
     sessionKey,
     centerLayoutRevision,
+    golemRestorePending,
+    golemWindowPhase,
   ]);
 
   const expandCenter = useCallback((panel: CenterPanel) => {

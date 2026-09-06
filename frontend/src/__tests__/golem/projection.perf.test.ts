@@ -164,7 +164,10 @@ describe('projection payload', () => {
       cap: GO_PAYLOAD_CAP,
       marginPercent: Math.round((1 - extreme.bytes / GO_PAYLOAD_CAP) * 100),
     });
-    expect(extreme.bytes).toBeLessThanOrEqual(GO_PAYLOAD_CAP);
+    // Not merely under the cap: the headroom itself is the claim. Five times a
+    // long session must still leave a quarter of the payload budget unused, so
+    // a projection that grows toward the cap fails here instead of in Go.
+    expect(extreme.bytes).toBeLessThan(GO_PAYLOAD_CAP * 0.75);
   });
 
   it('reports an oversized transcript at full size rather than truncating it', () => {

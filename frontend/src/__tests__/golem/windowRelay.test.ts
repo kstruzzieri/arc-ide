@@ -632,6 +632,27 @@ describe('re-dock', () => {
     expect(useDraftStore.getState().drafts).toEqual({ [CONV]: 'second attempt' });
   });
 
+  it('focuses the satellite composer once when the transition aborts back to ready', async () => {
+    await ready();
+    const settled = dockGolem().catch((error: unknown) => error);
+    emit(MODE_EVENT, phase('closing', 4, 2));
+    await flush();
+
+    // §5.1: the re-dock failed, so the window the user is looking at is the
+    // host again and its caret has to come back with the role.
+    const before = useGolemStore.getState().composerFocusRevision;
+    emit(MODE_EVENT, phase('ready', 5, 2));
+    await flush();
+    await settled;
+    const recovered = useGolemStore.getState().composerFocusRevision;
+    expect(recovered).toBe(before + 1);
+
+    // A later `ready` of the same live instance is not a second recovery.
+    emit(MODE_EVENT, phase('ready', 6, 2));
+    await flush();
+    expect(useGolemStore.getState().composerFocusRevision).toBe(recovered);
+  });
+
   it('keeps the map it was already handed when the transition falls back to ready', async () => {
     await ready();
     const settled = dockGolem().catch((error: unknown) => error);
