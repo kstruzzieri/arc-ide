@@ -594,6 +594,7 @@ func TestNormalizeEndpointCanonicalForms(t *testing.T) {
 		{"http://[::1]:11434/api/", "http://[::1]:11434/api", true},
 		{"HTTP://[::1]", "http://[::1]", true},
 		{"https://[2001:DB8::1]/v1", "https://[2001:db8::1]/v1", false},
+		{"http://[2001:0db8:0:0:0:0:0:1]:8080/v1", "http://[2001:db8::1]:8080/v1", false},
 		{"http://localhost:11434", "http://localhost:11434", true},
 		{"http://LOCALHOST", "http://localhost", true},
 		{"http://127.0.0.1:11434", "http://127.0.0.1:11434", true},
@@ -637,6 +638,19 @@ func TestNormalizeEndpointEquivalence(t *testing.T) {
 	}
 	if a != b {
 		t.Fatalf("equivalent endpoints normalized differently: %q vs %q", a, b)
+	}
+	// D10/R3: equivalent IPv6 spellings collapse to the same canonical host,
+	// matching destination/v1's net.ParseIP(host).String() normalization.
+	c, _, err := NormalizeEndpoint("http://[2001:0db8::1]")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	d, _, err := NormalizeEndpoint("http://[2001:db8::1]")
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint: %v", err)
+	}
+	if c != d {
+		t.Fatalf("equivalent IPv6 spellings normalized differently: %q vs %q", c, d)
 	}
 }
 
@@ -690,6 +704,9 @@ func TestNormalizeEndpointRejections(t *testing.T) {
 		"http://ex\u0430mple.com",  // Cyrillic "a" homoglyph
 		"http://\uff45xample.com",  // fullwidth "e" homoglyph
 		"http://example\u3002com",  // ideographic full stop as a dot lookalike
+		"https://h/v1/../admin",    // dot-segment: rejected by destination/v1
+		"https://h/./x",            // dot-segment: rejected by destination/v1
+		"https://h/v1/%2e%2e/x",    // escaped dot-segment: same rejection
 	}
 	for _, raw := range rejects {
 		if got, _, err := NormalizeEndpoint(raw); err == nil {

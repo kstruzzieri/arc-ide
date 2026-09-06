@@ -18,6 +18,7 @@ import {
   meetsUseCaseFloor,
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
+  parseDestinationGrantsResult,
   parseGolemProfileLoadResult,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
@@ -33,6 +34,7 @@ import {
   USE_CASE_FLOORS,
   type ApplyMode,
   type Change,
+  type DestinationGrantsStatus,
   type Draft,
   type DraftBaseProjection,
   type DraftEvent,
@@ -224,7 +226,197 @@ describe('parseSettingsApplyResult', () => {
       readFixture('accept-result-consent-required.json').value
     );
     if (result.status !== 'consent_required') throw new Error('expected consent_required');
-    expect(result.challenge.destination.classification).toBe('remote');
+    expect(result.challenge.destinations[0].classification).toBe('remote');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The batch consent challenge (spec D8): every NEW remote destination one
+// write would open, each with the routing hops that reach it. The rules mirror
+// validateApplyChallenge in internal/ai/settings_apply_test.go one for one --
+// the corpus replays them on the live seam, and these state them directly so a
+// rule that loses its fixture still has an owner.
+// ---------------------------------------------------------------------------
+
+/** One rendered provenance hop: two bounded identifiers plus a fixed literal. */
+const MAX_HOP_BYTES = 544;
+
+const destination = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  provider: 'hosted',
+  model: 'wire-model',
+  endpoint: 'https://api.example.com/v1',
+  classification: 'remote',
+  provenance: ['agent'],
+  ...over,
+});
+
+const challengeOf = (...destinations: unknown[]): Record<string, unknown> => ({
+  token: 'opaque-challenge-token',
+  expiresAt: 1767225600000,
+  destinations,
+});
+
+const consentRequired = (challenge: unknown): unknown => ({
+  status: 'consent_required',
+  challenge,
+});
+
+/** Every way the batch can be malformed, stated once and asserted twice. */
+const badChallenges: Array<[string, unknown]> = [
+  ['no destinations at all', challengeOf()],
+  [
+    'a destination with no provenance key',
+    challengeOf({
+      provider: 'hosted',
+      model: 'wire-model',
+      endpoint: 'https://api.example.com/v1',
+      classification: 'remote',
+    }),
+  ],
+  ['an empty provenance', challengeOf(destination({ provenance: [] }))],
+  ['an empty provenance hop', challengeOf(destination({ provenance: [''] }))],
+  [
+    'a provenance hop over the byte limit',
+    challengeOf(destination({ provenance: ['a'.repeat(MAX_HOP_BYTES + 1)] })),
+  ],
+  ['a provenance hop carrying a format rune', challengeOf(destination({ provenance: ['agent‮'] }))],
+  ['a local destination', challengeOf(destination({ classification: 'local' }))],
+  ['an empty endpoint', challengeOf(destination({ endpoint: '' }))],
+  ['an empty provider', challengeOf(destination({ provider: '' }))],
+  ['an unknown destination member', challengeOf(destination({ apiKey: 'sk-leak' }))],
+  ['257 destinations', challengeOf(...Array.from({ length: 257 }, () => destination()))],
+];
+
+describe('batch consent challenge', () => {
+  it('parses every destination and keeps its provenance in order', () => {
+    const result = parseSettingsApplyResult(
+      consentRequired(
+        challengeOf(
+          destination(),
+          destination({ model: '', provenance: ['agent', 'agent (recommendation)'] })
+        )
+      )
+    );
+    if (result.status !== 'consent_required') throw new Error('expected consent_required');
+    expect(result.challenge.destinations).toHaveLength(2);
+    expect(result.challenge.destinations[0]).toEqual({
+      provider: 'hosted',
+      model: 'wire-model',
+      endpoint: 'https://api.example.com/v1',
+      classification: 'remote',
+      provenance: ['agent'],
+    });
+    // A recommendation entry names a provider and no model at all.
+    expect(result.challenge.destinations[1].model).toBe('');
+    expect(result.challenge.destinations[1].provenance).toEqual([
+      'agent',
+      'agent (recommendation)',
+    ]);
+  });
+
+  it('accepts 256 destinations and a hop at exactly the byte limit', () => {
+    const result = parseSettingsApplyResult(
+      consentRequired(
+        challengeOf(
+          ...Array.from({ length: 255 }, () => destination()),
+          destination({ provenance: ['a'.repeat(MAX_HOP_BYTES)] })
+        )
+      )
+    );
+    if (result.status !== 'consent_required') throw new Error('expected consent_required');
+    expect(result.challenge.destinations).toHaveLength(256);
+  });
+
+  it.each(badChallenges)('rejects a challenge with %s', (_name, challenge) => {
+    expect(() => parseSettingsApplyResult(consentRequired(challenge))).toThrow(GolemContractError);
+  });
+
+  it('rejects a challenge on a status that does not own one', () => {
+    expect(() =>
+      parseSettingsApplyResult({ status: 'busy', challenge: challengeOf(destination()) })
+    ).toThrow(GolemContractError);
+  });
+
+  it('rejects consent_required with no challenge', () => {
+    expect(() => parseSettingsApplyResult({ status: 'consent_required' })).toThrow(
+      GolemContractError
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The grant-only result (spec D13): eight statuses, no projection, no
+// diagnostics, and a challenge present iff the status is consent_required.
+// ---------------------------------------------------------------------------
+
+describe('parseDestinationGrantsResult', () => {
+  const STATUSES: DestinationGrantsStatus[] = [
+    'none',
+    'consent_required',
+    'granted',
+    'uncertain',
+    'conflict',
+    'busy',
+    'unavailable',
+    'config_invalid',
+  ];
+
+  it.each(STATUSES)('accepts %s', (status) => {
+    const value =
+      status === 'consent_required'
+        ? { status, challenge: challengeOf(destination()) }
+        : { status };
+    expect(parseDestinationGrantsResult(value).status).toBe(status);
+  });
+
+  it('returns the parsed challenge on consent_required', () => {
+    const { status, challenge } = parseDestinationGrantsResult({
+      status: 'consent_required',
+      challenge: challengeOf(destination(), destination({ model: '' })),
+    });
+    expect(status).toBe('consent_required');
+    if (challenge === undefined) throw new Error('expected a challenge');
+    expect(challenge.destinations).toHaveLength(2);
+    expect(challenge.token).toBe('opaque-challenge-token');
+  });
+
+  it('leaves the challenge absent on every other status', () => {
+    expect(parseDestinationGrantsResult({ status: 'granted' }).challenge).toBeUndefined();
+  });
+
+  it('rejects a status outside the union', () => {
+    expect(() => parseDestinationGrantsResult({ status: 'applied' })).toThrow(GolemContractError);
+  });
+
+  it('rejects consent_required with no challenge', () => {
+    expect(() => parseDestinationGrantsResult({ status: 'consent_required' })).toThrow(
+      GolemContractError
+    );
+  });
+
+  it.each(STATUSES.filter((status) => status !== 'consent_required'))(
+    'rejects a challenge carried by %s',
+    (status) => {
+      expect(() =>
+        parseDestinationGrantsResult({ status, challenge: challengeOf(destination()) })
+      ).toThrow(GolemContractError);
+    }
+  );
+
+  it('rejects a member the result never owns', () => {
+    expect(() =>
+      parseDestinationGrantsResult({ status: 'granted', projection: { state: 'ready' } })
+    ).toThrow(GolemContractError);
+  });
+
+  it.each(badChallenges)('rejects a consent_required challenge with %s', (_name, challenge) => {
+    expect(() => parseDestinationGrantsResult({ status: 'consent_required', challenge })).toThrow(
+      GolemContractError
+    );
+  });
+
+  it('rejects a non-record', () => {
+    expect(() => parseDestinationGrantsResult(null)).toThrow(GolemContractError);
   });
 });
 
@@ -798,6 +990,8 @@ describe('use-case floors', () => {
     ['embedding', ['embed'], true],
     ['embedding', ['chat'], false],
     ['summarize', [], true],
+    ['planning', ['chat', 'stream'], false],
+    ['planning', ['chat', 'stream', 'tool_call'], true],
   ])('meetsUseCaseFloor(%s, %j) is %s', (useCase, caps, expected) => {
     expect(meetsUseCaseFloor(useCase as string, caps as CapabilityName[])).toBe(expected);
   });

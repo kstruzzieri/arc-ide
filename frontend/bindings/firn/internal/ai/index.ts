@@ -14,6 +14,7 @@ export {
     ConsentChallenge,
     ContextReceipt,
     ConversationIdentity,
+    DestinationGrantsResult,
     Diagnostic,
     GolemProfileLoadResult,
     ModelFacts,

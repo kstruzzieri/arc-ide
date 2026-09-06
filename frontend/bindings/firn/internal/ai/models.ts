@@ -48,12 +48,14 @@ export class ActiveRunStatus {
 
 /**
  * ApplyChallenge is the consent handshake. The token is opaque and single-use;
- * the record behind it holds no document, path, or key.
+ * the record behind it holds no document, path, or key. Destinations lists
+ * every NEW remote destination the write would open, digest-sorted (spec D8).
+ * Present iff the result status is consent_required.
  */
 export class ApplyChallenge {
     "token": string;
     "expiresAt": number;
-    "destination": ApplyDestination;
+    "destinations": ApplyDestination[];
 
     /** Creates a new ApplyChallenge instance. */
     constructor($$source: Partial<ApplyChallenge> = {}) {
@@ -63,8 +65,8 @@ export class ApplyChallenge {
         if (!("expiresAt" in $$source)) {
             this["expiresAt"] = 0;
         }
-        if (!("destination" in $$source)) {
-            this["destination"] = (new ApplyDestination());
+        if (!("destinations" in $$source)) {
+            this["destinations"] = [];
         }
 
         Object.assign(this, $$source);
@@ -74,10 +76,10 @@ export class ApplyChallenge {
      * Creates a new ApplyChallenge instance from a string or object.
      */
     static createFrom($$source: any = {}): ApplyChallenge {
-        const $$createField2_0 = $$createType1;
+        const $$createField2_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("destination" in $$parsedSource) {
-            $$parsedSource["destination"] = $$createField2_0($$parsedSource["destination"]);
+        if ("destinations" in $$parsedSource) {
+            $$parsedSource["destinations"] = $$createField2_0($$parsedSource["destinations"]);
         }
         return new ApplyChallenge($$parsedSource as Partial<ApplyChallenge>);
     }
@@ -85,13 +87,17 @@ export class ApplyChallenge {
 
 /**
  * ApplyDestination is the bounded egress identity shown in the consent
- * prompt — never an API key, never a path.
+ * prompt — never an API key, never a path. Classification is always "remote"
+ * (local destinations never challenge). Provenance names the routing hops
+ * that reach it ("agent", "agent (recommendation)"); Model is empty when the
+ * hop names a provider and no model.
  */
 export class ApplyDestination {
     "provider": string;
     "model": string;
     "endpoint": string;
     "classification": string;
+    "provenance": string[];
 
     /** Creates a new ApplyDestination instance. */
     constructor($$source: Partial<ApplyDestination> = {}) {
@@ -107,6 +113,9 @@ export class ApplyDestination {
         if (!("classification" in $$source)) {
             this["classification"] = "";
         }
+        if (!("provenance" in $$source)) {
+            this["provenance"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -115,7 +124,11 @@ export class ApplyDestination {
      * Creates a new ApplyDestination instance from a string or object.
      */
     static createFrom($$source: any = {}): ApplyDestination {
+        const $$createField4_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("provenance" in $$parsedSource) {
+            $$parsedSource["provenance"] = $$createField4_0($$parsedSource["provenance"]);
+        }
         return new ApplyDestination($$parsedSource as Partial<ApplyDestination>);
     }
 }
@@ -197,8 +210,8 @@ export class CapabilityFacts {
      * Creates a new CapabilityFacts instance from a string or object.
      */
     static createFrom($$source: any = {}): CapabilityFacts {
-        const $$createField0_0 = $$createType2;
-        const $$createField1_0 = $$createType2;
+        const $$createField0_0 = $$createType3;
+        const $$createField1_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("caps" in $$parsedSource) {
             $$parsedSource["caps"] = $$createField0_0($$parsedSource["caps"]);
@@ -247,11 +260,11 @@ export class Change {
      * Creates a new Change instance from a string or object.
      */
     static createFrom($$source: any = {}): Change {
-        const $$createField6_0 = $$createType4;
-        const $$createField7_0 = $$createType6;
-        const $$createField8_0 = $$createType2;
-        const $$createField11_0 = $$createType2;
-        const $$createField12_0 = $$createType2;
+        const $$createField6_0 = $$createType5;
+        const $$createField7_0 = $$createType7;
+        const $$createField8_0 = $$createType3;
+        const $$createField11_0 = $$createType3;
+        const $$createField12_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("modelFacts" in $$parsedSource) {
             $$parsedSource["modelFacts"] = $$createField6_0($$parsedSource["modelFacts"]);
@@ -296,7 +309,7 @@ export class ChangeDropSet {
      * Creates a new ChangeDropSet instance from a string or object.
      */
     static createFrom($$source: any = {}): ChangeDropSet {
-        const $$createField1_0 = $$createType2;
+        const $$createField1_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("fields" in $$parsedSource) {
             $$parsedSource["fields"] = $$createField1_0($$parsedSource["fields"]);
@@ -329,7 +342,7 @@ export class ConfirmSettingsApplyRequest {
      * Creates a new ConfirmSettingsApplyRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): ConfirmSettingsApplyRequest {
-        const $$createField1_0 = $$createType7;
+        const $$createField1_0 = $$createType8;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("request" in $$parsedSource) {
             $$parsedSource["request"] = $$createField1_0($$parsedSource["request"]);
@@ -379,7 +392,7 @@ export class ConsentChallenge {
      */
     static createFrom($$source: any = {}): ConsentChallenge {
         const $$createField1_0 = $$createType0;
-        const $$createField2_0 = $$createType8;
+        const $$createField2_0 = $$createType9;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("identity" in $$parsedSource) {
             $$parsedSource["identity"] = $$createField1_0($$parsedSource["identity"]);
@@ -456,6 +469,52 @@ export class ConversationIdentity {
 }
 
 /**
+ * DestinationGrantsResult is the closed result of the grant-only approval
+ * flow (spec D13). It approves destinations and authorizes NO document write,
+ * so it carries no projection, no diagnostics, and no conflict kind: the
+ * status alone says what happened.
+ * 
+ * 	none             nothing to approve — no configuration, or every remote
+ * 	                 the agent route reaches is already granted
+ * 	consent_required the challenge below lists what would be opened
+ * 	granted          the whole approved batch is durably recorded
+ * 	uncertain        the batch write failed; see ConsentStore.GrantMany
+ * 	conflict         the token is unknown, expired, cancelled, issued by the
+ * 	                 settings-write flow, or no longer describes the ACTIVE
+ * 	                 configuration
+ * 	busy             a turn is running; nothing was consumed, retry the token
+ * 	unavailable      consent storage cannot authorize or record anything
+ * 	config_invalid   the active configuration could not be loaded
+ * 
+ * Challenge is present iff Status is consent_required.
+ */
+export class DestinationGrantsResult {
+    "status": string;
+    "challenge"?: ApplyChallenge | null;
+
+    /** Creates a new DestinationGrantsResult instance. */
+    constructor($$source: Partial<DestinationGrantsResult> = {}) {
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new DestinationGrantsResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): DestinationGrantsResult {
+        const $$createField1_0 = $$createType11;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("challenge" in $$parsedSource) {
+            $$parsedSource["challenge"] = $$createField1_0($$parsedSource["challenge"]);
+        }
+        return new DestinationGrantsResult($$parsedSource as Partial<DestinationGrantsResult>);
+    }
+}
+
+/**
  * Diagnostic is one allowlisted configuration finding. SubjectName is a
  * length-bounded role/model/provider/use_case name; never a path or value.
  */
@@ -520,8 +579,8 @@ export class GolemProfileLoadResult {
      * Creates a new GolemProfileLoadResult instance from a string or object.
      */
     static createFrom($$source: any = {}): GolemProfileLoadResult {
-        const $$createField3_0 = $$createType10;
-        const $$createField4_0 = $$createType12;
+        const $$createField3_0 = $$createType13;
+        const $$createField4_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projection" in $$parsedSource) {
             $$parsedSource["projection"] = $$createField3_0($$parsedSource["projection"]);
@@ -646,10 +705,10 @@ export class ModelProjection {
      * Creates a new ModelProjection instance from a string or object.
      */
     static createFrom($$source: any = {}): ModelProjection {
-        const $$createField7_0 = $$createType2;
-        const $$createField8_0 = $$createType5;
-        const $$createField9_0 = $$createType2;
-        const $$createField11_0 = $$createType2;
+        const $$createField7_0 = $$createType3;
+        const $$createField8_0 = $$createType6;
+        const $$createField9_0 = $$createType3;
+        const $$createField11_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("effectiveCapabilities" in $$parsedSource) {
             $$parsedSource["effectiveCapabilities"] = $$createField7_0($$parsedSource["effectiveCapabilities"]);
@@ -736,10 +795,10 @@ export class ProfileDraftProjection {
      * Creates a new ProfileDraftProjection instance from a string or object.
      */
     static createFrom($$source: any = {}): ProfileDraftProjection {
-        const $$createField3_0 = $$createType14;
-        const $$createField4_0 = $$createType16;
-        const $$createField5_0 = $$createType18;
-        const $$createField6_0 = $$createType20;
+        const $$createField3_0 = $$createType17;
+        const $$createField4_0 = $$createType19;
+        const $$createField5_0 = $$createType21;
+        const $$createField6_0 = $$createType23;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("routes" in $$parsedSource) {
             $$parsedSource["routes"] = $$createField3_0($$parsedSource["routes"]);
@@ -950,9 +1009,9 @@ export class SettingsApplyRequest {
      * Creates a new SettingsApplyRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsApplyRequest {
-        const $$createField1_0 = $$createType21;
-        const $$createField2_0 = $$createType23;
-        const $$createField3_0 = $$createType24;
+        const $$createField1_0 = $$createType24;
+        const $$createField2_0 = $$createType26;
+        const $$createField3_0 = $$createType27;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -993,10 +1052,10 @@ export class SettingsApplyResult {
      * Creates a new SettingsApplyResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsApplyResult {
-        const $$createField1_0 = $$createType26;
-        const $$createField3_0 = $$createType28;
-        const $$createField4_0 = $$createType30;
-        const $$createField7_0 = $$createType20;
+        const $$createField1_0 = $$createType29;
+        const $$createField3_0 = $$createType11;
+        const $$createField4_0 = $$createType31;
+        const $$createField7_0 = $$createType23;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projection" in $$parsedSource) {
             $$parsedSource["projection"] = $$createField1_0($$parsedSource["projection"]);
@@ -1074,10 +1133,10 @@ export class SettingsProjection {
      * Creates a new SettingsProjection instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsProjection {
-        const $$createField5_0 = $$createType14;
-        const $$createField6_0 = $$createType16;
-        const $$createField7_0 = $$createType18;
-        const $$createField8_0 = $$createType20;
+        const $$createField5_0 = $$createType17;
+        const $$createField6_0 = $$createType19;
+        const $$createField7_0 = $$createType21;
+        const $$createField8_0 = $$createType23;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("routes" in $$parsedSource) {
             $$parsedSource["routes"] = $$createField5_0($$parsedSource["routes"]);
@@ -1120,7 +1179,7 @@ export class SettingsReloadResult {
      * Creates a new SettingsReloadResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsReloadResult {
-        const $$createField1_0 = $$createType25;
+        const $$createField1_0 = $$createType28;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projection" in $$parsedSource) {
             $$parsedSource["projection"] = $$createField1_0($$parsedSource["projection"]);
@@ -1169,11 +1228,11 @@ export class Status {
      * Creates a new Status instance from a string or object.
      */
     static createFrom($$source: any = {}): Status {
-        const $$createField2_0 = $$createType31;
-        const $$createField3_0 = $$createType32;
-        const $$createField5_0 = $$createType34;
-        const $$createField6_0 = $$createType36;
-        const $$createField7_0 = $$createType2;
+        const $$createField2_0 = $$createType32;
+        const $$createField3_0 = $$createType33;
+        const $$createField5_0 = $$createType35;
+        const $$createField6_0 = $$createType37;
+        const $$createField7_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("identity" in $$parsedSource) {
             $$parsedSource["identity"] = $$createField2_0($$parsedSource["identity"]);
@@ -1259,9 +1318,9 @@ export class TurnAdmission {
      */
     static createFrom($$source: any = {}): TurnAdmission {
         const $$createField1_0 = $$createType0;
-        const $$createField2_0 = $$createType8;
-        const $$createField3_0 = $$createType37;
-        const $$createField4_0 = $$createType34;
+        const $$createField2_0 = $$createType9;
+        const $$createField3_0 = $$createType38;
+        const $$createField4_0 = $$createType35;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("identity" in $$parsedSource) {
             $$parsedSource["identity"] = $$createField1_0($$parsedSource["identity"]);
@@ -1309,7 +1368,7 @@ export class TurnRequest {
      */
     static createFrom($$source: any = {}): TurnRequest {
         const $$createField0_0 = $$createType0;
-        const $$createField2_0 = $$createType2;
+        const $$createField2_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("identity" in $$parsedSource) {
             $$parsedSource["identity"] = $$createField0_0($$parsedSource["identity"]);
@@ -1324,39 +1383,40 @@ export class TurnRequest {
 // Private type creation functions
 const $$createType0 = RunIdentity.createFrom;
 const $$createType1 = ApplyDestination.createFrom;
-const $$createType2 = $Create.Array($Create.Any);
-const $$createType3 = ModelFacts.createFrom;
-const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = CapabilityFacts.createFrom;
-const $$createType6 = $Create.Nullable($$createType5);
-const $$createType7 = SettingsApplyRequest.createFrom;
-const $$createType8 = ProviderDestination.createFrom;
-const $$createType9 = ProfileDraftProjection.createFrom;
-const $$createType10 = $Create.Nullable($$createType9);
-const $$createType11 = ProfileDiagnostic.createFrom;
-const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = RouteProjection.createFrom;
-const $$createType14 = $Create.Array($$createType13);
-const $$createType15 = ModelProjection.createFrom;
-const $$createType16 = $Create.Array($$createType15);
-const $$createType17 = ProviderProjection.createFrom;
-const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = Diagnostic.createFrom;
-const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = ApplySource.createFrom;
-const $$createType22 = Change.createFrom;
+const $$createType2 = $Create.Array($$createType1);
+const $$createType3 = $Create.Array($Create.Any);
+const $$createType4 = ModelFacts.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);
+const $$createType6 = CapabilityFacts.createFrom;
+const $$createType7 = $Create.Nullable($$createType6);
+const $$createType8 = SettingsApplyRequest.createFrom;
+const $$createType9 = ProviderDestination.createFrom;
+const $$createType10 = ApplyChallenge.createFrom;
+const $$createType11 = $Create.Nullable($$createType10);
+const $$createType12 = ProfileDraftProjection.createFrom;
+const $$createType13 = $Create.Nullable($$createType12);
+const $$createType14 = ProfileDiagnostic.createFrom;
+const $$createType15 = $Create.Array($$createType14);
+const $$createType16 = RouteProjection.createFrom;
+const $$createType17 = $Create.Array($$createType16);
+const $$createType18 = ModelProjection.createFrom;
+const $$createType19 = $Create.Array($$createType18);
+const $$createType20 = ProviderProjection.createFrom;
+const $$createType21 = $Create.Array($$createType20);
+const $$createType22 = Diagnostic.createFrom;
 const $$createType23 = $Create.Array($$createType22);
-const $$createType24 = $Create.Map($Create.Any, $Create.Any);
-const $$createType25 = SettingsProjection.createFrom;
-const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = ApplyChallenge.createFrom;
-const $$createType28 = $Create.Nullable($$createType27);
-const $$createType29 = ChangeDropSet.createFrom;
-const $$createType30 = $Create.Array($$createType29);
-const $$createType31 = ConversationIdentity.createFrom;
-const $$createType32 = $Create.Nullable($$createType8);
-const $$createType33 = ConsentChallenge.createFrom;
-const $$createType34 = $Create.Nullable($$createType33);
-const $$createType35 = ActiveRunStatus.createFrom;
-const $$createType36 = $Create.Array($$createType35);
-const $$createType37 = ContextReceipt.createFrom;
+const $$createType24 = ApplySource.createFrom;
+const $$createType25 = Change.createFrom;
+const $$createType26 = $Create.Array($$createType25);
+const $$createType27 = $Create.Map($Create.Any, $Create.Any);
+const $$createType28 = SettingsProjection.createFrom;
+const $$createType29 = $Create.Nullable($$createType28);
+const $$createType30 = ChangeDropSet.createFrom;
+const $$createType31 = $Create.Array($$createType30);
+const $$createType32 = ConversationIdentity.createFrom;
+const $$createType33 = $Create.Nullable($$createType9);
+const $$createType34 = ConsentChallenge.createFrom;
+const $$createType35 = $Create.Nullable($$createType34);
+const $$createType36 = ActiveRunStatus.createFrom;
+const $$createType37 = $Create.Array($$createType36);
+const $$createType38 = ContextReceipt.createFrom;

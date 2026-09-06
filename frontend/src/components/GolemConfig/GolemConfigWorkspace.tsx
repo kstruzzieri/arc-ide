@@ -15,6 +15,12 @@
  *   discard, teardown, transport rejection — reaches it through `settle`, so
  *   "were the values dropped?" has exactly one answer per outcome.
  *
+ * It also hosts a SECOND, independent flow: the grant-only approval (spec D13,
+ * I15). It shares the consent prompt and the cancel binding but nothing else —
+ * it writes no document, so it never reaches `settle` and therefore never
+ * settles a draft or clears a key ref. The prompt's `intent` is what keeps the
+ * two apart; the section that owns it is marked below.
+ *
  * There is one instance per app, so nothing here is workspace-scoped: Firn's
  * settings calls read one process-wide snapshot.
  */
@@ -23,9 +29,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApplyGolemSettings,
   CancelGolemSettingsApply,
+  ConfirmGolemDestinationGrants,
   ConfirmGolemSettingsApply,
   CreateGolemSettings,
   LoadGolemProfile,
+  PrepareGolemDestinationGrants,
   ReloadGolemSettings,
 } from '../../wails/bindings';
 import type { ai } from '../../wails/bindings';
@@ -45,6 +53,7 @@ import {
   isDraftDirty,
   meetsUseCaseFloor,
   parseCancelSettingsApplyResult,
+  parseDestinationGrantsResult,
   parseGolemProfileLoadResult,
   parseSettingsApplyResult,
   projectDraft,
@@ -59,6 +68,8 @@ import {
   type ApplyMode,
   type Change,
   type ChangeDropSet,
+  type ConsentPromptIntent,
+  type DestinationGrantsStatus,
   type DraftEvent,
   type ProfileDraftProjection,
   type SettingsApplyRequest,
@@ -154,9 +165,65 @@ const CHALLENGE_CONFLICT =
 const BOOTSTRAP_GATE =
   'A blank configuration needs one provider and an agent route that meets chat, stream, and tool_call.';
 
+/**
+ * The grant-only approval (spec D13, I15). It approves destinations for the
+ * ACTIVE configuration and writes no document, so every outcome below speaks
+ * only about approval — and none of them mentions the draft, because none of
+ * them touches it.
+ */
+const APPROVE_ACTION = 'Approve missing destinations';
+const GRANT_NONE =
+  'Nothing to approve. Every remote destination the agent route reaches is already approved.';
+/** Never "nothing to approve": a configuration that would not load answered
+ * nothing at all, and the diagnostics on this page are the repair. */
+const GRANT_CONFIG_INVALID = 'Configuration failed to load — fix the diagnostics above first.';
+/** The store's own repair path: one invalid record fails the whole file
+ * closed, and no grant can persist until it is fixed or removed. */
+const GRANT_UNAVAILABLE =
+  'Consent storage unavailable — see repair steps: fix or remove ~/.firn/golem-consent.json, restart Firn, then approve again. Nothing can be approved until it opens cleanly.';
+const GRANT_GRANTED = 'Destinations approved. Your configuration was not changed.';
+const GRANT_UNCERTAIN =
+  'Golem could not confirm whether the approval was saved. Try approving again.';
+const GRANT_CONFLICT = `The configuration changed while this approval was open, so nothing was approved. Choose ${APPROVE_ACTION} again to review the current set.`;
+const GRANT_EXPIRED = `The approval request expired. Nothing was approved. Choose ${APPROVE_ACTION} again.`;
+const GRANT_CANCELLED = 'The approval request was cancelled. Nothing was approved.';
+
+/** One line per closed status; `consent_required` answers with the prompt. */
+const GRANT_NOTICE: Record<DestinationGrantsStatus, string> = {
+  none: GRANT_NONE,
+  consent_required: '',
+  granted: GRANT_GRANTED,
+  uncertain: GRANT_UNCERTAIN,
+  conflict: GRANT_CONFLICT,
+  busy: BUSY_NOTICE,
+  unavailable: GRANT_UNAVAILABLE,
+  config_invalid: GRANT_CONFIG_INVALID,
+};
+
+/**
+ * The prompt's opening sentence. The intent decides what is at stake — a
+ * settings apply is holding a write, a grant-only approval is holding nothing
+ * — and the count decides the grammar.
+ */
+const promptLead = (intent: ConsentPromptIntent, count: number): string => {
+  const subject = count === 1 ? 'this remote destination' : `these ${count} remote destinations`;
+  return intent === 'grant-only'
+    ? `Approve ${subject}. Nothing is written to your configuration.`
+    : `Approve ${subject} before the configuration is written.`;
+};
+
 const DISCARD_BODY =
   'The staged changes and any API key you entered are dropped. Nothing has been written, and the file on disk does not change.';
 const DISCARD_BODY_CHALLENGED = `${DISCARD_BODY} The pending destination approval is cancelled first.`;
+/**
+ * A grant-only prompt with a CLEAN draft behind it: closing, refreshing, or
+ * switching source has nothing staged to discard — the only thing `unsaved`
+ * is protecting is the open approval, so the dialog says exactly that instead
+ * of claiming staged changes and a key are being dropped.
+ */
+const CANCEL_GRANT_TITLE = 'Cancel the pending approval?';
+const CANCEL_GRANT_BODY = 'The destination approval is cancelled. Nothing staged is dropped.';
+const CANCEL_GRANT_CONFIRM = 'Cancel approval';
 
 type Phase =
   | { kind: 'loading' }
@@ -188,6 +255,13 @@ const BLANK_PREVIEW: ProfileDraftProjection = {
 /** What the last write left behind. Exactly one shape, cleared as one value. */
 interface WriteOutcome {
   challenge: ApplyChallenge | null;
+  /**
+   * Which flow the open challenge belongs to. It rides beside the challenge
+   * rather than in a state of its own so the two can never disagree: one
+   * `setOutcome` opens the prompt and names its intent, and clearing the
+   * challenge clears the intent with it.
+   */
+  intent: ConsentPromptIntent;
   drops: ChangeDropSet[] | null;
   conflict: ApplyConflictKind | null;
   /** A busy result: the same request stays retryable. */
@@ -200,6 +274,7 @@ interface WriteOutcome {
 
 const NO_OUTCOME: WriteOutcome = {
   challenge: null,
+  intent: 'settings-apply',
   drops: null,
   conflict: null,
   busy: false,
@@ -252,6 +327,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [sourceError, setSourceError] = useState('');
   const [sourceOpen, setSourceOpen] = useState(false);
   const [outcome, setOutcome] = useState<WriteOutcome>(NO_OUTCOME);
+  /** The grant-only action's own line. It never speaks about the draft. */
+  const [grantNotice, setGrantNotice] = useState('');
   /** True while an Apply/Confirm/Cancel owns the surface (§3.3). */
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -365,6 +442,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       resetCards();
     }
     setOutcome({ ...NO_OUTCOME, ...next });
+    // The grant-only flow never reaches settle, but its own leftover notice
+    // must not linger beside a settings-apply outcome that landed after it.
+    setGrantNotice('');
   };
   const settleRef = useRef(settle);
   settleRef.current = settle;
@@ -373,9 +453,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   outcomeRef.current = outcome;
 
   // The consent challenge outlives nothing: its own expiry is a terminal event.
+  //
+  // For a GRANT-ONLY prompt there is nothing to settle — no draft moved, no key
+  // ref is at stake — so it arms no timer at all and simply lapses; the next
+  // interaction with it is treated as a Cancel (spec D13, F17).
   useEffect(() => {
     const challenge = outcome.challenge;
-    if (challenge === null || sending) return;
+    if (challenge === null || sending || outcome.intent === 'grant-only') return;
     const expire = () => {
       if (sendingRef.current) return;
       settleRef.current({ kind: 'expired' }, { notice: CHALLENGE_EXPIRED });
@@ -387,7 +471,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     }
     const timer = setTimeout(expire, delay);
     return () => clearTimeout(timer);
-  }, [outcome.challenge, sending]);
+  }, [outcome.challenge, outcome.intent, sending]);
 
   // -------------------------------------------------------------------------
   // Editors
@@ -463,10 +547,24 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     return run;
   };
 
-  /** Confirm, then cancel any challenge. Callers only reach it while dirty. */
+  /**
+   * Confirm, then cancel any challenge. Callers only reach it while dirty
+   * (`unsaved`), which a grant-only prompt satisfies on its own even with a
+   * clean draft and no unstaged editors — in that one case there is nothing
+   * staged to discard, only an approval to cancel, so the dialog says that
+   * instead of the standard discard copy.
+   */
   const clearForTransition = async (title: string, confirmLabel: string): Promise<boolean> => {
-    const body = outcomeRef.current.challenge === null ? DISCARD_BODY : DISCARD_BODY_CHALLENGED;
-    if (!(await ask({ title, body, confirmLabel }))) return false;
+    const challenge = outcomeRef.current.challenge;
+    const grantOnlyCancel =
+      challenge !== null &&
+      outcomeRef.current.intent === 'grant-only' &&
+      !isDraftDirty(draft) &&
+      unstagedEditors.size === 0;
+    const dialog = grantOnlyCancel
+      ? { title: CANCEL_GRANT_TITLE, body: CANCEL_GRANT_BODY, confirmLabel: CANCEL_GRANT_CONFIRM }
+      : { title, body: challenge === null ? DISCARD_BODY : DISCARD_BODY_CHALLENGED, confirmLabel };
+    if (!(await ask(dialog))) return false;
     return cancelChallenge();
   };
   const clearForTransitionRef = useRef(clearForTransition);
@@ -714,10 +812,76 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     dispatchRequest(request);
   };
 
+  // -------------------------------------------------------------------------
+  // Grant-only approval (spec D13, I15)
+  //
+  // The rule that shapes every function here: this flow approves destinations
+  // for the ACTIVE configuration and writes no document, so it must never reach
+  // `settle` — which means it never reaches `settleDraft` and never clears the
+  // key vault. The staged draft and every key ref the user has entered survive
+  // Confirm, Cancel, and a lapsed prompt alike (F17).
+  // -------------------------------------------------------------------------
+
+  /** A prompt the user left standing past its deadline. */
+  const lapsed = (challenge: ApplyChallenge): boolean => challenge.expiresAt <= Date.now();
+
+  /**
+   * Revokes the token — it must not linger for its TTL (R3/I18) — and dismisses
+   * the prompt. A cancellation that failed leaves the panel exactly where it is,
+   * the same rule the settings flow follows.
+   */
+  const dismissGrants = async (notice: string): Promise<void> => {
+    if (!(await cancelChallenge())) return;
+    setOutcome(NO_OUTCOME);
+    setGrantNotice(notice);
+  };
+
+  /** One grant RPC. Every landing is a `setOutcome`, never a `settle`. */
+  const sendGrants = (call: () => Promise<unknown>, token: string | null): void => {
+    if (!beginOperation()) return;
+    const run = (async () => {
+      try {
+        const { status, challenge } = parseDestinationGrantsResult(await call());
+        // The challenge is present iff the status is consent_required, so this
+        // one branch covers both without a second, contradictable check.
+        if (challenge !== undefined) {
+          setOutcome({ ...NO_OUTCOME, challenge, intent: 'grant-only' });
+          setGrantNotice('');
+          return;
+        }
+        // Busy consumed nothing: the token stays retryable, so the prompt stays
+        // up and its own Confirm is the retry. Every other status spent it.
+        if (status !== 'busy') setOutcome(NO_OUTCOME);
+        setGrantNotice(GRANT_NOTICE[status]);
+      } catch (err) {
+        // The approval outcome is unknown; preserve the draft and best-effort
+        // cancel any known challenge.
+        if (token !== null) void CancelGolemSettingsApply(token).catch(() => undefined);
+        setOutcome(NO_OUTCOME);
+        setGrantNotice(boundedGolemMessage(err));
+      } finally {
+        endOperation();
+      }
+    })();
+    writeRef.current = run;
+  };
+
+  /** Call 1, fresh on every click: there is no subscription to keep it warm. */
+  const approveDestinations = (): void => {
+    setGrantNotice('');
+    sendGrants(() => PrepareGolemDestinationGrants(), null);
+  };
+
   const confirmDestination = () => {
     const challenge = outcome.challenge;
+    if (challenge === null) return;
+    if (outcome.intent === 'grant-only') {
+      if (lapsed(challenge)) void dismissGrants(GRANT_EXPIRED);
+      else sendGrants(() => ConfirmGolemDestinationGrants(challenge.token), challenge.token);
+      return;
+    }
     const request = pendingRequestRef.current;
-    if (challenge === null || request === null) return;
+    if (request === null) return;
     send(
       () =>
         ConfirmGolemSettingsApply({
@@ -739,6 +903,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   };
 
   const cancelDestination = async () => {
+    const { challenge, intent } = outcomeRef.current;
+    if (challenge !== null && intent === 'grant-only') {
+      await dismissGrants(lapsed(challenge) ? GRANT_EXPIRED : GRANT_CANCELLED);
+      return;
+    }
     if (await cancelChallenge()) settle({ kind: 'cancelled' }, { notice: CHALLENGE_CANCELLED });
   };
 
@@ -933,6 +1102,37 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               Refresh
             </button>
           )}
+          {/*
+           * Permanent (spec I15): nothing probes for missing destinations on
+           * mount and no event tells this surface when the set changes, so the
+           * action is always offered and every click asks Call 1 afresh. It
+           * needs a loaded document to have something to list against.
+           */}
+          <button
+            type="button"
+            className={styles.button}
+            disabled={
+              projection === null ||
+              inFlight ||
+              sourceLoading ||
+              sending ||
+              recovery ||
+              // Locking remounts the editors, so their fields must be staged first.
+              unstagedEditors.size > 0 ||
+              outcome.challenge !== null ||
+              // A settings-apply disclosure is still on screen: the dropped-
+              // fields panel is the ONLY copy of `outcome.drops` (restageDrops
+              // reads it), and a busy Retry keeps a request retryable. A fresh
+              // Prepare here would replace the whole outcome and destroy either
+              // one, so the action stays off until the user has resolved it.
+              outcome.drops !== null ||
+              outcome.busy ||
+              outcome.conflict !== null
+            }
+            onClick={approveDestinations}
+          >
+            {APPROVE_ACTION}
+          </button>
           <button
             type="button"
             className={`${styles.button} ${styles.quiet}`}
@@ -942,6 +1142,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             Close
           </button>
         </header>
+
+        {grantNotice !== '' && (
+          <p className={styles.notice} role="status" data-testid="golem-grant-notice">
+            {grantNotice}
+          </p>
+        )}
 
         <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
           {projection
@@ -1094,22 +1300,36 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             {outcome.challenge !== null && (
               <div className={styles.panel} data-tone="caution" role="alert">
                 <p className={styles.panelText}>
-                  Approve this destination before the configuration is written. This is a settings
-                  approval, separate from run approval.
+                  {promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a
+                  settings approval, separate from run approval.
                 </p>
-                <p className={styles.destination}>
-                  <span className={styles.identifier}>
-                    {outcome.challenge.destination.provider}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span className={styles.identifier}>{outcome.challenge.destination.model}</span>
-                  <span aria-hidden="true">·</span>
-                  <span className={styles.value}>{outcome.challenge.destination.endpoint}</span>
-                  <span aria-hidden="true">·</span>
-                  <span className={styles.meta}>
-                    {outcome.challenge.destination.classification}
-                  </span>
-                </p>
+                {/* One line per destination, in the digest order the backend
+                    sent, with the routing hops that reach it beneath. Every
+                    entry is remote — a local destination never challenges —
+                    and the lead sentence above already says so, so the row
+                    itself does not repeat the classification. */}
+                <ul className={styles.dropList}>
+                  {outcome.challenge.destinations.map((destination) => (
+                    <li key={`${destination.endpoint} ${destination.provider} ${destination.model}`}>
+                      <p className={styles.destination}>
+                        <span className={styles.value}>{destination.endpoint}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className={styles.identifier}>{destination.provider}</span>
+                        {/* Absent on a recommendation entry, which names a
+                            provider and no model at all. */}
+                        {destination.model !== '' && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className={styles.identifier}>{destination.model}</span>
+                          </>
+                        )}
+                      </p>
+                      <span className={styles.metaSub}>
+                        {`Reached by ${destination.provenance.join(', ')}`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
                 <div className={styles.panelActions}>
                   <button
                     type="button"

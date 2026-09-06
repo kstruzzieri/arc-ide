@@ -784,7 +784,8 @@ describe('bridge lifecycle and hydration', () => {
           needsConsent: true,
           destination: remoteDestination,
           warnings: ['manifest reloaded'],
-          initError: 'Remote consent storage is unavailable.',
+          initError:
+            'Remote consent storage is unavailable; open Golem configuration for repair steps.',
         })
       )
     );
@@ -793,7 +794,9 @@ describe('bridge lifecycle and hydration', () => {
     expect(conv().available).toBe(false);
     expect(conv().needsConsent).toBe(true);
     expect(conv().warnings).toEqual(['manifest reloaded']);
-    expect(conv().initError).toBe('Remote consent storage is unavailable.');
+    expect(conv().initError).toBe(
+      'Remote consent storage is unavailable; open Golem configuration for repair steps.'
+    );
     expect(conv().destination).toEqual(remoteDestination);
     expect(conv().workspaceLabel).toBe('Frontend');
   });
@@ -1367,7 +1370,9 @@ describe('consent', () => {
     await firstRemoteSubmission();
     const pendingBefore = conv().pendingConsentTurn!;
     mockRunGolemTurn.mockClear();
-    mockRunGolemTurn.mockRejectedValueOnce('Remote consent storage is unavailable.');
+    mockRunGolemTurn.mockRejectedValueOnce(
+      'Remote consent storage is unavailable; open Golem configuration for repair steps.'
+    );
 
     await store().allowAndSend(CONV);
 
@@ -1378,7 +1383,7 @@ describe('consent', () => {
       conv()
         .transcript.filter((e) => e.kind === 'error')
         .pop()!.text
-    ).toBe('Remote consent storage is unavailable.');
+    ).toBe('Remote consent storage is unavailable; open Golem configuration for repair steps.');
     expect(conv().lastFailedTurn).toBeNull();
     expect(store().lastFailureConversationId).toBe(CONV);
   });
@@ -1393,7 +1398,9 @@ describe('consent', () => {
     const duplicate = store().allowAndSend(CONV);
 
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
-    grant.reject('Remote consent storage is unavailable.');
+    grant.reject(
+      'Remote consent storage is unavailable; open Golem configuration for repair steps.'
+    );
     await Promise.all([first, duplicate]);
     expect(conv().runs[RUN_A].phase).toBe('needs-consent');
 
@@ -1455,7 +1462,9 @@ describe('consent', () => {
     const failing = deferred<unknown>();
     mockRunGolemTurn.mockReturnValueOnce(failing.promise);
     const firstGrant = store().allowAndSend(CONV);
-    failing.reject('Remote consent storage is unavailable.');
+    failing.reject(
+      'Remote consent storage is unavailable; open Golem configuration for repair steps.'
+    );
     await firstGrant;
 
     const recovering = deferred<unknown>();
@@ -2204,12 +2213,20 @@ describe('activity and failure revisions', () => {
   it('advances the failure revision when a newly hydrated status is degraded', () => {
     hydrateReady();
     const before = store().failureRevision;
-    hydrateReady({ available: false, initError: 'Remote consent storage is unavailable.' });
+    hydrateReady({
+      available: false,
+      initError:
+        'Remote consent storage is unavailable; open Golem configuration for repair steps.',
+    });
     expect(store().failureRevision).toBeGreaterThan(before);
     expect(store().lastFailureConversationId).toBe(CONV);
 
     const settled = store().failureRevision;
-    hydrateReady({ available: false, initError: 'Remote consent storage is unavailable.' });
+    hydrateReady({
+      available: false,
+      initError:
+        'Remote consent storage is unavailable; open Golem configuration for repair steps.',
+    });
     expect(store().failureRevision).toBe(settled);
   });
 });

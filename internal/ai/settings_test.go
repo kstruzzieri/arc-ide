@@ -426,6 +426,19 @@ func TestBuildSettingsProjectionReady(t *testing.T) {
 	}
 }
 
+// D6: a floor requirement is not a binding — an unauthored defaults.planning
+// must produce no row, no RoutedUseCases entry, nothing.
+func TestUnauthoredPlanningIsNeverSynthesized(t *testing.T) {
+	p := buildSettingsProjection(projectionLoaded(projectionConfig()), nil)
+	for _, m := range p.Models {
+		for _, uc := range m.RoutedUseCases {
+			if uc == "planning" {
+				t.Fatalf("model %q routes planning without an authored default", m.Role)
+			}
+		}
+	}
+}
+
 func TestBuildSettingsProjectionAgentEndpointBlocks(t *testing.T) {
 	bad := strings.Replace(settingsFixtureJSON,
 		`"hosted": {"base_url": "https://api.example.com:8443/v1/",`,

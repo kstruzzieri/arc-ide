@@ -56,6 +56,12 @@ import {
 const MAX_KEY_VALUE_BYTES = 4096;
 /** §5.6: the consent challenge token is opaque, 1..256 UTF-8 bytes. */
 const MAX_CHALLENGE_TOKEN_BYTES = 256;
+/**
+ * One rendered provenance hop: at most two bounded identifiers joined by a
+ * fixed literal (`<use case> via defaults.<source>`). Mirrors
+ * maxChallengeProvenanceBytes in internal/ai/settings_apply_test.go.
+ */
+const MAX_PROVENANCE_HOP_BYTES = 2 * 256 + 32;
 const PROFILE_ID = /^(curated|user)\/[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Apply targets an existing document; Create establishes a new one. */
@@ -137,17 +143,56 @@ export interface ConfirmSettingsApplyRequest {
   request: SettingsApplyRequest;
 }
 
+/**
+ * One remote egress identity a challenge asks about — never a key, never a
+ * path. `classification` is always `remote`: a local destination never
+ * challenges. `model` is EMPTY on a destination reached by upstream's
+ * recommendation route, which names a provider and no model at all.
+ * `provenance` names the routing hops that reach it ("agent",
+ * "agent (recommendation)").
+ */
 export interface ApplyDestination {
   provider: string;
   model: string;
   endpoint: string;
   classification: 'remote';
+  provenance: readonly string[];
 }
 
+/** Every NEW remote destination one write would open (spec D8). */
 export interface ApplyChallenge {
   token: string;
   expiresAt: number;
-  destination: ApplyDestination;
+  destinations: readonly ApplyDestination[];
+}
+
+/**
+ * Which flow a consent prompt belongs to. `settings-apply` answers a pending
+ * write and settles the draft; `grant-only` approves destinations for the
+ * ACTIVE configuration and writes nothing, so it must never settle a draft or
+ * clear the key vault (spec D13, F17).
+ */
+export type ConsentPromptIntent = 'settings-apply' | 'grant-only';
+
+/**
+ * The closed grant-only outcome (spec D13). No projection, no diagnostics, no
+ * conflict kind: the status alone says what happened.
+ */
+export type DestinationGrantsStatus =
+  | 'none'
+  | 'consent_required'
+  | 'granted'
+  | 'uncertain'
+  | 'conflict'
+  | 'busy'
+  | 'unavailable'
+  | 'config_invalid';
+
+/** `challenge` is present iff `status` is `consent_required`; the parser is
+ * what makes that true, so a reader may check either one. */
+export interface DestinationGrantsResult {
+  status: DestinationGrantsStatus;
+  challenge?: ApplyChallenge;
 }
 
 export interface ChangeDropSet {
@@ -610,22 +655,35 @@ const CONFLICT_KINDS: readonly ApplyConflictKind[] = ['target', 'profile_source'
 
 function readApplyDestination(value: unknown): ApplyDestination | null {
   if (!isRecord(value)) return null;
-  if (!hasOnlyKeys(value, ['provider', 'model', 'endpoint', 'classification'])) return null;
+  if (!hasOnlyKeys(value, ['provider', 'model', 'endpoint', 'classification', 'provenance']))
+    return null;
   const { provider, model, endpoint, classification } = value;
-  if (!isIdentifier(provider) || !isIdentifier(model) || !isEndpoint(endpoint)) return null;
+  if (!isIdentifier(provider) || !isEndpoint(endpoint)) return null;
+  // A recommendation entry names a provider and NO model, so "" is a value
+  // here and not an absence — the only field in this document where it is.
+  if (model !== '' && !isIdentifier(model)) return null;
   if (classification !== 'remote') return null;
-  return { provider, model, endpoint, classification };
+  const provenance = readCappedArray(value.provenance, MAX_PROJECTION_ENTRIES, (hop) =>
+    isCleanIdentifier(hop, MAX_PROVENANCE_HOP_BYTES) && hop !== '' ? hop : null
+  );
+  if (provenance === null || provenance.length === 0) return null;
+  return { provider, model, endpoint, classification, provenance };
 }
 
 function readApplyChallenge(value: unknown): ApplyChallenge | null {
   if (!isRecord(value)) return null;
-  if (!hasOnlyKeys(value, ['token', 'expiresAt', 'destination'])) return null;
+  if (!hasOnlyKeys(value, ['token', 'expiresAt', 'destinations'])) return null;
   if (!isChallengeToken(value.token)) return null;
   // A Unix-millisecond instant: positive and exactly representable.
   if (!Number.isSafeInteger(value.expiresAt) || (value.expiresAt as number) < 1) return null;
-  const destination = readApplyDestination(value.destination);
-  if (destination === null) return null;
-  return { token: value.token, expiresAt: value.expiresAt as number, destination };
+  // A challenge listing NO destination is not a consent question at all.
+  const destinations = readCappedArray(
+    value.destinations,
+    MAX_PROJECTION_ENTRIES,
+    readApplyDestination
+  );
+  if (destinations === null || destinations.length === 0) return null;
+  return { token: value.token, expiresAt: value.expiresAt as number, destinations };
 }
 
 function readDropSets(value: unknown): ChangeDropSet[] | null {
@@ -711,6 +769,35 @@ export function parseSettingsApplyResult(value: unknown): SettingsApplyResult {
     default:
       return contractError();
   }
+}
+
+const GRANT_STATUSES: readonly DestinationGrantsStatus[] = [
+  'none',
+  'consent_required',
+  'granted',
+  'uncertain',
+  'conflict',
+  'busy',
+  'unavailable',
+  'config_invalid',
+];
+
+/**
+ * The grant-only result (spec D13). It authorizes no document write, so it
+ * carries exactly one optional member: the challenge, present iff the status
+ * is `consent_required`. A projection, diagnostics, or a conflict kind riding
+ * along is a contract break, not a harmless extra.
+ */
+export function parseDestinationGrantsResult(value: unknown): DestinationGrantsResult {
+  if (!isRecord(value)) return contractError();
+  if (!isOneOf(value.status, GRANT_STATUSES)) return contractError();
+  const status = value.status;
+  if (!hasOnlyKeys(value, status === 'consent_required' ? ['status', 'challenge'] : ['status']))
+    return contractError();
+  if (status !== 'consent_required') return { status };
+  const challenge = readApplyChallenge(value.challenge);
+  if (challenge === null) return contractError();
+  return { status, challenge };
 }
 
 export function parseCancelSettingsApplyResult(value: unknown): CancelSettingsApplyResult {
@@ -847,6 +934,7 @@ export const USE_CASE_FLOORS: ReadonlyMap<string, readonly CapabilityName[]> = n
   ['agent', ['chat', 'stream', 'tool_call']],
   ['chat', ['chat', 'stream']],
   ['embedding', ['embed']],
+  ['planning', ['chat', 'stream', 'tool_call']],
 ]);
 
 /** A use case outside the table has no floor to meet; it needs confirmation. */

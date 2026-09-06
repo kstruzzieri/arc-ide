@@ -6,7 +6,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/kstruzzieri/go-llm v0.0.0-20260827000708-bf9423740700
+	github.com/kstruzzieri/go-llm v0.1.1-0.20260831180021-be8e25924d08
 	github.com/wailsapp/wails/v3 v3.0.0-beta.16
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1

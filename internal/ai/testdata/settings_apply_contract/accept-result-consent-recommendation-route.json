@@ -1,5 +1,5 @@
 {
-  "verdict": "reject",
+  "verdict": "accept",
   "document": "apply_result",
   "value": {
     "status": "consent_required",
@@ -9,11 +9,11 @@
       "destinations": [
         {
           "provider": "hosted",
-          "model": "wire-model",
-          "endpoint": "",
+          "model": "",
+          "endpoint": "https://api.example.com/v1",
           "classification": "remote",
           "provenance": [
-            "agent"
+            "agent (recommendation)"
           ]
         }
       ]

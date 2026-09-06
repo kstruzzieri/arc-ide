@@ -465,8 +465,11 @@ describe('golem:status-changed', () => {
     mockGetGolemStatus.mockResolvedValue(
       statusPayload({
         needsConsent: true,
-        warnings: ['Remote consent storage is unavailable.'],
-        initError: 'Remote consent storage is unavailable.',
+        warnings: [
+          'Remote consent storage is unavailable; open Golem configuration for repair steps.',
+        ],
+        initError:
+          'Remote consent storage is unavailable; open Golem configuration for repair steps.',
       })
     );
     emit('golem:status-changed');
@@ -474,8 +477,12 @@ describe('golem:status-changed', () => {
 
     expect(mockGetGolemStatus).toHaveBeenCalledTimes(2);
     expect(mockGetGolemStatus.mock.calls[1][0]).toEqual(mockGetGolemStatus.mock.calls[0][0]);
-    expect(conversation().initError).toBe('Remote consent storage is unavailable.');
-    expect(conversation().warnings).toEqual(['Remote consent storage is unavailable.']);
+    expect(conversation().initError).toBe(
+      'Remote consent storage is unavailable; open Golem configuration for repair steps.'
+    );
+    expect(conversation().warnings).toEqual([
+      'Remote consent storage is unavailable; open Golem configuration for repair steps.',
+    ]);
     expect(conversation().needsConsent).toBe(true);
 
     mockGetGolemStatus.mockResolvedValue(statusPayload());

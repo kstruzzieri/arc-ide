@@ -118,14 +118,17 @@ var (
 	errApplyKeyValue          = errors.New("settings apply: key values must be non-empty literals")
 )
 
-// applyMode distinguishes the two entry points. Apply targets an existing
+// applyMode distinguishes the entry points. Apply targets an existing
 // document and REQUIRES a target revision; Create establishes a new one and
-// forbids both the revision and the applied source.
+// forbids both the revision and the applied source. GrantOnly writes no
+// document at all — it approves destinations and nothing else, so the
+// settings-write path refuses a challenge issued under it.
 type applyMode int
 
 const (
 	applyModeExisting applyMode = iota
 	applyModeCreate
+	applyModeGrantOnly
 )
 
 // ---------------------------------------------------------------------------
@@ -534,20 +537,26 @@ type SettingsApplyResult struct {
 }
 
 // ApplyChallenge is the consent handshake. The token is opaque and single-use;
-// the record behind it holds no document, path, or key.
+// the record behind it holds no document, path, or key. Destinations lists
+// every NEW remote destination the write would open, digest-sorted (spec D8).
+// Present iff the result status is consent_required.
 type ApplyChallenge struct {
-	Token       string           `json:"token"`
-	ExpiresAt   int64            `json:"expiresAt"`
-	Destination ApplyDestination `json:"destination"`
+	Token        string             `json:"token"`
+	ExpiresAt    int64              `json:"expiresAt"`
+	Destinations []ApplyDestination `json:"destinations"`
 }
 
 // ApplyDestination is the bounded egress identity shown in the consent
-// prompt — never an API key, never a path.
+// prompt — never an API key, never a path. Classification is always "remote"
+// (local destinations never challenge). Provenance names the routing hops
+// that reach it ("agent", "agent (recommendation)"); Model is empty when the
+// hop names a provider and no model.
 type ApplyDestination struct {
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	Endpoint       string `json:"endpoint"`
-	Classification string `json:"classification"`
+	Provider       string   `json:"provider"`
+	Model          string   `json:"model"`
+	Endpoint       string   `json:"endpoint"`
+	Classification string   `json:"classification"`
+	Provenance     []string `json:"provenance"`
 }
 
 // ChangeDropSet names one staged change and the model-specific fields a real
@@ -561,6 +570,29 @@ type ChangeDropSet struct {
 // idempotent, so an absent or expired token is already cancelled.
 type CancelSettingsApplyResult struct {
 	Status string `json:"status"`
+}
+
+// DestinationGrantsResult is the closed result of the grant-only approval
+// flow (spec D13). It approves destinations and authorizes NO document write,
+// so it carries no projection, no diagnostics, and no conflict kind: the
+// status alone says what happened.
+//
+//	none             nothing to approve — no configuration, or every remote
+//	                 the agent route reaches is already granted
+//	consent_required the challenge below lists what would be opened
+//	granted          the whole approved batch is durably recorded
+//	uncertain        the batch write failed; see ConsentStore.GrantMany
+//	conflict         the token is unknown, expired, cancelled, issued by the
+//	                 settings-write flow, or no longer describes the ACTIVE
+//	                 configuration
+//	busy             a turn is running; nothing was consumed, retry the token
+//	unavailable      consent storage cannot authorize or record anything
+//	config_invalid   the active configuration could not be loaded
+//
+// Challenge is present iff Status is consent_required.
+type DestinationGrantsResult struct {
+	Status    string          `json:"status"`
+	Challenge *ApplyChallenge `json:"challenge,omitempty"`
 }
 
 // ProfileDraftProjection is a profile preview: the settings projection minus
@@ -1232,6 +1264,21 @@ func targetPathExists(path string) bool {
 	return err == nil
 }
 
+// activeGrantTarget returns the active configuration's identity — the same
+// settingsWriteTarget the apply path binds, so a token can never authorize
+// against a different file — alongside what was loaded. The mutable Document
+// is deliberately dropped: the approve flow reads, and never writes.
+// ErrAgentConfigMissing is reported separately from every other load failure:
+// no configuration means there is nothing to approve, while a broken one must
+// never read as "nothing to approve" (R3).
+func activeGrantTarget() (target settingsWriteTarget, loaded loadedAgentConfig, missing bool, err error) {
+	_, loaded, err = loadAgentConfigDocument()
+	if err != nil {
+		return settingsWriteTarget{}, loaded, errors.Is(err, ErrAgentConfigMissing), err
+	}
+	return settingsWriteTarget{path: loaded.SourcePath, origin: loaded.Origin, revision: loaded.Revision}, loaded, false, nil
+}
+
 // applySourceDocument produces the document the staged changes run against and
 // the stable ids of any change the source itself already consumed.
 func applySourceDocument(ctx context.Context, req SettingsApplyRequest, active *config.Document) (*config.Document, map[string]bool, *SettingsApplyResult) {
@@ -1900,38 +1947,68 @@ func constantTimeEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// agentDestination resolves where the agent traffic of one configuration would
-// go, or the zero destination when there is none to resolve: a document whose
-// agent route is missing or ineligible has no egress at all, so there is
-// nothing to consent to. Only the destination survives — the resolved target's
-// API key is discarded with the rest of it.
-func agentDestination(cfg *config.Config) ProviderDestination {
-	if cfg == nil {
-		return ProviderDestination{}
+// newRemoteDestinations returns, digest-sorted, every remote destination in
+// post that is neither reachable in pre nor already durably granted (D8). The
+// order is post's own, which reachableDestinations already sorts by digest. A
+// nil pre treats every ungranted reachable remote as new (D13): with no prior
+// document there is no destination the user has already been living with.
+func newRemoteDestinations(pre, post []ReachableDestination, consent *ConsentStore) []ReachableDestination {
+	prior := make(map[string]bool, len(pre))
+	for _, d := range pre {
+		prior[d.Destination.Digest] = true
 	}
-	target, err := ResolveAgentTarget(cfg)
-	if err != nil {
-		return ProviderDestination{}
+	var out []ReachableDestination
+	for _, d := range post {
+		if d.Destination.Classification != "remote" || prior[d.Destination.Digest] ||
+			consent.Has(d.Destination.Digest) {
+			continue
+		}
+		out = append(out, d)
 	}
-	return target.destination
+	return out
 }
 
-// consentChangesEgress reports whether a write would open egress the user has
-// not already faced: a resolvable REMOTE destination that is not identical to
-// the one the target resolves today. An unchanged destination, a local one, or
-// none at all proceeds directly to the save (§5.2).
-func consentChangesEgress(pre, post ProviderDestination) bool {
-	return post.Classification == "remote" && pre != post
+// applyDestinations renders the challenge entries. Every identifier
+// interpolated into one passes the projection sanitizer (I10): renderHop's own
+// literals are fixed vocabulary and need none, the Source it interpolates
+// does, and endpoints are already canonical.
+func applyDestinations(missing []ReachableDestination) []ApplyDestination {
+	out := make([]ApplyDestination, 0, len(missing))
+	for _, d := range missing {
+		provenance := make([]string, 0, len(d.Hops))
+		for _, h := range d.Hops {
+			h.Source = sanitizeIdentifier(h.Source)
+			provenance = append(provenance, renderHop(h))
+		}
+		out = append(out, ApplyDestination{
+			Provider:       sanitizeIdentifier(d.Destination.Provider),
+			Model:          sanitizeIdentifier(d.Destination.Model),
+			Endpoint:       d.Destination.Endpoint,
+			Classification: d.Destination.Classification,
+			Provenance:     provenance,
+		})
+	}
+	return out
+}
+
+// destinationsOf drops the provenance, leaving the consent identities.
+func destinationsOf(set []ReachableDestination) []ProviderDestination {
+	out := make([]ProviderDestination, 0, len(set))
+	for _, d := range set {
+		out = append(out, d.Destination)
+	}
+	return out
 }
 
 // canonicalApplyDigest is the consent identity of one staged write: the
 // operation kind, the target revision, the profile provenance, every
 // non-secret change field in stable-identity order, the provider names key
-// operations touch, the backend target-identity digest, and the pre/post
-// destinations. Key VALUES are deliberately excluded — approving a destination
-// is not approving a secret, and §5.4 forbids retaining one — so a resend that
-// rotates a key still matches the challenge it answers.
-func canonicalApplyDigest(req SettingsApplyRequest, mode applyMode, targetDigest string, pre, post ProviderDestination) string {
+// operations touch, the backend target-identity digest, and the COMPLETE
+// pre/post reachable destination sets. Key VALUES are deliberately excluded —
+// approving a destination is not approving a secret, and §5.4 forbids
+// retaining one — so a resend that rotates a key still matches the challenge
+// it answers.
+func canonicalApplyDigest(req SettingsApplyRequest, mode applyMode, targetDigest string, pre, post []ProviderDestination) string {
 	changes := append([]Change(nil), req.Changes...)
 	slices.SortFunc(changes, func(a, b Change) int {
 		return strings.Compare(changeStableID(a), changeStableID(b))
@@ -1942,14 +2019,14 @@ func canonicalApplyDigest(req SettingsApplyRequest, mode applyMode, targetDigest
 	}
 	slices.Sort(keyNames)
 	raw, err := json.Marshal(struct {
-		Operation      int                 `json:"operation"`
-		TargetRevision string              `json:"targetRevision"`
-		Source         ApplySource         `json:"source"`
-		Changes        []Change            `json:"changes"`
-		KeyNames       []string            `json:"keyNames"`
-		TargetDigest   string              `json:"targetDigest"`
-		Pre            ProviderDestination `json:"pre"`
-		Post           ProviderDestination `json:"post"`
+		Operation      int                   `json:"operation"`
+		TargetRevision string                `json:"targetRevision"`
+		Source         ApplySource           `json:"source"`
+		Changes        []Change              `json:"changes"`
+		KeyNames       []string              `json:"keyNames"`
+		TargetDigest   string                `json:"targetDigest"`
+		Pre            []ProviderDestination `json:"pre"`
+		Post           []ProviderDestination `json:"post"`
 	}{
 		Operation: int(mode), TargetRevision: derefString(req.TargetRevision), Source: req.Source,
 		Changes: changes, KeyNames: keyNames, TargetDigest: targetDigest, Pre: pre, Post: post,
