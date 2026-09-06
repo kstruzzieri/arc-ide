@@ -26,8 +26,9 @@ const (
 	golemWindowRoleMain      = "main"
 	golemWindowRoleSatellite = "satellite"
 
-	eventGolemWindowMode    = "golem:window-mode"
-	eventGolemWindowMessage = "golem:window-message"
+	eventGolemWindowMode            = "golem:window-mode"
+	eventGolemWindowMessage         = "golem:window-message"
+	eventGolemWindowPreferenceError = "golem:window-preference-error"
 
 	// golemWindowURL is the satellite route inside the same Vite bundle.
 	golemWindowURL   = "/#/golem-window"
@@ -213,12 +214,13 @@ type GolemWindowBootstrap struct {
 
 // golemWindowKinds maps a kind to the roles allowed to send it.
 var golemWindowKinds = map[string]map[string]bool{
-	"view":   {golemWindowRoleMain: true},
-	"ack":    {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
-	"drafts": {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
-	"action": {golemWindowRoleSatellite: true},
-	"ready":  {golemWindowRoleSatellite: true},
-	"abort":  {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
+	"view":       {golemWindowRoleMain: true},
+	"view-error": {golemWindowRoleMain: true},
+	"ack":        {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
+	"drafts":     {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
+	"action":     {golemWindowRoleSatellite: true},
+	"ready":      {golemWindowRoleSatellite: true},
+	"abort":      {golemWindowRoleMain: true, golemWindowRoleSatellite: true},
 }
 
 // asLiveWindow normalizes a typed-nil *application.WebviewWindow boxed into
@@ -240,6 +242,7 @@ func callerRole(ctx context.Context, mainWindow, satelliteWindow application.Win
 	mainWindow = asLiveWindow(mainWindow)
 	satelliteWindow = asLiveWindow(satelliteWindow)
 	window, _ := ctx.Value(application.WindowKey).(application.Window)
+	window = asLiveWindow(window)
 	if window == nil {
 		return "", fmt.Errorf("golem window: caller window unknown")
 	}
@@ -268,6 +271,9 @@ func validateGolemWindowMessage(msg GolemWindowMessage, from string, instance ui
 	}
 	if (msg.Kind == "action" || msg.Kind == "drafts") && msg.ID == 0 {
 		return fmt.Errorf("golem window: %s requires an id", msg.Kind)
+	}
+	if msg.Kind == "view-error" && (msg.ID != 0 || msg.Revision == 0) {
+		return fmt.Errorf("golem window: view-error requires zero id and a positive revision")
 	}
 	if len(msg.Payload) > golemWindowMaxPayload {
 		return fmt.Errorf("golem window: payload too large (%d bytes)", len(msg.Payload))
@@ -324,18 +330,33 @@ func (a *App) emitGolemState(state GolemWindowState) {
 // the UI usable and never overwrite a file that could not be read faithfully.
 func (a *App) saveGolemPreference(gen uint64, window appstate.GolemWindow) {
 	a.golemSaveMu.Lock()
-	defer a.golemSaveMu.Unlock()
 	if gen < a.golemSavedGen {
 		log.Printf("firn: dropping stale golem window save (generation %d < %d)", gen, a.golemSavedGen)
+		a.golemSaveMu.Unlock()
 		return
 	}
 	a.golemSavedGen = gen
+	var err error
 	if a.appStateStore == nil {
-		log.Printf("firn: golem window preference not saved: no app state store")
-		return
+		err = fmt.Errorf("no app state store")
+	} else {
+		err = a.appStateStore.Save(appstate.State{GolemWindow: window})
 	}
-	if err := a.appStateStore.Save(appstate.State{GolemWindow: window}); err != nil {
+	var reason string
+	if err == nil {
+		a.golemSaveError = ""
+	} else {
 		log.Printf("firn: golem window preference not saved: %v", err)
+		reason = boundedGolemReason(fmt.Sprintf("Window changes could not be saved: %v", err))
+		if reason == a.golemSaveError {
+			reason = ""
+		} else {
+			a.golemSaveError = reason
+		}
+	}
+	a.golemSaveMu.Unlock()
+	if reason != "" {
+		a.emit(eventGolemWindowPreferenceError, reason)
 	}
 }
 
@@ -909,25 +930,7 @@ func (a *App) golemTransitionTimeout(instance, handoff uint64) {
 // completion path an ordinary close uses. It never transfers satellite drafts:
 // the satellite has never owned any.
 func (a *App) abortGolemAttempt(instance, handoff uint64, reason string) error {
-	a.golemWinMu.Lock()
-	if a.golemWin.instance != instance || a.golemWin.handoff != handoff {
-		current, currentHandoff := a.golemWin.instance, a.golemWin.handoff
-		a.golemWinMu.Unlock()
-		return fmt.Errorf("golem window: abort names instance %d/handoff %d, current is %d/%d (%s)",
-			instance, handoff, current, currentHandoff, reason)
-	}
-	if a.golemWin.phase != golemPhaseBootstrapping && a.golemWin.phase != golemPhaseBootstrapped {
-		phase := a.golemWin.phase
-		a.golemWinMu.Unlock()
-		return fmt.Errorf("golem window: abort is not allowed in phase %s (%s)", phase, reason)
-	}
-	// Carried by the closing and closed states this abort produces, so main
-	// reports the real cause rather than a generic "closed before ready".
-	a.golemWin.reason = reason
-	a.golemWinMu.Unlock()
-
-	log.Printf("firn: golem window bootstrap aborted: %s", reason)
-	return a.authorizeGolemClose(instance)
+	return a.authorizeGolemClose(instance, handoff, reason)
 }
 
 // restoreGolemReady is the authoritative closing→ready transition. It applies
@@ -1031,20 +1034,34 @@ func (a *App) requestGolemReDock(instance uint64) error {
 }
 
 // authorizeGolemClose grants this instance the one native close it is allowed,
-// issues it outside every lock, and arms the bounded retirement observer. Once
-// it returns, a late abort or transfer timeout can no longer restore ready.
-func (a *App) authorizeGolemClose(instance uint64) error {
+// issues it outside every lock, and arms the bounded retirement observer.
+// abortReason is nonempty only for an aborted bootstrap. The handoff and its
+// required phase are checked after native reads, atomically with authorization:
+// a timeout or readiness commit during those reads must invalidate the close.
+func (a *App) authorizeGolemClose(instance, handoff uint64, abortReason string) error {
 	frame, normal := a.readGolemFrame()
 
 	a.golemWinMu.Lock()
-	if a.golemWin.instance != instance {
-		current := a.golemWin.instance
+	if a.golemWin.instance != instance || a.golemWin.handoff != handoff {
+		current, currentHandoff := a.golemWin.instance, a.golemWin.handoff
 		a.golemWinMu.Unlock()
-		return fmt.Errorf("golem window: close authorization names instance %d, current is %d", instance, current)
+		return fmt.Errorf("golem window: close authorization names instance %d/handoff %d, current is %d/%d",
+			instance, handoff, current, currentHandoff)
 	}
 	if a.golemWin.closeAuthorized {
 		a.golemWinMu.Unlock()
 		return nil
+	}
+	phase := a.golemWin.phase
+	if abortReason != "" {
+		if phase != golemPhaseBootstrapping && phase != golemPhaseBootstrapped {
+			a.golemWinMu.Unlock()
+			return fmt.Errorf("golem window: abort is not allowed in phase %s (%s)", phase, abortReason)
+		}
+		a.golemWin.reason = abortReason
+	} else if phase != golemPhaseClosing || a.golemWin.transferID == 0 || !a.golemWin.transferAcked {
+		a.golemWinMu.Unlock()
+		return fmt.Errorf("golem window: close handoff %d is no longer acknowledged in phase %s", handoff, phase)
 	}
 	handle := asLiveWindow(a.golemWin.handle)
 	if handle == nil {
@@ -1140,6 +1157,11 @@ func golemAbortReason(payload json.RawMessage) (string, error) {
 	if reason == "" {
 		return "", fmt.Errorf("golem window: abort payload carries no reason")
 	}
+	return boundedGolemReason(reason), nil
+}
+
+// boundedGolemReason shares the display bound for aborts and preference errors.
+func boundedGolemReason(reason string) string {
 	if len(reason) > golemAbortReasonMax {
 		// Same byte bound, but never cut through a multi-byte rune: back up to
 		// the last rune start so the reason stays displayable text.
@@ -1149,7 +1171,7 @@ func golemAbortReason(payload json.RawMessage) (string, error) {
 		}
 		reason = reason[:cut]
 	}
-	return reason, nil
+	return reason
 }
 
 // golemActionIsOpenConfig reports whether the payload is exactly
@@ -1624,7 +1646,7 @@ func (a *App) ConfirmGolemWindowClose(ctx context.Context, instance uint64, hand
 	}
 	a.golemWinMu.Unlock()
 
-	return a.authorizeGolemClose(instance)
+	return a.authorizeGolemClose(instance, handoff, "")
 }
 
 // BootstrapGolemWindow is the satellite's first read: the live state plus the
@@ -1694,6 +1716,13 @@ func (a *App) PostGolemWindowMessage(ctx context.Context, msg GolemWindowMessage
 	switch msg.Kind {
 	case "view":
 		err = a.acceptGolemView(instance, msg)
+	case "view-error":
+		a.golemWinMu.Lock()
+		current := a.golemWin.instance == instance
+		a.golemWinMu.Unlock()
+		if !current {
+			return fmt.Errorf("golem window: view-error names retired instance %d", instance)
+		}
 	case "drafts":
 		err = a.acceptGolemDrafts(instance, role, msg)
 	case "ack":

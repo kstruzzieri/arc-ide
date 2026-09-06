@@ -821,6 +821,15 @@ describe('IDEShell center focus', () => {
     act(() => useIDEStore.getState().setGolemPanelCollapsed(true));
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand Golem panel' }));
   });
+
+  it('keeps focus on the Files rail when its collapse also expands Golem', () => {
+    render(hostedShell());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Files panel' }));
+
+    expect(composer()).toBeVisible();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand Files panel' }));
+  });
 });
 
 // ── #271 B6: the center while the satellite owns the chat ────────────────────
@@ -905,7 +914,7 @@ describe('IDEShell center pair, undocked', () => {
     windowPhase('closing', 3);
 
     expect(screen.getByRole('group', { name: 'Golem window' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Dock Golem panel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Docking the Golem panel…' })).toBeDisabled();
     // Bringing the window forward is still possible while it hands back.
     expect(screen.getByRole('button', { name: 'Focus Golem window' })).toBeEnabled();
   });
@@ -914,7 +923,7 @@ describe('IDEShell center pair, undocked', () => {
     render(undockShell());
     windowPhase('ready', 2);
     windowPhase('closing', 3);
-    expect(screen.getByRole('button', { name: 'Dock Golem panel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Docking the Golem panel…' })).toBeDisabled();
 
     // Go authorized the close but the window never retired: the phase stays
     // `closing` and the snapshot names why. Dock is the retry.
@@ -923,7 +932,7 @@ describe('IDEShell center pair, undocked', () => {
       4,
       'The Golem window has not closed within 2s; the close is still pending.'
     );
-    const dock = screen.getByRole('button', { name: 'Dock Golem panel' });
+    const dock = screen.getByRole('button', { name: 'Retry docking the Golem panel' });
     expect(dock).toBeEnabled();
     expect(dock).toHaveAttribute('title', 'Retry docking the Golem panel');
     expect(screen.getByRole('button', { name: 'Focus Golem window' })).toBeEnabled();

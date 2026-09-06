@@ -93,6 +93,8 @@ type App struct {
 	// carries an older generation than one already applied.
 	golemSaveMu   sync.Mutex
 	golemSavedGen uint64
+	// Last reported save failure, cleared on success; guarded by golemSaveMu.
+	golemSaveError string
 	// Native seams, installed once in main() before Run. Tests inject them
 	// directly; they are never mutated from a concurrent bound call.
 	golemWindowFactory func(application.WebviewWindowOptions) application.Window

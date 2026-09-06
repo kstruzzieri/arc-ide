@@ -123,6 +123,11 @@
   min-width: 0;
 }
 
+.hint {
+  display: block;
+  margin-top: 4px;
+}
+
 .retry {
   flex: none;
   height: 22px;

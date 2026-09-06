@@ -8,6 +8,7 @@
  */
 
 import type { GolemSurfaceActions } from '../../components/Golem/GolemSurface';
+import { GOLEM_WINDOW_MAX_PAYLOAD_BYTES } from '../../types/golemWindow';
 import type {
   GolemView,
   GolemWindowBootstrap,
@@ -539,6 +540,120 @@ describe('acknowledged actions', () => {
     expect(useViewStore.getState().error).not.toBeNull();
     stop();
   });
+});
+
+describe('queue edit coverage', () => {
+  it.each([true, false])(
+    'keeps newer typing when an earlier edit settles with ok=%s',
+    async (ok) => {
+      const stop = await startReady();
+      const queuedView = (text: string, processedThrough: number) => {
+        const view = viewOf({ processedThrough });
+        view.conversations['conv-a'].queuedTurns = [
+          { queueId: 'q1', state: 'queued', message: text, contextRefs: [] },
+        ];
+        return view;
+      };
+      const text = () =>
+        useViewStore.getState().view?.conversations['conv-a'].queuedTurns[0].message;
+      try {
+        emitMessage(viewMessage(5, queuedView('initial', 0)));
+        actions.updateQueued('conv-a', 'q1', 'first edit');
+        actions.updateQueued('conv-a', 'q1', 'latest edit');
+        await flush();
+        const first = posted('action')[0];
+        emitMessage(viewMessage(6, queuedView(ok ? 'first edit' : 'initial', first.id)));
+        emitMessage(ackMessage(first.id, ok, ok ? undefined : 'No longer editable.'));
+        await flush();
+        expect(text()).toBe('latest edit');
+        emitMessage(viewMessage(7, queuedView(ok ? 'first edit' : 'initial', first.id)));
+        expect(text()).toBe('latest edit');
+        const latest = posted('action')[1];
+        emitMessage(ackMessage(latest.id, true));
+        emitMessage(viewMessage(8, queuedView('latest edit', latest.id)));
+        emitMessage(viewMessage(9, queuedView('owner update', latest.id)));
+        expect(text()).toBe('owner update');
+      } finally {
+        stop();
+      }
+    }
+  );
+
+  it('removes only the refused local edit when it cannot enter the relay queue', async () => {
+    const stop = await startReady();
+    const view = viewOf();
+    view.conversations['conv-a'].queuedTurns = [
+      { queueId: 'q1', state: 'queued', message: 'original', contextRefs: [] },
+    ];
+    emitMessage(viewMessage(5, view));
+    actions.updateQueued('conv-a', 'q1', 'x'.repeat(GOLEM_WINDOW_MAX_PAYLOAD_BYTES));
+    await flush();
+    expect(useViewStore.getState().view?.conversations['conv-a'].queuedTurns[0].message).toBe(
+      'original'
+    );
+    expect(posted('action')).toHaveLength(0);
+    expect(useViewStore.getState().error).not.toBeNull();
+    stop();
+  });
+});
+
+it('keeps oversized input editable and permits a corrected send', async () => {
+  const stop = await startReady();
+  const text = 'x'.repeat(GOLEM_WINDOW_MAX_PAYLOAD_BYTES);
+  useDraftStore.getState().setDraft('conv-a', text);
+  actions.send('conv-a', text);
+  await flush();
+  expect(posted('action')).toHaveLength(0);
+  expect(useDraftStore.getState().drafts['conv-a']).toBe(text);
+  expect(useViewStore.getState().pendingComposers.has('conv-a')).toBe(false);
+  actions.send('conv-a', 'shorter input');
+  await flush();
+  expect(posted('action')).toHaveLength(1);
+  stop();
+});
+
+it('surfaces preference-save errors without freezing the satellite', async () => {
+  const stop = await startReady();
+  listeners.get('golem:window-preference-error')?.('Window changes could not be saved: disk full');
+  expect(useViewStore.getState().error).toContain('disk full');
+  expect(useViewStore.getState().frozen).toBe(false);
+  stop();
+  expect(listeners.has('golem:window-preference-error')).toBe(false);
+});
+
+it('keeps a failed projection frozen through action acknowledgements until a newer view arrives', async () => {
+  const stop = await startReady();
+  try {
+    useDraftStore.getState().setDraft('conv-a', 'pending text');
+    actions.send('conv-a', 'pending text');
+    await flush();
+    emitMessage(
+      fromMain({
+        kind: 'view-error',
+        instance: 1,
+        id: 0,
+        revision: 6,
+        handoff: 0,
+        payload: { reason: 'The conversation could not be synchronized.' },
+      })
+    );
+    expect(useViewStore.getState()).toMatchObject({
+      projectionError: 'The conversation could not be synchronized.',
+      frozen: true,
+    });
+    emitMessage(ackMessage(posted('action')[0].id, true));
+    await flush();
+    expect(useViewStore.getState()).toMatchObject({
+      projectionError: 'The conversation could not be synchronized.',
+      frozen: true,
+    });
+    emitMessage(viewMessage(5));
+    expect(useViewStore.getState().frozen).toBe(true);
+    emitMessage(viewMessage(7));
+    expect(useViewStore.getState()).toMatchObject({ projectionError: null, frozen: false });
+  } finally {
+    stop();
+  }
 });
 
 describe('re-dock', () => {

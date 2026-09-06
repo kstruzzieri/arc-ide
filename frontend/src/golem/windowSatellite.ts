@@ -92,7 +92,7 @@ const TRANSFER_ENDED = 'The move to the main window did not complete.';
  * the controlled input snaps back on every incoming view.
  */
 interface QueueEdit {
-  text: string;
+  action: Extract<GolemViewAction, { type: 'updateQueued' }>;
   /** The admitted action id, or null while the edit is still unacknowledged. */
   settledAt: number | null;
 }
@@ -154,8 +154,9 @@ function setPending(own: Owner, conversationId: string, pending: boolean): void 
  */
 function refreshFrozen(own: Owner): void {
   if (own.cancelled || own !== active) return;
-  const { view, state, frozen } = useViewStore.getState();
+  const { view, state, frozen, projectionError } = useViewStore.getState();
   const next =
+    projectionError !== null ||
     !own.draftsInstalled ||
     view === null ||
     state === null ||
@@ -176,7 +177,7 @@ function withQueueEdits(view: GolemView, edits: Map<string, QueueEdit>): GolemVi
       ...conversation,
       queuedTurns: conversation.queuedTurns.map((turn) => {
         const edit = edits.get(turn.queueId);
-        return edit === undefined ? turn : { ...turn, message: edit.text };
+        return edit === undefined ? turn : { ...turn, message: edit.action.text };
       }),
     };
     changed = true;
@@ -290,7 +291,7 @@ function onAdmission(own: Owner, action: GolemViewAction, ack: GolemAck): void {
   }
   if (action.type === 'updateQueued') {
     const edit = own.queueEdits.get(action.queueId);
-    if (edit) {
+    if (edit?.action === action) {
       if (ack.ok) edit.settledAt = ack.id;
       else own.queueEdits.delete(action.queueId);
       paintView(own);
@@ -365,11 +366,11 @@ function handleMessage(own: Owner, payload: unknown): void {
     return;
   }
   if (own.core === null) {
-    if (envelope.message.kind === 'view') {
+    if (envelope.message.kind === 'view' || envelope.message.kind === 'view-error') {
       // Projections are a strict revision series and only the newest can ever
       // be installed, so a superseded one is replaced where it stands rather
       // than spending room the buffer holds for the draft transfer.
-      const held = own.buffer.findIndex((entry) => entry.message.kind === 'view');
+      const held = own.buffer.findIndex((entry) => entry.message.kind === envelope.message.kind);
       if (held !== -1) {
         if (envelope.message.revision > own.buffer[held].message.revision)
           own.buffer[held] = envelope;
@@ -414,6 +415,11 @@ function runBootstrap(own: Owner): void {
           ackTimeoutMs: SATELLITE_ACK_TIMEOUT_MS,
           maxAttempts: SATELLITE_MAX_ATTEMPTS,
           onView: (view) => installView(own, view),
+          onProjectionError: (reason) => {
+            if (own.cancelled || own !== active) return;
+            useViewStore.setState({ projectionError: reason }, false, 'golem/projection-error');
+            refreshFrozen(own);
+          },
           onAdmission: (action, ack) => onAdmission(own, action, ack),
           onDrafts: (map, handoff, id) => installDrafts(own, map, handoff, id),
           onError: (error) => report(own, error),
@@ -517,7 +523,14 @@ export function startGolemSatellite(): () => void {
   };
   active = own;
   useViewStore.setState(
-    { view: null, state: null, frozen: true, pendingComposers: NO_PENDING_COMPOSERS, error: null },
+    {
+      view: null,
+      state: null,
+      frozen: true,
+      pendingComposers: NO_PENDING_COMPOSERS,
+      error: null,
+      projectionError: null,
+    },
     false,
     'golem/start'
   );
@@ -533,6 +546,9 @@ export function startGolemSatellite(): () => void {
     }
   });
   const offMessage = EventsOn<unknown>(MESSAGE_EVENT, (payload) => handleMessage(own, payload));
+  const offPreference = EventsOn<unknown>('golem:window-preference-error', (payload) =>
+    report(own, payload)
+  );
 
   runBootstrap(own);
 
@@ -543,6 +559,7 @@ export function startGolemSatellite(): () => void {
     own.core = null;
     offMode();
     offMessage();
+    offPreference();
   };
 }
 
@@ -572,7 +589,17 @@ function run(action: GolemViewAction, lockId?: string): void {
   const own = active;
   dispatch(action, lockId).then(
     () => undefined,
-    (error: unknown) => report(own, error)
+    (error: unknown) => {
+      if (
+        own !== null &&
+        action.type === 'updateQueued' &&
+        own.queueEdits.get(action.queueId)?.action === action
+      ) {
+        own.queueEdits.delete(action.queueId);
+        paintView(own);
+      }
+      report(own, error);
+    }
   );
 }
 
@@ -585,11 +612,17 @@ const ACTIONS: GolemSurfaceActions = {
   retry: (conversationId) => run({ type: 'retry', conversationId }),
   updateQueued: (conversationId, queueId, text) => {
     const own = active;
+    const action: Extract<GolemViewAction, { type: 'updateQueued' }> = {
+      type: 'updateQueued',
+      conversationId,
+      queueId,
+      text,
+    };
     if (own !== null && !own.cancelled) {
-      own.queueEdits.set(queueId, { text, settledAt: null });
+      own.queueEdits.set(queueId, { action, settledAt: null });
       paintView(own);
     }
-    run({ type: 'updateQueued', conversationId, queueId, text });
+    run(action);
   },
   removeQueued: (conversationId, queueId) => run({ type: 'removeQueued', conversationId, queueId }),
   select: (conversationId) => run({ type: 'select', conversationId }),

@@ -13,6 +13,27 @@ import { GolemSurface, type GolemSurfaceActions } from '../../../components/Gole
 import { parseGolemView } from '../../../types/golemWindow';
 import type { GolemView } from '../../../types/golemWindow';
 
+const mockRowRenders = jest.fn<void, [string]>();
+
+// Count real row renders while preserving React.memo and every component body.
+// Wire snapshots recreate objects, so DOM identity alone cannot detect wasted renders.
+jest.mock('react', () => {
+  const react = jest.requireActual<typeof import('react')>('react');
+  return {
+    ...react,
+    memo: (
+      component: (props: object) => import('react').ReactNode,
+      compare?: (previous: object, next: object) => boolean
+    ) =>
+      react.memo((props: object) => {
+        if (component.name === 'TranscriptRow' || component.name === 'ToolChip') {
+          mockRowRenders(component.name);
+        }
+        return react.createElement(component, props);
+      }, compare),
+  };
+});
+
 const identity = { repoEpoch: 7, workspaceId: 'frontend', conversationId: 'conv-frontend' };
 const other = { repoEpoch: 7, workspaceId: 'backend', conversationId: 'conv-backend' };
 const RUN_A = '11111111-1111-4111-8111-111111111111';
@@ -110,6 +131,48 @@ function Harness({
     />
   );
 }
+
+it('renders only changed rows when a fresh wire snapshot arrives', () => {
+  mockRowRenders.mockClear();
+  const view = baseView();
+  const conversation = view.conversations[identity.conversationId];
+  conversation.transcript = [
+    { id: 'user-1', runId: RUN_A, kind: 'user', text: 'Read the file' },
+    {
+      id: 'tool-1',
+      runId: RUN_A,
+      kind: 'tool',
+      text: 'Preview',
+      toolName: 'read',
+      activity: 'done',
+    },
+    { id: 'reply-1', runId: RUN_A, kind: 'assistant', text: 'Starting' },
+  ];
+  conversation.activeRunId = RUN_A;
+  conversation.runs[RUN_A] = {
+    identity: { ...identity, runId: RUN_A },
+    phase: 'running',
+    lastSeq: 1,
+  };
+  const actions = actionsMock();
+  const { rerender } = render(<Harness view={view} actions={actions} />);
+  expect(mockRowRenders.mock.calls).toEqual([['TranscriptRow'], ['ToolChip'], ['TranscriptRow']]);
+  mockRowRenders.mockClear();
+
+  const next = parseGolemView(JSON.parse(JSON.stringify(view)));
+  next.conversations[identity.conversationId].transcript[2].text = 'Starting the reply';
+  rerender(<Harness view={next} actions={actions} />);
+
+  expect(screen.getByText('Starting the reply')).toBeInTheDocument();
+  expect(mockRowRenders.mock.calls).toEqual([['TranscriptRow']]);
+
+  const changedTool = parseGolemView(JSON.parse(JSON.stringify(next)));
+  changedTool.conversations[identity.conversationId].transcript[1].activity = 'failed';
+  mockRowRenders.mockClear();
+  rerender(<Harness view={changedTool} actions={actions} />);
+  expect(screen.getByRole('button', { name: 'read failed' })).toBeInTheDocument();
+  expect(mockRowRenders.mock.calls).toEqual([['ToolChip']]);
+});
 
 describe('GolemSurface dispatch', () => {
   it('sends the conversation id and the typed text explicitly', () => {

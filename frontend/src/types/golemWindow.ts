@@ -61,7 +61,17 @@ export function retryChangesNothing(state: GolemWindowState | null | undefined):
   return state?.phase === 'closing' && state.reason === undefined;
 }
 
-export type GolemWindowKind = 'view' | 'drafts' | 'action' | 'ack' | 'ready' | 'abort';
+/** Kept equal to Go's golemWindowMaxPayload by the projection contract test. */
+export const GOLEM_WINDOW_MAX_PAYLOAD_BYTES = 4 << 20;
+
+export type GolemWindowKind =
+  | 'view'
+  | 'view-error'
+  | 'drafts'
+  | 'action'
+  | 'ack'
+  | 'ready'
+  | 'abort';
 export type GolemWindowRole = 'main' | 'satellite';
 
 export interface GolemWindowMessage {
@@ -142,7 +152,15 @@ const PHASES: readonly GolemWindowPhase[] = [
   'ready',
   'closing',
 ];
-const KINDS: readonly GolemWindowKind[] = ['view', 'drafts', 'action', 'ack', 'ready', 'abort'];
+const KINDS: readonly GolemWindowKind[] = [
+  'view',
+  'view-error',
+  'drafts',
+  'action',
+  'ack',
+  'ready',
+  'abort',
+];
 const ROLES: readonly GolemWindowRole[] = ['main', 'satellite'];
 const BRIDGE_PHASES: readonly GolemStoreState['bridgePhase'][] = [
   'unbound',
@@ -185,6 +203,11 @@ const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every
 const fail = (): never => {
   throw new GolemContractError();
 };
+
+export function parseGolemViewError(value: unknown): string {
+  if (!isRecord(value) || !isString(value.reason) || value.reason.trim() === '') return fail();
+  return boundedGolemMessage(value.reason);
+}
 
 /** A nullable string field: present and either `string` or exactly `null`. */
 const readNullableString = (v: unknown): string | null =>

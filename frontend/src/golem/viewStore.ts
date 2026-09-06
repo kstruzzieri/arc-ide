@@ -33,6 +33,8 @@ export interface ViewStore {
   pendingComposers: ReadonlySet<string>;
   /** The last failure this window could not hide, or null. */
   error: string | null;
+  /** A failed projection stays blocking until a newer complete view arrives. */
+  projectionError: string | null;
 }
 
 /** Shared empty membership, so an idle window never allocates a Set. */
@@ -48,6 +50,7 @@ export const useViewStore = create<ViewStore>()(
       frozen: true,
       pendingComposers: NO_PENDING_COMPOSERS,
       error: null,
+      projectionError: null,
     }),
     { name: 'golem-window-view' }
   )

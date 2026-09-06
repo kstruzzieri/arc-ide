@@ -72,9 +72,10 @@ const emit = (event: string, payload: unknown) => {
   for (const handler of [...(listeners.get(event) ?? [])]) handler(payload);
 };
 
-const flush = async () => {
-  for (let i = 0; i < 12; i += 1) await Promise.resolve();
-};
+const nextTurn = jest.requireActual<typeof import('node:timers')>('node:timers').setImmediate;
+// A native task boundary drains the complete promise chain without advancing
+// the fake handoff deadlines or depending on the relay's number of awaits.
+const flush = () => new Promise<void>((resolve) => nextTurn(resolve));
 
 // ── lifecycle fixtures ───────────────────────────────────────────────────────
 
@@ -149,6 +150,15 @@ const golemStatus = (conversationId: string, workspaceId: string) =>
   });
 
 const CONV = 'conv-a';
+
+it('surfaces preference-save errors and releases the subscription on teardown', async () => {
+  const stop = startMainGolemRelay();
+  await flush();
+  emit('golem:window-preference-error', 'Window changes could not be saved: disk full');
+  expect(useGolemStore.getState().windowError).toContain('disk full');
+  stop();
+  expect(liveListeners('golem:window-preference-error')).toBe(0);
+});
 
 /**
  * Counts `setHostFrozen(false)` calls. A redundant thaw is invisible in the

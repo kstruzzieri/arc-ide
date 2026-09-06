@@ -14,6 +14,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"unicode/utf8"
 
 	"firn/internal/appstate"
 	"firn/internal/filesystem"
@@ -352,6 +353,7 @@ func newGolemHarness(t *testing.T) *golemHarness {
 
 	app := &App{
 		mainWindow:    h.mainWin,
+		osFS:          mockFS,
 		appStateStore: appstate.NewStore(mockFS, golemTestFirnDir),
 	}
 	app.emitFn = func(event string, data any) {
@@ -1822,6 +1824,138 @@ func TestLoadFailureIsPublishedAsReason(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Bounds
 // ---------------------------------------------------------------------------
+
+func TestPreferenceSaveFailureIsReportedAndDeduplicated(t *testing.T) {
+	h := newGolemHarness(t)
+	h.undock()
+	before, _ := h.readFile(h.appStatePath())
+	fsys := h.app.osFS.(*filesystem.Mock)
+	rename := fsys.RenameFunc
+	fail := func(string, string) error { return errors.New(strings.Repeat("磁", 300)) }
+	fsys.RenameFunc = fail
+	var reported []string
+	h.app.emitFn = func(event string, data any) {
+		// Reporting must not hold either lock: frontend work can re-enter App.
+		h.app.golemSaveMu.Lock()
+		h.app.golemSaveMu.Unlock()
+		_ = h.state()
+		if event == "golem:window-preference-error" {
+			reported = append(reported, data.(string))
+		}
+	}
+	save := func() {
+		h.app.saveGolemPreference(h.app.golemSavedGen+1, appstate.GolemWindow{Mode: appstate.ModeDocked})
+	}
+	save()
+	save()
+	if len(reported) != 1 {
+		t.Fatalf("repeated save failure reports = %d, want 1", len(reported))
+	}
+	if !strings.Contains(reported[0], "could not be saved") || len(reported[0]) > 512 || !utf8.ValidString(reported[0]) {
+		t.Fatalf("save failure report = %q, want a bounded readable explanation", reported[0])
+	}
+	if after, _ := h.readFile(h.appStatePath()); string(after) != string(before) {
+		t.Fatal("failed save replaced the existing preference")
+	}
+	if h.mode() != appstate.ModeUndocked || h.phase() != golemPhaseReady {
+		t.Fatalf("state after failed save = %+v, want the usable undocked window", h.state())
+	}
+	fsys.RenameFunc = rename
+	save()
+	fsys.RenameFunc = fail
+	save()
+	if len(reported) != 2 {
+		t.Fatalf("save failure reports after recovery = %d, want 2", len(reported))
+	}
+}
+
+func TestCloseAuthorizationRechecksHandoffAfterNativeRead(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retry=%t", retry), func(t *testing.T) {
+			h := newGolemHarness(t)
+			h.undock()
+			if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+				t.Fatal(err)
+			}
+			h.transferBackToMain(95, true)
+			instance, handoff := h.instance(), h.handoff()
+			deadline := h.pendingTimer()
+			satellite := h.satellite()
+			read := false
+			satellite.reenter = func() {
+				if read {
+					return
+				}
+				read = true
+				deadline.fire()
+				if retry {
+					if err := h.app.CloseGolemWindow(h.mainCtx()); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := h.app.ConfirmGolemWindowClose(h.satCtx(), instance, handoff); err == nil {
+				t.Fatal("close confirmed after its handoff expired during the native read")
+			}
+			if satellite.countOf("close") != 0 {
+				t.Fatal("stale confirmation destroyed the satellite")
+			}
+			want := golemPhaseReady
+			if retry {
+				want = golemPhaseClosing
+			}
+			if h.phase() != want {
+				t.Fatalf("phase = %s, want %s", h.phase(), want)
+			}
+		})
+	}
+}
+
+func TestBootstrapAbortCannotCloseReadyWindowDuringNativeRead(t *testing.T) {
+	h := newGolemHarness(t)
+	if err := h.app.OpenGolemWindow(h.mainCtx()); err != nil {
+		t.Fatal(err)
+	}
+	satellite := h.satellite()
+	read := false
+	satellite.reenter = func() {
+		if read {
+			return
+		}
+		read = true
+		h.undock()
+	}
+	if err := h.app.abortGolemAttempt(h.instance(), h.handoff(), "bootstrap deadline expired"); err == nil {
+		t.Fatal("bootstrap abort accepted after readiness committed during the native read")
+	}
+	if satellite.countOf("close") != 0 || h.phase() != golemPhaseReady || h.state().Reason != "" {
+		t.Fatalf("stale abort changed the ready window: state=%+v calls=%v", h.state(), satellite.recorded())
+	}
+}
+
+func TestViewErrorRelaysWithoutReplacingBootstrapView(t *testing.T) {
+	h := newGolemHarness(t)
+	h.undock()
+	msg := GolemWindowMessage{
+		Kind: "view-error", Instance: h.instance(), Revision: 2,
+		Payload: json.RawMessage(`{"reason":"The conversation could not be displayed."}`),
+	}
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), msg); err != nil {
+		t.Fatalf("view error: %v", err)
+	}
+	received := h.satellite().received()
+	if received[len(received)-1].Message.Kind != "view-error" {
+		t.Fatal("view error was not relayed to the satellite")
+	}
+	boot, err := h.app.BootstrapGolemWindow(h.satCtx())
+	if err != nil || boot.Revision != 1 || string(boot.View) != `{"rev":1}` {
+		t.Fatalf("bootstrap after view error = %+v, %v; want the retained revision 1", boot, err)
+	}
+	msg.Revision = 0
+	if err := h.app.PostGolemWindowMessage(h.mainCtx(), msg); err == nil {
+		t.Fatal("view error without a revision was accepted")
+	}
+}
 
 func TestBoundsSaveOrdering(t *testing.T) {
 	h := newGolemHarness(t)

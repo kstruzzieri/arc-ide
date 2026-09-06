@@ -344,6 +344,10 @@ export function IDEShell({
       if (ours && held?.isConnected && activeElement !== held) held.focus();
     }
 
+    const explicitCollapse =
+      (isFilesPanelCollapsed && !previous.preferredFiles) ||
+      (isGolemPanelCollapsed && !previous.preferredGolem);
+
     for (const panel of CENTER_PANELS) {
       const collapsed = panel === 'files' ? center.filesCollapsed : center.golemCollapsed;
       if (collapsed === previous[panel]) continue;
@@ -363,6 +367,9 @@ export function IDEShell({
         continue;
       }
 
+      // The pair invariant may expand the peer of an explicit collapse. Its
+      // recovery rail owns focus for that gesture, not the newly opened peer.
+      if (explicitCollapse) continue;
       // Automatic widening never steals focus; only a preference change or an
       // explicit reveal of this panel does.
       const explicitExpand =

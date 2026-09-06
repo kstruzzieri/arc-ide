@@ -682,6 +682,11 @@ export function startMainGolemRelay(): () => void {
     })
   );
   own.unsubscribe.push(EventsOn<unknown>(MESSAGE_EVENT, (payload) => handleMessage(own, payload)));
+  own.unsubscribe.push(
+    EventsOn<unknown>('golem:window-preference-error', (payload) => {
+      if (!own.cancelled && own === active) reportGolemWindowError(payload);
+    })
+  );
   own.unsubscribe.push(subscribeProjection(own));
 
   void GetGolemWindowState().then(

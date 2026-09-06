@@ -125,9 +125,9 @@ const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: string }
  * One non-tool transcript row (user / assistant / error).
  *
  * A component, not a file split: the transcript is the only genuinely O(n)
- * render here, and every entry but the streaming last one keeps its reference
- * across a delta, so memoising the row is what stops a token stream from
- * rebuilding the whole conversation each frame. Tool entries take the
+ * render here. Pass its scalar fields as props: a satellite's next wire
+ * snapshot recreates every entry object, but unchanged fields still let memo
+ * skip the older rows. Tool entries take the
  * `ToolChip` / `ToolCluster` path below instead.
  *
  * A live assistant reply stays plain text rather than reparsing the complete
@@ -135,12 +135,9 @@ const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: string }
  * User prompts and errors always stay plain.
  */
 const TranscriptRow = memo(function TranscriptRow({
-  entry,
   live,
-}: {
-  entry: ProjectedTranscript;
-  live: boolean;
-}) {
+  ...entry
+}: ProjectedTranscript & { live: boolean }) {
   return (
     <div className={`${styles.entry} ${styles[entry.kind]}`}>
       <div className={styles.bubble}>
@@ -258,12 +255,11 @@ function toolNameSummary(entries: ProjectedTranscript[]): string {
  * `raw`), and this surface renders the same projection in both windows rather
  * than being richer in one of them.
  *
- * Memoised on the entry: a chip that reached a terminal activity keeps its
- * reference across a delta, so a token stream re-renders one assistant row and
- * skips every settled chip. The detail toggle is the chip's own local state,
+ * Memoised on scalar fields so a fresh wire snapshot skips unchanged chips.
+ * The detail toggle is the chip's own local state,
  * so opening one never touches a store or its neighbours.
  */
-const ToolChip = memo(function ToolChip({ entry }: { entry: ProjectedTranscript }) {
+const ToolChip = memo(function ToolChip(entry: ProjectedTranscript) {
   const [open, setOpen] = useState(false);
   const preview = entry.text;
   return (
@@ -349,7 +345,7 @@ function ToolCluster({
       {expanded && (
         <div className={styles.clusterBody}>
           {entries.map((entry) => (
-            <ToolChip key={entry.id} entry={entry} />
+            <ToolChip key={entry.id} {...entry} />
           ))}
         </div>
       )}
@@ -743,11 +739,11 @@ export function GolemSurface({
           if (item.type === 'entry') {
             const live =
               item.entry.runId === activeRun?.identity.runId && isLivePhase(activeRun.phase);
-            return <TranscriptRow key={item.entry.id} entry={item.entry} live={live} />;
+            return <TranscriptRow key={item.entry.id} {...item.entry} live={live} />;
           }
           // A lone tool is a chip on its own, never wrapped in a "1 tool" cluster.
           if (item.entries.length === 1) {
-            return <ToolChip key={item.id} entry={item.entries[0]} />;
+            return <ToolChip key={item.id} {...item.entries[0]} />;
           }
           const defaultExpanded =
             item.id === lastClusterId && item.entries.some((entry) => entry.activity === 'running');

@@ -3,6 +3,7 @@ import {
   parseGolemAck,
   parseGolemDraftMap,
   parseGolemViewAction,
+  parseGolemViewError,
   parseGolemWindowBootstrap,
   parseGolemWindowEnvelope,
   parseGolemWindowState,
@@ -90,6 +91,25 @@ it('parses an envelope but leaves the payload untyped', () => {
   expect(() => parseGolemWindowEnvelope({ from: 'stranger', message: {} })).toThrow(
     GolemContractError
   );
+});
+
+it('accepts projection error envelopes with a bounded nonblank reason', () => {
+  const envelope = parseGolemWindowEnvelope({
+    from: 'main',
+    message: {
+      kind: 'view-error',
+      instance: 1,
+      id: 0,
+      revision: 3,
+      handoff: 0,
+      payload: { reason: 'projection unavailable' },
+    },
+  });
+  expect(parseGolemViewError(envelope.message.payload)).toBe('projection unavailable');
+  expect(parseGolemViewError({ reason: 'x'.repeat(300) })).toHaveLength(200);
+  for (const value of [null, {}, { reason: null }, { reason: '' }, { reason: '   ' }]) {
+    expect(() => parseGolemViewError(value)).toThrow(GolemContractError);
+  }
 });
 
 it('parses every action variant and rejects unknown or malformed ones', () => {

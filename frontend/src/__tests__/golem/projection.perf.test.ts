@@ -23,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { buildGolemView } from '../../golem/projection';
 import { __resetGolemStore, useGolemStore } from '../../stores/golemStore';
-import { parseGolemView } from '../../types/golemWindow';
+import { GOLEM_WINDOW_MAX_PAYLOAD_BYTES, parseGolemView } from '../../types/golemWindow';
 import type { ConversationView, TranscriptEntry } from '../../types/golem';
 
 /** Go's own `golemWindowMaxPayload`, parsed so a change there fails here. */
@@ -141,6 +141,9 @@ function measure(samples: number): { bytes: number; medianMs: number; maxMs: num
 }
 
 describe('projection payload', () => {
+  it('uses the same payload byte limit for frontend admission and Go relay validation', () => {
+    expect(GOLEM_WINDOW_MAX_PAYLOAD_BYTES).toBe(GO_PAYLOAD_CAP);
+  });
   it('measures a long multilingual transcript through projection and validation', () => {
     // A long working session, at the sizes a CJK conversation actually reaches.
     install(longChat(400, 200));

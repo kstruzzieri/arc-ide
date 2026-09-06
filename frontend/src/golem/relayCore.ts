@@ -1,8 +1,10 @@
 import { boundedGolemMessage, type GolemActionResult } from '../types/golem';
 import {
+  GOLEM_WINDOW_MAX_PAYLOAD_BYTES,
   parseGolemAck,
   parseGolemDraftMap,
   parseGolemView,
+  parseGolemViewError,
   parseGolemViewAction,
   type GolemAck,
   type GolemDraftMap,
@@ -84,10 +86,12 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
 
   const settledAcks = new Map<number, Promise<GolemWindowMessage>>();
   const actionBodies = new Map<number, string>();
+  const pendingActions = new Set<number>();
   const inboundClaimed = new Set<string>();
   const inboundAcks = new Map<string, GolemWindowMessage>();
   const transfers = new Map<number, OutboundTransfer>();
   let highestInboundHandoff = 0;
+  let highestOutboundHandoff = 0;
 
   const report = (value: unknown): void => {
     if (!disposed) deps.onError(relayError(value));
@@ -104,23 +108,36 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     };
   }
 
+  async function postView(rev: number): Promise<void> {
+    try {
+      await deps.transport.post(viewMessage(rev));
+    } catch (error) {
+      report(error);
+      if (!disposed) {
+        await deps.transport
+          .post({
+            kind: 'view-error',
+            instance: deps.instance,
+            id: 0,
+            revision: rev,
+            handoff: 0,
+            payload: { reason: boundedGolemMessage(error) },
+          })
+          .catch(report);
+      }
+    }
+  }
+
   /** Coalesced background publication: at most one post is ever in flight. */
   function schedulePublish(): void {
     if (disposed || posting || !dirty) return;
     posting = true;
     dirty = false;
-    tailPost = deps.transport.post(viewMessage(++revision)).then(
-      () => {
-        posting = false;
-        schedulePublish();
-      },
-      (error: unknown) => {
-        // Retain the newest snapshot and wait for the next arrival: an
-        // immediate retry here would spin against a window that just died.
-        posting = false;
-        report(error);
-      }
-    );
+    tailPost = postView(++revision).then(() => {
+      posting = false;
+      // Only a newer publish sets dirty, so this cannot retry a failure alone.
+      schedulePublish();
+    });
   }
 
   function publish(): void {
@@ -138,19 +155,24 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
     posting = true;
     dirty = false;
     const rev = ++revision;
-    const done = deps.transport.post(viewMessage(rev)).then(
-      () => {
-        posting = false;
-        schedulePublish();
-      },
-      (error: unknown) => {
-        posting = false;
-        report(error);
-      }
-    );
+    const done = postView(rev).then(() => {
+      posting = false;
+      schedulePublish();
+    });
     tailPost = done;
     await done;
     return rev;
+  }
+
+  function pruneActionHistory(): void {
+    // The satellite posts its next id only after settling the previous one.
+    // Keep unfinished admissions too; an in-flight duplicate must share their
+    // outcome. Older evicted ids remain rejected by highestActionId.
+    for (const id of settledAcks.keys()) {
+      if (id >= highestActionId || pendingActions.has(id)) continue;
+      settledAcks.delete(id);
+      actionBodies.delete(id);
+    }
   }
 
   /**
@@ -161,6 +183,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
   function settleAction(id: number, action: GolemViewAction): Promise<GolemWindowMessage> {
     const previous = settledAcks.get(id);
     if (previous) return previous;
+    pendingActions.add(id);
     const settled = admissionTail
       .then(async () => toAck(id, await deps.execute(action)))
       .catch((error: unknown): GolemAck => {
@@ -189,8 +212,13 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
           handoff: 0,
           payload: ack,
         };
+      })
+      .finally(() => {
+        pendingActions.delete(id);
+        pruneActionHistory();
       });
     settledAcks.set(id, settled);
+    pruneActionHistory();
     admissionTail = settled.then(
       () => undefined,
       () => undefined
@@ -244,6 +272,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
         highestActionId = Math.max(highestActionId, id);
         actionBodies.set(id, body);
         settledAcks.set(id, settled);
+        pruneActionHistory();
       }
       await deps.transport.post(await settled).catch(report);
       return;
@@ -264,6 +293,10 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       report(RELAY_UNEXPECTED_MESSAGE);
       return;
     }
+    if (message.handoff < highestInboundHandoff) {
+      report(RELAY_STALE_TRANSFER);
+      return;
+    }
     const key = `${message.handoff}:${message.id}`;
     const done = inboundAcks.get(key);
     if (done) {
@@ -271,10 +304,6 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       return;
     }
     if (inboundClaimed.has(key)) return; // still installing; one response only
-    if (message.handoff < highestInboundHandoff) {
-      report(RELAY_STALE_TRANSFER);
-      return;
-    }
     let map: GolemDraftMap;
     try {
       map = parseGolemDraftMap(message.payload);
@@ -282,10 +311,14 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       await postRefusal(message.id, message.handoff, RELAY_TRANSFER_UNCONFIRMED);
       return;
     }
+    if (message.handoff > highestInboundHandoff) {
+      inboundClaimed.clear();
+      inboundAcks.clear();
+    }
     inboundClaimed.add(key);
     highestInboundHandoff = message.handoff;
     await admissionTail;
-    if (disposed) return;
+    if (disposed || message.handoff !== highestInboundHandoff) return;
     try {
       deps.onDrafts(map);
     } catch (error) {
@@ -321,6 +354,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       return;
     }
     transfer.settled = true;
+    transfer.message = null;
     transfer.resolve();
   }
 
@@ -349,6 +383,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
 
   async function sendDrafts(handoff: number, readDrafts: () => GolemDraftMap): Promise<void> {
     if (disposed) throw relayError(RELAY_DISPOSED);
+    if (handoff < highestOutboundHandoff) throw relayError(RELAY_STALE_TRANSFER);
     const existing = transfers.get(handoff);
     if (existing) {
       // A retry reuses (instance, handoff, id) so the receiver installs once.
@@ -356,6 +391,13 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
         await deps.transport.post(existing.message).catch(report);
       return existing.promise;
     }
+    for (const transfer of transfers.values()) {
+      if (!transfer.settled) transfer.reject(relayError(RELAY_STALE_TRANSFER));
+      transfer.settled = true;
+      transfer.message = null;
+    }
+    transfers.clear();
+    highestOutboundHandoff = handoff;
     const id = ++outboundId;
     let resolve!: () => void;
     let reject!: (error: Error) => void;
@@ -381,6 +423,7 @@ export function createMainRelayCore(deps: MainRelayDeps): MainRelayCore {
       reject(relayError(RELAY_DISPOSED));
       return promise;
     }
+    if (transfer.settled) return promise;
     transfer.message = {
       kind: 'drafts',
       instance: deps.instance,
@@ -416,6 +459,8 @@ export interface SatelliteDeps {
   ackTimeoutMs: number;
   maxAttempts: number;
   onView(view: GolemView): void;
+  /** A failed projection stays visible until a covering view is installed. */
+  onProjectionError?(reason: string | null): void;
   /** Host clear/unlock runs here, before the queue advances. */
   onAdmission(action: GolemViewAction, ack: GolemAck): void;
   /**
@@ -473,10 +518,12 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
   let blocked = false;
   let nextId = 0;
   let viewRevision = 0;
+  let projectionErrorRevision = 0;
   let highestHandoff = 0;
+  let highestOutboundHandoff = 0;
   const queue: PendingAction[] = [];
-  /** Every action id this window has already settled, for late duplicate acks. */
-  const settledActions = new Set<number>();
+  /** Serialized actions allow late duplicate acks to use a scalar watermark. */
+  let settledActionId = 0;
   const handoffs = new Map<number, Handoff>();
   const installed = new Map<string, GolemWindowMessage | null>();
   /**
@@ -538,6 +585,12 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
   function send(action: GolemViewAction): Promise<GolemAck> {
     if (disposed) return Promise.reject(relayError(RELAY_DISPOSED));
     if (blocked) return Promise.reject(relayError(RELAY_HANDOFF_IN_PROGRESS));
+    const bytes = new TextEncoder().encode(JSON.stringify(action)).byteLength;
+    if (bytes > GOLEM_WINDOW_MAX_PAYLOAD_BYTES) {
+      return Promise.reject(
+        relayError('This Golem action is too large. Shorten the message and try again.')
+      );
+    }
     const id = ++nextId;
     let resolve!: (ack: GolemAck) => void;
     let reject!: (error: Error) => void;
@@ -573,11 +626,11 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       // Main re-acks a replayed action with the same stored message, so a
       // first ack that was merely slow arrives after the retry settled the id.
       // Only an id this window never issued is genuinely unexpected.
-      if (!settledActions.has(ack.id)) report(RELAY_UNEXPECTED_MESSAGE);
+      if (ack.id === 0 || ack.id > settledActionId) report(RELAY_UNEXPECTED_MESSAGE);
       return;
     }
     const [entry] = queue.splice(index, 1);
-    settledActions.add(entry.id);
+    settledActionId = Math.max(settledActionId, entry.id);
     clearTimer(entry);
     // The host clears/unlocks its composer before the next action goes out.
     deps.onAdmission(entry.action, ack);
@@ -597,7 +650,7 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
   // ── Views ──
 
   function applyView(view: GolemView, revision: number): void {
-    if (disposed || revision <= viewRevision) return;
+    if (disposed || revision <= viewRevision || revision < projectionErrorRevision) return;
     const first = viewRevision === 0;
     viewRevision = revision;
     // Take the held transfer before the host runs: a throwing onView must not
@@ -605,6 +658,10 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     const pending = first ? deferredDrafts : null;
     deferredDrafts = null;
     deps.onView(view);
+    if (projectionErrorRevision !== 0) {
+      projectionErrorRevision = 0;
+      deps.onProjectionError?.(null);
+    }
     if (pending !== null) receiveDrafts(pending);
   }
 
@@ -643,8 +700,18 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
   }
 
   function beginHandoff(handoff: number, readDrafts: () => GolemDraftMap): Promise<void> {
+    if (disposed) return Promise.reject(relayError(RELAY_DISPOSED));
+    if (handoff < highestOutboundHandoff) return Promise.reject(relayError(RELAY_STALE_TRANSFER));
     const existing = handoffs.get(handoff);
     if (existing) return existing.promise;
+    for (const entry of handoffs.values()) {
+      clearTimer(entry);
+      if (!entry.settled) entry.reject(relayError(RELAY_STALE_TRANSFER));
+      entry.settled = true;
+      entry.message = null;
+    }
+    handoffs.clear();
+    highestOutboundHandoff = handoff;
     // Synchronous: no further action may enter the queue from this point.
     blocked = true;
     const id = ++nextId;
@@ -700,6 +767,7 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     }
     clearTimer(entry);
     entry.settled = true;
+    entry.message = null;
     if (ack.ok) {
       entry.resolve();
       return;
@@ -717,6 +785,7 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
     // then refused is just as dead as an unanswered one — so the barrier comes
     // down first and unconditionally.
     blocked = false;
+    entry.message = null;
     if (entry.settled) return;
     clearTimer(entry);
     entry.settled = true;
@@ -730,15 +799,15 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       report(RELAY_UNEXPECTED_MESSAGE);
       return;
     }
+    if (message.handoff < highestHandoff) {
+      report(RELAY_STALE_TRANSFER);
+      return;
+    }
     const key = `${message.handoff}:${message.id}`;
     if (installed.has(key)) {
       // Replay the response rather than installing over post-handoff typing.
       const readyMessage = installed.get(key);
       if (readyMessage) void deps.transport.post(readyMessage).catch(report);
-      return;
-    }
-    if (message.handoff < highestHandoff) {
-      report(RELAY_STALE_TRANSFER);
       return;
     }
     let map: GolemDraftMap;
@@ -758,6 +827,7 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       }
       return;
     }
+    if (message.handoff > highestHandoff) installed.clear();
     highestHandoff = message.handoff;
     installed.set(key, null);
     deps.onDrafts(map, message.handoff, message.id);
@@ -798,6 +868,18 @@ export function createSatelliteCore(deps: SatelliteDeps): SatelliteCore {
       return;
     }
     switch (message.kind) {
+      case 'view-error': {
+        if (message.revision <= viewRevision || message.revision <= projectionErrorRevision) return;
+        try {
+          const reason = parseGolemViewError(message.payload);
+          projectionErrorRevision = message.revision;
+          if (deps.onProjectionError) deps.onProjectionError(reason);
+          else report(reason);
+        } catch (error) {
+          report(error);
+        }
+        return;
+      }
       case 'view': {
         try {
           applyView(parseGolemView(message.payload), message.revision);

@@ -7,13 +7,14 @@ import {
   type SatelliteCore,
 } from '../../golem/relayCore';
 import type { GolemActionResult } from '../../types/golem';
-import type {
-  GolemAck,
-  GolemDraftMap,
-  GolemView,
-  GolemViewAction,
-  GolemWindowEnvelope,
-  GolemWindowMessage,
+import {
+  GOLEM_WINDOW_MAX_PAYLOAD_BYTES,
+  type GolemAck,
+  type GolemDraftMap,
+  type GolemView,
+  type GolemViewAction,
+  type GolemWindowEnvelope,
+  type GolemWindowMessage,
 } from '../../types/golemWindow';
 import wire from '../fixtures/golemWindowWire.json';
 
@@ -170,6 +171,131 @@ function actionEnvelope(id: number, payload: unknown): GolemWindowEnvelope {
 }
 
 describe('main relay core', () => {
+  it('retires completed action bodies after the next id without reexecuting old replays', async () => {
+    const bus = new Bus();
+    const execute = jest.fn(() => ({ ok: true }));
+    const core = createMainRelayCore({
+      instance: 1,
+      execute,
+      snapshot: () => emptyView,
+      transport: bus.transport('main'),
+      onDrafts: jest.fn(),
+      onError: jest.fn(),
+    });
+    try {
+      const first = actionEnvelope(1, { type: 'select', conversationId: 'c1' });
+      const latest = actionEnvelope(2, { type: 'select', conversationId: 'c2' });
+      await core.receive(first);
+      await core.receive(latest);
+      await core.receive(first);
+      expect(bus.sent('main', 'ack').at(-1)?.payload).toMatchObject({ id: 1, ok: false });
+      await core.receive(latest);
+      expect(bus.sent('main', 'ack').at(-1)?.payload).toEqual({ id: 2, ok: true });
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('reports a failed projection to the satellite while still acknowledging admission', async () => {
+    const sent: GolemWindowMessage[] = [];
+    const core = createMainRelayCore({
+      instance: 1,
+      execute: () => ({ ok: true }),
+      snapshot: () => emptyView,
+      transport: {
+        post: async (message) => {
+          if (message.kind === 'view') throw new Error('projection unavailable');
+          sent.push(message);
+        },
+      },
+      onDrafts: jest.fn(),
+      onError: jest.fn(),
+    });
+    try {
+      await core.receive(actionEnvelope(1, { type: 'select', conversationId: 'c1' }));
+      expect(sent).toEqual([
+        {
+          kind: 'view-error',
+          instance: 1,
+          id: 0,
+          revision: 1,
+          handoff: 0,
+          payload: { reason: 'projection unavailable' },
+        },
+        { kind: 'ack', instance: 1, id: 1, revision: 1, handoff: 0, payload: { id: 1, ok: true } },
+      ]);
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('publishes a recovery queued while the preceding projection is failing', async () => {
+    const sent: GolemWindowMessage[] = [];
+    let rejectFirst!: (error: Error) => void;
+    const first = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const core = createMainRelayCore({
+      instance: 1,
+      execute: () => ({ ok: true }),
+      snapshot: () => emptyView,
+      transport: {
+        post: (message) => {
+          sent.push(message);
+          return sent.length === 1 ? first : Promise.resolve();
+        },
+      },
+      onDrafts: jest.fn(),
+      onError: jest.fn(),
+    });
+    try {
+      core.publish();
+      core.publish();
+      rejectFirst(new Error('first projection unavailable'));
+      await flush();
+      expect(sent.map((message) => message.kind)).toEqual(['view', 'view-error', 'view']);
+      expect(sent.at(-1)?.revision).toBe(2);
+      await flush();
+      expect(sent).toHaveLength(3);
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('retires draft acknowledgements when a newer return handoff arrives', async () => {
+    const bus = new Bus();
+    const onDrafts = jest.fn();
+    const core = createMainRelayCore({
+      instance: 1,
+      execute: () => ({ ok: true }),
+      snapshot: () => emptyView,
+      transport: bus.transport('main'),
+      onDrafts,
+      onError: jest.fn(),
+    });
+    const transfer = (handoff: number): GolemWindowEnvelope => ({
+      from: 'satellite',
+      message: {
+        kind: 'drafts',
+        instance: 1,
+        handoff,
+        id: handoff,
+        revision: 1,
+        payload: { c1: 'draft' },
+      },
+    });
+    try {
+      await core.receive(transfer(1));
+      await core.receive(transfer(2));
+      await core.receive(transfer(1));
+      expect(bus.sent('main', 'ack')).toHaveLength(2);
+      expect(onDrafts).toHaveBeenCalledTimes(2);
+    } finally {
+      core.dispose();
+    }
+  });
+
   it('keeps admission in send order and refuses a conflicting body under a used id', async () => {
     const order: string[] = [];
     let releaseFirst!: () => void;
@@ -324,11 +450,12 @@ describe('main relay core', () => {
     try {
       core.publish();
       await flush();
-      expect(onError).toHaveBeenCalledTimes(1);
+      // Both the projection and its small failure notification were refused.
+      expect(onError).toHaveBeenCalledTimes(2);
       expect(sent).toHaveLength(0);
       // A failed post never retries itself: no spin against a window that died.
       await flush();
-      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledTimes(2);
       expect(sent).toHaveLength(0);
 
       // Recovery takes no further publish(): the core's next flush — here the
@@ -340,7 +467,7 @@ describe('main relay core', () => {
       const views = sent.filter((message) => message.kind === 'view');
       expect(views).toHaveLength(1);
       expect((views[0].payload as GolemView).composerFocusRevision).toBe(9);
-      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledTimes(2);
     } finally {
       core.dispose();
     }
@@ -465,6 +592,83 @@ describe('satellite core', () => {
       },
     };
   }
+
+  it('refuses a payload above the byte limit before it can block the queue', async () => {
+    const { bus, core } = makeSatellite();
+    // Exercise admission without creating a large prompt: the encoder reports
+    // a boundary result, while the real relay owns rejection and queue state.
+    const encode = jest
+      .spyOn(TextEncoder.prototype, 'encode')
+      .mockReturnValueOnce(new Uint8Array(GOLEM_WINDOW_MAX_PAYLOAD_BYTES + 1));
+    const outcome: unknown[] = [];
+    const action = { type: 'send', conversationId: 'c1', text: '測定' } as const;
+    try {
+      void core.send(action).then(
+        (ack) => outcome.push(ack),
+        (error) => outcome.push(error)
+      );
+      await flush();
+      expect(outcome[0]).toBeInstanceOf(Error);
+      expect(encode).toHaveBeenCalledWith(JSON.stringify(action));
+      expect(bus.sent('satellite', 'action')).toHaveLength(0);
+      const next = core.send({ type: 'select', conversationId: 'c1' });
+      await flush();
+      const message = bus.sent('satellite', 'action')[0];
+      core.receive(ackEnvelope(message, { id: message.id, ok: true }));
+      await expect(next).resolves.toMatchObject({ ok: true });
+    } finally {
+      encode.mockRestore();
+      core.dispose();
+    }
+  });
+
+  it('keeps projection failure until a covering view installs, then ignores stale errors', () => {
+    const events: string[] = [];
+    const overrides = {
+      onView: () => events.push('view'),
+      onProjectionError: (reason: string | null) => events.push(reason ?? 'recovered'),
+    };
+    const { core } = makeSatellite(overrides);
+    const failed = (revision: number): GolemWindowEnvelope => ({
+      from: 'main',
+      message: {
+        kind: 'view-error',
+        instance: 1,
+        id: 0,
+        handoff: 0,
+        revision,
+        payload: { reason: 'projection unavailable' },
+      },
+    });
+    try {
+      core.receive({ from: 'main', message: viewMessage(1) });
+      core.receive(failed(3));
+      core.receive({ from: 'main', message: viewMessage(2) });
+      expect(events).toEqual(['view', 'projection unavailable']);
+      core.receive({ from: 'main', message: viewMessage(4) });
+      expect(events).toEqual(['view', 'projection unavailable', 'view', 'recovered']);
+      core.receive(failed(3));
+      expect(events).toHaveLength(4);
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('forgets an aborted transfer without letting an older handoff restart', async () => {
+    const { core } = makeSatellite();
+    try {
+      const old = core.beginHandoff(1, () => ({ c1: 'old draft' }));
+      void old.catch(() => undefined);
+      await flush();
+      core.abortHandoff(1, 'first attempt ended');
+      const current = core.beginHandoff(2, () => ({ c1: 'current draft' }));
+      void current.catch(() => undefined);
+      await expect(core.beginHandoff(1, () => ({}))).rejects.toThrow('closed handoff');
+      expect(core.beginHandoff(2, () => ({}))).toBe(current);
+    } finally {
+      core.dispose();
+    }
+  });
 
   it('installs only newer views and never lets a null bootstrap erase one', () => {
     const { core, onView } = makeSatellite();

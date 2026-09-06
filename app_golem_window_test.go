@@ -39,6 +39,7 @@ func TestCallerRoleFromCurrentWindowContext(t *testing.T) {
 		{"old same-name satellite", &fakeWindow{id: 3, name: "golem"}, ""},
 		{"wrong main", &fakeWindow{id: 4, name: "main"}, ""},
 		{"absent", nil, ""},
+		{"typed-nil caller", (*application.WebviewWindow)(nil), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := callerRole(ctxForWindow(tc.caller), mainWindow, satellite)
@@ -88,6 +89,10 @@ func TestValidateGolemWindowMessageRoles(t *testing.T) {
 		err      string
 	}{
 		{"main publishes view", GolemWindowMessage{Kind: "view", Instance: 3, Revision: 1, Payload: ok}, "main", 3, ""},
+		{"main publishes view error", GolemWindowMessage{Kind: "view-error", Instance: 3, Revision: 1, Payload: ok}, "main", 3, ""},
+		{"view error needs revision", GolemWindowMessage{Kind: "view-error", Instance: 3, Payload: ok}, "main", 3, "zero id and a positive revision"},
+		{"view error carries no id", GolemWindowMessage{Kind: "view-error", Instance: 3, ID: 1, Revision: 1, Payload: ok}, "main", 3, "zero id and a positive revision"},
+		{"satellite cannot publish view error", GolemWindowMessage{Kind: "view-error", Instance: 3, Revision: 1, Payload: ok}, "satellite", 3, "kind view-error not allowed from satellite"},
 		{"satellite cannot publish view", GolemWindowMessage{Kind: "view", Instance: 3, Payload: ok}, "satellite", 3, "kind view not allowed from satellite"},
 		{"satellite sends action with id", GolemWindowMessage{Kind: "action", Instance: 3, ID: 7, Payload: ok}, "satellite", 3, ""},
 		{"action needs an id", GolemWindowMessage{Kind: "action", Instance: 3, Payload: ok}, "satellite", 3, "action requires an id"},

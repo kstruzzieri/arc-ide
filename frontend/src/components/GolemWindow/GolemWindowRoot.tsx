@@ -64,7 +64,9 @@ export function GolemWindowRoot() {
   const windowState = useViewStore((state) => state.state);
   const frozen = useViewStore((state) => state.frozen);
   const pendingComposers = useViewStore((state) => state.pendingComposers);
-  const error = useViewStore((state) => state.error);
+  const connectionError = useViewStore((state) => state.error);
+  const projectionError = useViewStore((state) => state.projectionError);
+  const error = projectionError ?? connectionError;
 
   // The relay is started here and only here: one subscription pair, one core,
   // torn down on unmount so StrictMode's second mount owns a clean one.
@@ -219,18 +221,27 @@ export function GolemWindowRoot() {
 
       {error !== null && (
         <p className={styles.error} role="alert">
-          <span className={styles.reason}>{error}</span>
+          <span className={styles.reason}>
+            {error}
+            {projectionError !== null ? (
+              <span className={styles.hint}>Dock in main window to continue.</span>
+            ) : (
+              !canRetry && <span className={styles.hint}>{RETRY_WAIT_HINT}</span>
+            )}
+          </span>
           {/* Retry is a deliberate no-op while Go still believes the transfer is
               running; a live button there reads as broken. Say why instead. */}
-          <button
-            type="button"
-            className={styles.retry}
-            title={canRetry ? 'Retry connection' : RETRY_WAIT_HINT}
-            disabled={!canRetry}
-            onClick={retryGolemConnection}
-          >
-            Retry connection
-          </button>
+          {projectionError === null && (
+            <button
+              type="button"
+              className={styles.retry}
+              title={canRetry ? 'Retry connection' : RETRY_WAIT_HINT}
+              disabled={!canRetry}
+              onClick={retryGolemConnection}
+            >
+              Retry connection
+            </button>
+          )}
         </p>
       )}
 

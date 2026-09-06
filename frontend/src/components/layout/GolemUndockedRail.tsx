@@ -36,6 +36,11 @@ export function GolemUndockedRail() {
   // Dock is the retry (CloseGolemWindow re-arms the retirement observer).
   const stalled = phase === 'closing' && reason !== '';
   const closing = phase === 'closing' && !stalled;
+  const dockLabel = closing
+    ? 'Docking the Golem panel…'
+    : stalled
+      ? 'Retry docking the Golem panel'
+      : 'Dock Golem panel';
 
   return (
     <div
@@ -80,14 +85,8 @@ export function GolemUndockedRail() {
       <button
         type="button"
         className={styles.railAction}
-        aria-label="Dock Golem panel"
-        title={
-          closing
-            ? 'Docking the Golem panel…'
-            : stalled
-              ? 'Retry docking the Golem panel'
-              : 'Dock Golem panel'
-        }
+        aria-label={dockLabel}
+        title={dockLabel}
         disabled={closing}
         onClick={() => {
           void dockGolem().catch(reportGolemWindowError);

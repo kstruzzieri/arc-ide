@@ -121,6 +121,7 @@ const set = (partial: {
   frozen?: boolean;
   pendingComposers?: ReadonlySet<string>;
   error?: string | null;
+  projectionError?: string | null;
 }) => useViewStore.setState(partial);
 
 /** The platform's own window-command modifier, exactly as the root reads it. */
@@ -143,6 +144,7 @@ beforeEach(() => {
     frozen: true,
     pendingComposers: NO_PENDING_COMPOSERS,
     error: null,
+    projectionError: null,
   });
 });
 
@@ -195,8 +197,31 @@ describe('lifecycle', () => {
     const retry = screen.getByRole('button', { name: /retry connection/i });
     expect(retry).toBeDisabled();
     expect(retry).toHaveAttribute('title', expect.stringMatching(/waiting for the main window/i));
+    expect(screen.getByText(/waiting for the main window to give up the transfer/i)).toBeVisible();
     fireEvent.click(retry);
     expect(retryConnectionMock).not.toHaveBeenCalled();
+  });
+
+  it('offers docking with the draft intact when the projection stops updating', () => {
+    install(viewOf(), {
+      projectionError: 'The conversation is too large to display here.',
+      frozen: true,
+    });
+    useDraftStore.getState().setDraft('conv-a', 'Keep this draft');
+    render(<GolemWindowRoot />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The conversation is too large to display here.'
+    );
+    expect(screen.getByText('Dock in main window to continue.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /retry connection/i })).not.toBeInTheDocument();
+    const composer = screen.getByRole('textbox', { name: /message golem/i });
+    expect(composer).toBeDisabled();
+    expect(composer).toHaveValue('Keep this draft');
+    const dock = screen.getByRole('button', { name: /dock in main window/i });
+    expect(dock).toBeEnabled();
+    fireEvent.click(dock);
+    expect(requestReDockMock).toHaveBeenCalledTimes(1);
   });
 
   // The same phase once Go names why is a stalled retirement, and Retry there
