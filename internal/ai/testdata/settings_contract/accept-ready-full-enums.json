@@ -1,0 +1,98 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "ready",
+    "sourceOrigin": "legacy",
+    "routes": [
+      {
+        "useCase": "agent",
+        "role": "agent-m"
+      },
+      {
+        "useCase": "chat",
+        "role": "chat-m"
+      }
+    ],
+    "models": [
+      {
+        "role": "agent-m",
+        "modelName": "wire-model",
+        "provider": "hosted",
+        "type": "dense",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream",
+          "embed",
+          "tool_call",
+          "thinking",
+          "insert"
+        ],
+        "thinkMode": "auto",
+        "capabilityFacts": {
+          "caps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream",
+          "embed",
+          "tool_call",
+          "thinking",
+          "insert"
+        ],
+        "routedUseCases": ["agent"],
+        "hasThinkTags": false,
+        "hasSlots": false,
+        "removable": false
+      }
+    ],
+    "providers": [
+      {
+        "name": "broken",
+        "endpoint": "",
+        "classification": "unknown",
+        "apiFormat": "ollama",
+        "credentialState": "reference_unavailable"
+      },
+      {
+        "name": "hosted",
+        "endpoint": "https://api.example.com:8443/v1",
+        "classification": "remote",
+        "apiFormat": "openai-compat",
+        "credentialState": "available"
+      },
+      {
+        "name": "local",
+        "endpoint": "http://localhost:11434",
+        "classification": "local",
+        "apiFormat": "ollama",
+        "credentialState": "none"
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "agent_capabilities_insufficient",
+        "subjectKind": "model",
+        "subjectName": "agent-m",
+        "blocking": true
+      },
+      {
+        "code": "agent_role_missing",
+        "subjectKind": "role",
+        "subjectName": "agent-m",
+        "blocking": true
+      },
+      {
+        "code": "provider_endpoint_unsupported",
+        "subjectKind": "provider",
+        "subjectName": "broken",
+        "blocking": false
+      }
+    ],
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "readOnly": false,
+    "editable": true
+  }
+}

@@ -1,15 +1,13 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { RunProfileForm } from '../../../components/RunProfiles/RunProfileForm';
 import { useIDEStore } from '../../../stores/ideStore';
-import {
-  SaveRunProfile,
-  DeleteRunProfile,
-  OpenFolderDialog,
-} from '../../../../wailsjs/go/main/App';
+import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../../wails/bindings';
 import type { RunProfile } from '../../../types/runProfile';
-import type { workspace } from '../../../../wailsjs/go/models';
+import type { workspace } from '../../../wails/bindings';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   SaveRunProfile: jest.fn(),
   DeleteRunProfile: jest.fn(),
   OpenFolderDialog: jest.fn(),
@@ -17,7 +15,7 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
 
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
 ] as workspace.WorkspaceDef[];
 
 const detected: RunProfile = {
@@ -59,6 +57,15 @@ beforeEach(() => {
   useIDEStore.getState().closeRunProfileForm();
 });
 
+it('keeps preview-tag text independent of the workspace accent', () => {
+  const css = readFileSync(
+    resolve(__dirname, '../../../components/RunProfiles/RunProfileForm.module.css'),
+    'utf8'
+  );
+  expect(css).toMatch(/\.tag\s*\{[^}]*color:\s*var\(--text-primary\)/s);
+  expect(css).not.toMatch(/\.tag\s*\{[^}]*color:\s*var\(--accent\)/s);
+});
+
 it('disables Save until name and command are present', () => {
   render(<RunProfileForm state={{ mode: 'create' }} />);
   const save = screen.getByRole('button', { name: /save/i });
@@ -66,6 +73,19 @@ it('disables Save until name and command are present', () => {
   fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'My Dev' } });
   fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'npm run dev' } });
   expect(save).toBeEnabled();
+});
+
+it('does not submit an enclosing form when Cancel is clicked', () => {
+  const onSubmit = jest.fn((event: React.FormEvent) => event.preventDefault());
+  render(
+    <form onSubmit={onSubmit}>
+      <RunProfileForm state={{ mode: 'create' }} />
+    </form>
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+  expect(onSubmit).not.toHaveBeenCalled();
 });
 
 it('saves a new profile and closes on a valid result', async () => {
@@ -189,8 +209,8 @@ it('deletes a user profile after confirm and closes', async () => {
 
 const defsWithGo = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
-  { id: 'go', name: 'Go', relDir: '', type: 'go', accent: 'cyan' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
+  { id: 'go', name: 'Go', relDir: '', type: 'go', accent: 'go' },
 ] as workspace.WorkspaceDef[];
 
 it('defaults the workspace to the matching toolchain as the command is typed (create)', () => {

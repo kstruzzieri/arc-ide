@@ -14,5 +14,5 @@ export function normalizeFsPath(path: string): string {
 
 /** Join a repo root with a porcelain repo-relative path into a normalized key. */
 export function joinRepoPath(repoRoot: string, relPath: string): string {
-  return `${normalizeFsPath(repoRoot)}/${relPath}`;
+  return `${normalizeFsPath(repoRoot).replace(/\/$/, '')}/${relPath}`;
 }

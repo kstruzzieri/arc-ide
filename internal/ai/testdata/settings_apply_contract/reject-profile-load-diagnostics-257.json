@@ -1,0 +1,780 @@
+{
+  "verdict": "reject",
+  "document": "profile_load_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      },
+      {
+        "code": "io"
+      }
+    ]
+  }
+}

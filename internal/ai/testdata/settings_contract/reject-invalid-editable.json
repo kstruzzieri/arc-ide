@@ -1,0 +1,20 @@
+{
+  "verdict": "reject",
+  "projection": {
+    "state": "invalid",
+    "sourceOrigin": "user_config",
+    "readOnly": false,
+    "editable": true,
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [
+      {
+        "code": "key_reference_unavailable",
+        "subjectKind": "provider",
+        "subjectName": "hosted",
+        "blocking": true
+      }
+    ]
+  }
+}

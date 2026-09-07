@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from 'react';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { StartWatching, StopWatching } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../wails/runtime';
+import { StartWatching, StopWatching } from '../wails/bindings';
 import type { FileEvent } from '../types/watcher';
 
 /**

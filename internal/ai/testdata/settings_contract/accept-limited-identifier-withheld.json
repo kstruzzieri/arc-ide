@@ -1,0 +1,21 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "limited",
+    "sourceOrigin": "user_config",
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "readOnly": false,
+    "editable": false,
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [
+      {
+        "code": "identifier_not_editable",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": false
+      }
+    ]
+  }
+}

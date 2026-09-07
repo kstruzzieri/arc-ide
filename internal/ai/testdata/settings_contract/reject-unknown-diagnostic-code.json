@@ -1,0 +1,20 @@
+{
+  "verdict": "reject",
+  "projection": {
+    "state": "missing",
+    "sourceOrigin": "none",
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [
+      {
+        "code": "future_code",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      }
+    ],
+    "readOnly": false,
+    "editable": false
+  }
+}

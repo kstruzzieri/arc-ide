@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Golem agent icon</title>
+  <desc id="desc">A simplified low-poly stone golem head and chest-core mark for the Golem agent.</desc>
+  <defs>
+    <style>
+      .outline { stroke: #202326; stroke-width: 10; stroke-linejoin: round; }
+      .seam { stroke: #4f565d; stroke-width: 5; stroke-linejoin: round; opacity: .38; }
+      .dark { fill: #262b2f; }
+      .stone-1 { fill: #d8dbde; }
+      .stone-2 { fill: #c3c8cc; }
+      .stone-3 { fill: #aeb5ba; }
+      .stone-4 { fill: #8e979e; }
+      .stone-5 { fill: #646d74; }
+      .accent { fill: #00d4aa; }
+      .core { fill: none; stroke: #00d4aa; stroke-width: 18; stroke-linejoin: miter; stroke-linecap: square; }
+    </style>
+  </defs>
+
+  <g id="shoulders">
+    <polygon class="stone-4 outline" points="156 783 282 700 410 813 249 908" />
+    <polygon class="stone-2" points="156 783 282 700 319 778 249 908" />
+    <polygon class="stone-5" points="319 778 410 813 249 908" />
+
+    <polygon class="stone-4 outline" points="868 783 742 700 614 813 775 908" />
+    <polygon class="stone-2" points="868 783 742 700 705 778 775 908" />
+    <polygon class="stone-5" points="705 778 614 813 775 908" />
+
+    <polygon class="stone-3 outline" points="304 720 512 617 720 720 691 915 512 982 333 915" />
+    <polygon class="stone-1" points="304 720 512 617 512 781 386 837" />
+    <polygon class="stone-2" points="512 617 720 720 638 838 512 781" />
+    <polygon class="stone-4" points="386 837 512 781 512 982 333 915" />
+    <polygon class="stone-5" points="512 781 638 838 691 915 512 982" />
+    <path class="seam" d="M512 617v365M304 720l208 61 208-61M386 837l-53 78M638 838l53 77" />
+
+    <path class="core" d="M512 702v92" />
+    <path class="core" d="M512 794l76 44v77l-76 44-76-44v-88l76-44 68 39" />
+    <path class="core" d="M548 860h-42l-30 18 36 28 56-30v-16" />
+  </g>
+
+  <g id="head">
+    <polygon class="stone-3 outline" points="369 142 655 142 758 314 731 579 632 694 512 736 392 694 293 579 266 314" />
+
+    <polygon class="stone-1" points="369 142 512 142 512 256 330 213" />
+    <polygon class="stone-2" points="512 142 655 142 694 213 512 256" />
+    <polygon class="stone-2" points="330 213 512 256 512 718 392 694 293 579 266 314" />
+    <polygon class="stone-3" points="512 256 694 213 758 314 731 579 632 694 512 718" />
+    <polygon class="stone-4" points="266 314 293 579 392 694 346 512 330 213" />
+    <polygon class="stone-5" points="758 314 731 579 632 694 678 512 694 213" />
+    <polygon class="stone-5" points="392 694 512 718 632 694 594 755 430 755" />
+    <path class="seam" d="M512 142v594M330 213l182 43 182-43M293 579l99 115 120 24 120-24 99-115" />
+
+    <polygon class="dark" points="351 380 476 389 479 448 344 448 336 392" />
+    <polygon class="accent" points="365 397 462 402 462 433 356 433 353 402" />
+    <polygon class="dark" points="673 380 548 389 545 448 680 448 688 392" />
+    <polygon class="accent" points="659 397 562 402 562 433 668 433 671 402" />
+
+    <polygon class="dark" points="348 314 474 331 468 354 361 340" />
+    <polygon class="dark" points="676 314 550 331 556 354 663 340" />
+    <polygon class="dark" points="447 558 577 558 562 586 462 586" />
+    <polygon class="dark" points="397 723 627 723 595 767 429 767" />
+  </g>
+</svg>

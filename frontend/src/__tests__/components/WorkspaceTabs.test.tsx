@@ -1,12 +1,12 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WorkspaceTabs } from '../../components/FileExplorer/WorkspaceTabs';
 import { useIDEStore } from '../../stores/ideStore';
-import type { workspace } from '../../../wailsjs/go/models';
+import type { workspace } from '../../wails/bindings';
 
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
-  { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'cyan' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
+  { id: 'go', name: 'Go', relDir: 'backend/go', type: 'go', accent: 'go' },
 ] as workspace.WorkspaceDef[];
 
 describe('WorkspaceTabs', () => {

@@ -1,21 +1,7 @@
 import { useRef } from 'react';
 import { useWorkspaces, useActiveWorkspaceId, useIDEStore } from '../../stores/ideStore';
 import styles from './WorkspaceTabs.module.css';
-
-const VALID_ACCENTS = new Set([
-  'project',
-  'blue',
-  'cyan',
-  'green',
-  'purple',
-  'orange',
-  'amber',
-  'general',
-]);
-
-function accentVar(accent: string): string {
-  return `var(--accent-${VALID_ACCENTS.has(accent) ? accent : 'project'})`;
-}
+import { accentVar } from '../../utils/accent';
 
 /**
  * Workspace-View tab strip. Tabs switch the active workspace (which scopes the

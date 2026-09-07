@@ -58,7 +58,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Firn Glacier',
     palette: {
       background: '#0F172A',
-      comment: '#6B829E',
+      comment: '#758AA4',
       keyword: '#C4B5FD',
       string: '#86EFAC',
       number: '#FCD34D',
@@ -82,7 +82,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Solar Flare',
     palette: {
       background: '#0F172A',
-      comment: '#8A8374',
+      comment: '#8E8879',
       keyword: '#FB7185',
       string: '#A3E635',
       number: '#FBBF24',
@@ -106,7 +106,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Tropic Coral Reef',
     palette: {
       background: '#0F172A',
-      comment: '#5F7E86',
+      comment: '#708D95',
       keyword: '#FF6B9D',
       string: '#5EE6A8',
       number: '#FF9E64',
@@ -130,7 +130,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Nebula Jewel',
     palette: {
       background: '#0F172A',
-      comment: '#768293',
+      comment: '#7E8999',
       keyword: '#C084FC',
       string: '#FBBF24',
       number: '#FB7185',
@@ -154,7 +154,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Ember Bifrost',
     palette: {
       background: '#0F172A',
-      comment: '#71849D',
+      comment: '#788AA2',
       keyword: '#F97316',
       string: '#7DD3FC',
       number: '#A5B4FC',
@@ -180,7 +180,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Aurora Bloom',
     palette: {
       background: '#0F172A',
-      comment: '#5F7E86',
+      comment: '#708D95',
       keyword: '#FF6B9D',
       string: '#5EE6A8',
       number: '#A5B4FC',
@@ -204,7 +204,7 @@ export const SYNTAX_THEMES: readonly SyntaxThemeDefinition[] = [
     label: 'Abyssal Current',
     palette: {
       background: '#08111C',
-      comment: '#5C7A8F',
+      comment: '#6A879B',
       keyword: '#F472B6',
       string: '#4ADE80',
       number: '#FBBF24',

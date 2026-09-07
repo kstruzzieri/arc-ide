@@ -2,7 +2,7 @@ import { acceptCompletion } from '@codemirror/autocomplete';
 import { indentWithTab } from '@codemirror/commands';
 import { EditorState } from '@codemirror/state';
 
-jest.mock('../../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../../wails/bindings', () => ({
   LSPComplete: jest.fn(),
   LSPResolveCompletionItem: jest.fn(),
 }));
@@ -11,7 +11,8 @@ jest.mock('../../../../utils/lspDocumentSync', () => ({
   flushLSPDocumentChange: jest.fn(() => Promise.resolve(false)),
 }));
 
-import { LSPComplete, LSPResolveCompletionItem } from '../../../../../wailsjs/go/main/App';
+import { LSPComplete, LSPResolveCompletionItem } from '../../../../wails/bindings';
+import { CancellablePromise } from '../../../../wails/runtime';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
 import {
   COMPLETION_RESOLVE_CACHE_LIMIT,
@@ -87,7 +88,7 @@ describe('resolveCompletionItem', () => {
   });
 
   it('caps the resolve cache to avoid unbounded workspace growth', async () => {
-    mockResolve.mockImplementation(async (_path, item) => item);
+    mockResolve.mockImplementation((_path, item) => CancellablePromise.resolve(item));
 
     for (let i = 0; i < COMPLETION_RESOLVE_CACHE_LIMIT + 1; i += 1) {
       await resolveCompletionItem('/project/src/file.ts', {
@@ -134,7 +135,7 @@ describe('createLSPCompletionSource', () => {
     let resolveComplete: (value: Awaited<ReturnType<typeof LSPComplete>>) => void = () => {};
 
     mockComplete.mockReturnValue(
-      new Promise((resolve) => {
+      new CancellablePromise((resolve) => {
         resolveComplete = resolve;
       })
     );

@@ -182,8 +182,13 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 	// void to unblock rg.
 	_, _ = io.Copy(io.Discard, stdout)
 
-	waitErr := cmd.Wait()
+	// Receive the drained stderr before Wait: Wait closes the pipe, and a
+	// close racing the goroutine's ReadAll can drop stderr bytes we need for
+	// the exit-code-2 regex classification below. Stdout is already at EOF
+	// here, so the process has finished writing and this receive is bounded
+	// by process exit (which the runCtx timeout in turn bounds).
 	stderrBytes := <-stderrCh
+	waitErr := cmd.Wait()
 
 	// Cancelation outranks all other classifications. Check ctx (caller
 	// cancel) and runCtx (timeout) separately so we can give a precise
@@ -245,8 +250,8 @@ func classifyStderr(b []byte) string {
 	if s == "" {
 		return "no stderr output"
 	}
-	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-		first := strings.TrimSpace(s[:idx])
+	if first, _, found := strings.Cut(s, "\n"); found {
+		first = strings.TrimSpace(first)
 		if first != "" {
 			return first
 		}

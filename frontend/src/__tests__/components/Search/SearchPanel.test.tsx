@@ -1,8 +1,16 @@
+import { javascript } from '@codemirror/lang-javascript';
+
+jest.mock('../../../hooks/useSearchSyntaxSupports', () => ({
+  useSearchSyntaxSupports: jest.fn(() => new Map()),
+}));
+
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { SearchPanel } from '../../../components/Search';
 import { useIDEStore } from '../../../stores/ideStore';
 import { useSearchStore } from '../../../stores/searchStore';
+import { useSearchSyntaxSupports } from '../../../hooks/useSearchSyntaxSupports';
 import type { FileResult, SearchUIState } from '../../../types/search';
+import { MAX_SEARCH_HIGHLIGHTED_ROWS } from '../../../utils/searchTokens';
 
 const mockNavigate = jest.fn();
 jest.mock('../../../utils/editorNavigation', () => ({
@@ -39,7 +47,7 @@ function makeFile(
       line: m.line,
       column: m.column ?? 1,
       text: m.text,
-      submatches: m.submatches ?? [{ start: 0, end: m.text.length }],
+      submatches: m.submatches ?? [{ start: 0, end: new TextEncoder().encode(m.text).length }],
     })),
   };
 }
@@ -405,7 +413,7 @@ describe('SearchPanel — results rendering', () => {
     setResults();
     render(<SearchPanel />);
     const input = screen.getByLabelText('Search query');
-    const lastRow = screen.getByRole('button', { name: 'Line 4 in Bar.ts' });
+    const lastRow = screen.getByRole('button', { name: /^Line 4 in Bar\.ts:/ });
 
     act(() => {
       lastRow.focus();
@@ -475,8 +483,41 @@ describe('SearchPanel — keyboard navigation', () => {
     const fileHeader = screen.getByRole('button', { name: /a\.ts \(2 matches\)/ });
     fireEvent.keyDown(fileHeader, { key: 'ArrowDown' });
 
-    const firstResult = screen.getByRole('button', { name: 'Line 1 in a.ts' });
+    const firstResult = screen.getByRole('button', { name: /^Line 1 in a\.ts:/ });
     expect(document.activeElement).toBe(firstResult);
+  });
+
+  it('Home scrolls to the first sticky header before focusing it', () => {
+    const secondFile = makeFile('b.ts', [
+      { line: 3, column: 1, text: 'foo', submatches: [{ start: 0, end: 3 }] },
+    ]);
+    setUIState({
+      query: 'foo',
+      uiState: {
+        kind: 'results',
+        files: [file, secondFile],
+        totalFiles: 2,
+        totalLines: 3,
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 10,
+      },
+      expandedFiles: new Set([file.path, secondFile.path]),
+    });
+    render(<SearchPanel />);
+
+    const results = screen.getByLabelText('Search results');
+    results.scrollTop = 100;
+    const secondHeader = screen.getByRole('button', { name: /b\.ts \(1 match\)/ });
+    act(() => {
+      secondHeader.focus();
+    });
+    fireEvent.keyDown(secondHeader, { key: 'Home' });
+
+    expect(results.scrollTop).toBe(0);
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: /a\.ts \(2 matches\)/ })
+    );
   });
 
   it('ArrowUp on the first item returns focus to the input', () => {
@@ -493,7 +534,7 @@ describe('SearchPanel — keyboard navigation', () => {
   it('Enter on a result row navigates', async () => {
     setupResults();
     render(<SearchPanel />);
-    const firstResult = screen.getByRole('button', { name: 'Line 1 in a.ts' });
+    const firstResult = screen.getByRole('button', { name: /^Line 1 in a\.ts:/ });
     // act() flushes onFocus state update so focusedItemIndex is set before
     // the keyDown handler reads it.
     act(() => {
@@ -524,7 +565,7 @@ describe('SearchPanel — keyboard navigation', () => {
   it('ArrowLeft on a match row moves focus to the parent file header', () => {
     setupResults();
     render(<SearchPanel />);
-    const firstResult = screen.getByRole('button', { name: 'Line 1 in a.ts' });
+    const firstResult = screen.getByRole('button', { name: /^Line 1 in a\.ts:/ });
     act(() => {
       firstResult.focus();
     });
@@ -588,5 +629,319 @@ describe('SearchPanel — keyboard navigation', () => {
     const input = screen.getByLabelText('Search query');
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(useSearchStore.getState().query).toBe('');
+  });
+});
+
+describe('SearchPanel — match-anchored line rendering (#207)', () => {
+  function renderResults(files: FileResult[]) {
+    setUIState({
+      query: 'Search',
+      uiState: {
+        kind: 'results',
+        files,
+        totalFiles: files.length,
+        totalLines: files.reduce((n, f) => n + f.matches.length, 0),
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 12,
+      },
+      expandedFiles: new Set(files.map((f) => f.path)),
+    });
+    return render(<SearchPanel />);
+  }
+
+  it('renders leading context as an rtl-safe bdi with an LRM terminator', () => {
+    // "Search" at byte offset 16 in an ASCII line (byte == char here).
+    const file = makeFile('a.ts', [
+      { line: 178, text: 'export function SearchPanel() {', submatches: [{ start: 16, end: 22 }] },
+    ]);
+    renderResults([file]);
+
+    const lead = document.querySelector('.contextLead');
+    expect(lead).not.toBeNull();
+    expect(lead).toHaveClass('context');
+    const bdi = lead!.querySelector('bdi');
+    expect(bdi).not.toBeNull();
+    expect(bdi!.getAttribute('dir')).toBe('ltr');
+    // LRM keeps the trailing space inside the rtl line box.
+    expect(bdi!.textContent).toBe('export function ‎');
+  });
+
+  it('renders trailing context as a plain .context span without lead class', () => {
+    const file = makeFile('a.ts', [
+      { line: 178, text: 'export function SearchPanel() {', submatches: [{ start: 16, end: 22 }] },
+    ]);
+    renderResults([file]);
+
+    const contexts = document.querySelectorAll('.context:not(.contextLead)');
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].textContent).toBe('Panel() {');
+    expect(document.querySelector('mark')!.textContent).toBe('Search');
+  });
+
+  it('trims leading indentation from the leading context segment (render only)', () => {
+    // 6 spaces + `aria-label="` = offset 18 for "Search".
+    const file = makeFile('a.ts', [
+      {
+        line: 573,
+        text: '      aria-label="Search results"',
+        submatches: [{ start: 18, end: 24 }],
+      },
+    ]);
+    renderResults([file]);
+
+    const bdi = document.querySelector('.contextLead bdi');
+    // No LRM: it is only appended when the lead ends in preserved whitespace.
+    expect(bdi!.textContent).toBe('aria-label="');
+  });
+
+  it('omits the leading segment entirely when it is whitespace-only', () => {
+    const file = makeFile('a.ts', [
+      { line: 9, text: '   Search everywhere', submatches: [{ start: 3, end: 9 }] },
+    ]);
+    renderResults([file]);
+
+    expect(document.querySelector('.contextLead')).toBeNull();
+    const lineText = document.querySelector('.lineText')!;
+    expect((lineText.firstElementChild as HTMLElement).tagName).toBe('MARK');
+  });
+
+  it('handles multiple submatches: only the first segment is the lead', () => {
+    // "Search"/"search" at byte offsets 12 and 34 in the line below (ASCII: byte == char).
+    const file = makeFile('a.ts', [
+      {
+        line: 12,
+        text: 'import { useSearchStore } from "./searchStore";',
+        submatches: [
+          { start: 12, end: 18 },
+          { start: 34, end: 40 },
+        ],
+      },
+    ]);
+    renderResults([file]);
+
+    expect(document.querySelectorAll('mark')).toHaveLength(2);
+    expect(document.querySelectorAll('.contextLead')).toHaveLength(1);
+    // Middle + trailing context spans are plain .context.
+    expect(document.querySelectorAll('.context:not(.contextLead)')).toHaveLength(2);
+  });
+
+  it('splits by byte offsets, not UTF-16 indices, for non-ASCII prefixes', () => {
+    // Emoji (4 bytes) + CJK (3) + decomposed e-acute (1+2) + space (1) = 11 bytes,
+    // but only 6 UTF-16 code units — the offsets diverge, exercising the byte path.
+    const prefix = '🙂漢é ';
+    const start = new TextEncoder().encode(prefix).length;
+    const file = makeFile('a.ts', [
+      { line: 3, text: `${prefix}Search done`, submatches: [{ start, end: start + 6 }] },
+    ]);
+    renderResults([file]);
+
+    expect(document.querySelector('mark')!.textContent).toBe('Search');
+    // Lead ends in a preserved space, so the LRM terminator is appended.
+    expect(document.querySelector('.contextLead bdi')!.textContent).toBe(`${prefix}‎`);
+  });
+
+  it('exposes the full line via title and includes it in the aria-label', () => {
+    const file = makeFile('a.ts', [
+      {
+        line: 87,
+        text: '      const results = await SearchWorkspace(workspacePath);',
+        submatches: [{ start: 28, end: 34 }],
+      },
+    ]);
+    renderResults([file]);
+
+    const row = screen.getByRole('button', {
+      name: 'Line 87 in a.ts: const results = await SearchWorkspace(workspacePath);',
+    });
+    expect(row).toHaveAttribute('title', 'const results = await SearchWorkspace(workspacePath);');
+  });
+
+  it('nests the directory bdi inside the rtl-styled span (mixed-script segment order)', () => {
+    const file = makeFile('docs/حزم/catalog/notes.md', [
+      { line: 7, text: 'Search me', submatches: [{ start: 0, end: 6 }] },
+    ]);
+    renderResults([file]);
+
+    const dir = document.querySelector('.fileDir');
+    expect(dir).not.toBeNull();
+    // The rtl-styled element must NOT itself carry dir="ltr" — the isolation
+    // wrapper is a child.
+    expect(dir!.tagName).toBe('SPAN');
+    const bdi = dir!.querySelector('bdi');
+    expect(bdi).not.toBeNull();
+    expect(bdi!.getAttribute('dir')).toBe('ltr');
+    expect(bdi!.textContent).toBe('docs/حزم/catalog');
+  });
+
+  it('caps title and aria-label for very long lines (ripgrep has no column cap)', () => {
+    const longLine = `const x = '${'a'.repeat(500)}'; // Search target`;
+    const start = longLine.indexOf('Search');
+    const file = makeFile('a.ts', [
+      { line: 1, text: longLine, submatches: [{ start, end: start + 6 }] },
+    ]);
+    renderResults([file]);
+
+    const row = document.querySelector('.resultRow') as HTMLButtonElement;
+    // 300 chars + ellipsis, not the full 500+ char line.
+    expect(row.title).toHaveLength(301);
+    expect(row.title.endsWith('…')).toBe(true);
+    expect(row.title.startsWith("const x = '")).toBe(true);
+    const label = row.getAttribute('aria-label')!;
+    expect(label.startsWith('Line 1 in a.ts: ')).toBe(true);
+    expect(label.length).toBeLessThan(340);
+  });
+});
+
+describe('SearchPanel — dimmed syntax tokens (#215)', () => {
+  const tsSupport = javascript({ typescript: true });
+
+  function setResultsFor(file: FileResult) {
+    setUIState({
+      query: 'foo',
+      uiState: {
+        kind: 'results',
+        files: [file],
+        totalFiles: 1,
+        totalLines: file.matches.length,
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 10,
+      },
+      expandedFiles: new Set([file.path]),
+    });
+  }
+
+  it('renders monochrome (no tok- spans) while support is unloaded', () => {
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(new Map());
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    setResultsFor(file);
+    render(<SearchPanel />);
+    expect(document.querySelector('[class*="tok-"]')).toBeNull();
+    expect(document.querySelector('mark')!.textContent).toBe('foo');
+    expect(document.querySelector('.contextLead')).not.toBeNull();
+  });
+
+  it('renders nested token spans in context once support resolves, mark unchanged', () => {
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(
+      new Map([[file.relativePath, tsSupport]])
+    );
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const keyword = document.querySelector('.tok-keyword');
+    expect(keyword).not.toBeNull();
+    expect(keyword!.textContent).toBe('const');
+    const marks = document.querySelectorAll('mark');
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe('foo');
+    expect(marks[0].querySelector('[class*="tok-"]')).toBeNull();
+  });
+
+  it('keeps one .context box per outer segment (no extra flex items)', () => {
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(
+      new Map([[file.relativePath, tsSupport]])
+    );
+    setResultsFor(file);
+    render(<SearchPanel />);
+    expect(document.querySelectorAll('.context')).toHaveLength(2);
+    expect(document.querySelector('.contextLead bdi')).not.toBeNull();
+  });
+
+  it('preserves the leading bdi + LRM terminator around token spans', () => {
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'export function SearchPanel() {', submatches: [{ start: 16, end: 22 }] },
+    ]);
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(
+      new Map([[file.relativePath, tsSupport]])
+    );
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const bdi = document.querySelector('.contextLead bdi')!;
+    expect(bdi.textContent).toBe('export function ‎');
+  });
+
+  it('sets --syntax-* custom properties on the search container from the active theme', () => {
+    (useSearchSyntaxSupports as jest.Mock).mockReturnValue(new Map());
+    act(() => {
+      useIDEStore.setState({ editorSyntaxTheme: 'reef' });
+    });
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'const foo = bar;', submatches: [{ start: 6, end: 9 }] },
+    ]);
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const container = screen.getByRole('region', { name: 'Workspace search' });
+    expect(container.style.getPropertyValue('--syntax-keyword')).toBe('#FF6B9D');
+  });
+
+  it('passes only distinct visible filenames to the loader hook', () => {
+    const spy = useSearchSyntaxSupports as jest.Mock;
+    spy.mockClear();
+    spy.mockReturnValue(new Map());
+    const file = makeFile('a.ts', [
+      { line: 1, text: 'foo one', submatches: [{ start: 0, end: 3 }] },
+      { line: 2, text: 'foo two', submatches: [{ start: 0, end: 3 }] },
+    ]);
+    setResultsFor(file);
+    render(<SearchPanel />);
+    const lastArg = spy.mock.calls[spy.mock.calls.length - 1][0] as string[];
+    expect(lastArg).toEqual(['a.ts']);
+  });
+
+  it('bounds syntax highlighting to the first 50 expanded matches', () => {
+    const spy = useSearchSyntaxSupports as jest.Mock;
+    expect(MAX_SEARCH_HIGHLIGHTED_ROWS).toBe(50);
+    const highlightedMatches = Array.from({ length: MAX_SEARCH_HIGHLIGHTED_ROWS }, (_, index) => ({
+      line: index + 1,
+      text: 'const foo = 1;',
+      submatches: [{ start: 6, end: 9 }],
+    }));
+    const fileA = makeFile('a.ts', highlightedMatches);
+    const fileB = makeFile('b.ts', [
+      {
+        line: MAX_SEARCH_HIGHLIGHTED_ROWS + 1,
+        text: 'const foo = 1;',
+        submatches: [{ start: 6, end: 9 }],
+      },
+    ]);
+    spy.mockReturnValue(
+      new Map([
+        [fileA.relativePath, tsSupport],
+        [fileB.relativePath, tsSupport],
+      ])
+    );
+    setUIState({
+      query: 'foo',
+      uiState: {
+        kind: 'results',
+        files: [fileA, fileB],
+        totalFiles: 2,
+        totalLines: MAX_SEARCH_HIGHLIGHTED_ROWS + 1,
+        truncated: false,
+        matchCap: 5000,
+        durationMs: 10,
+      },
+      expandedFiles: new Set([fileA.path, fileB.path]),
+    });
+
+    render(<SearchPanel />);
+
+    const rows = screen.getAllByRole('button', { name: /^Line \d+ in/ });
+    expect(rows).toHaveLength(MAX_SEARCH_HIGHLIGHTED_ROWS + 1);
+    expect(document.querySelectorAll('mark')).toHaveLength(MAX_SEARCH_HIGHLIGHTED_ROWS + 1);
+    for (const row of rows.slice(0, MAX_SEARCH_HIGHLIGHTED_ROWS)) {
+      expect(row.querySelector('.tok-keyword')).not.toBeNull();
+    }
+    expect(rows[MAX_SEARCH_HIGHLIGHTED_ROWS].querySelector('[class*="tok-"]')).toBeNull();
+    const lastArg = spy.mock.calls[spy.mock.calls.length - 1][0] as string[];
+    expect(lastArg).toEqual(['a.ts']);
   });
 });

@@ -456,6 +456,7 @@ function ActionsRow({
       {isRunningOrStopping ? (
         <>
           <button
+            type="button"
             className={styles.actionDanger}
             onClick={onStop}
             disabled={isStopping}
@@ -464,6 +465,7 @@ function ActionsRow({
             <StopIcon /> {isStopping ? 'Stopping\u2026' : 'Stop'}
           </button>
           <button
+            type="button"
             className={styles.actionPurple}
             onClick={onRestart}
             disabled={isStopping}
@@ -474,6 +476,7 @@ function ActionsRow({
         </>
       ) : isTerminal ? (
         <button
+          type="button"
           className={styles.actionPurple}
           onClick={onRestart}
           aria-label={`Restart ${profile.name}`}
@@ -482,6 +485,7 @@ function ActionsRow({
         </button>
       ) : (
         <button
+          type="button"
           className={styles.actionPrimary}
           onClick={onStart}
           aria-label={`Start ${profile.name}`}
@@ -491,6 +495,7 @@ function ActionsRow({
       )}
       {hasOutput && (
         <button
+          type="button"
           className={styles.actionGhost}
           onClick={() => onFocusOutput(profile.id)}
           aria-label={`View output ${profile.name}`}
@@ -501,6 +506,7 @@ function ActionsRow({
       <span className={styles.spacer} />
       {onUnadopt && (
         <button
+          type="button"
           className={styles.actionGhost}
           onClick={onUnadopt}
           aria-label={`Remove ${profile.name} from working set`}
@@ -509,11 +515,17 @@ function ActionsRow({
         </button>
       )}
       {profile.source === 'detected' ? (
-        <button className={styles.actionGhost} onClick={onPin} aria-label={`Pin ${profile.name}`}>
+        <button
+          type="button"
+          className={styles.actionGhost}
+          onClick={onPin}
+          aria-label={`Pin ${profile.name}`}
+        >
           Pin
         </button>
       ) : (
         <button
+          type="button"
           className={styles.actionGhost}
           onClick={onUnpin}
           aria-label={`Unpin ${profile.name}`}
@@ -523,6 +535,7 @@ function ActionsRow({
       )}
       {onEdit && profile.type === 'single' && (
         <button
+          type="button"
           className={styles.actionGhost}
           onClick={onEdit}
           aria-label={`${profile.source === 'detected' ? 'Customize' : 'Edit'} ${profile.name}`}
@@ -530,7 +543,12 @@ function ActionsRow({
           {profile.source === 'detected' ? 'Customize' : 'Edit'}
         </button>
       )}
-      <button className={styles.actionGhost} onClick={onHide} aria-label={`Hide ${profile.name}`}>
+      <button
+        type="button"
+        className={styles.actionGhost}
+        onClick={onHide}
+        aria-label={`Hide ${profile.name}`}
+      >
         Hide
       </button>
     </div>

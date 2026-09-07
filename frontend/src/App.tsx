@@ -2,6 +2,8 @@ import './styles/tokens.css';
 import './styles/reset.css';
 import { useCallback, useEffect, useRef } from 'react';
 import { IDEShell } from './components/layout';
+import { RunProfiles } from './components/RunProfiles';
+import { GolemPanel } from './components/Golem';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FileExplorer } from './components/FileExplorer';
@@ -10,7 +12,6 @@ import { GitPanel } from './components/GitPanel';
 import { StructureView } from './components/Structure';
 import { Editor } from './components/Editor';
 import { Terminal } from './components/Terminal';
-import { RunProfiles } from './components/RunProfiles';
 import { StatusBar } from './components/StatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Toast } from './components/Toast';
@@ -18,29 +19,75 @@ import { useAutosave } from './hooks/useAutosave';
 import { useWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { useRecentWorkspaces } from './hooks/useRecentWorkspaces';
 import { useRunProfilesLoader } from './hooks/useRunProfiles';
+import { drainRunHistoryForClose, useRunOutputListener } from './hooks/useRunOutput';
+import { useGolemBridge } from './hooks/useGolemBridge';
+import { useGolemWindow } from './hooks/useGolemWindow';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
 import { useGitSync } from './hooks/useGitSync';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
+import { useConflictProjectionSync } from './hooks/useProblemsProjection';
 import { useWorkspace, useIDEStore, useSidebarView, useActiveAccent } from './stores/ideStore';
+import { useGolemStore } from './stores/golemStore';
 import { useGitStore } from './stores/gitStore';
-import { ReadFile } from '../wailsjs/go/main/App';
+import { ReadFile } from './wails/bindings';
 import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
 import { isDirVisible } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
 import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
 import { flushAllFileEdits } from './utils/fileWrites';
+import { focusConfigTab } from './utils/editorSurface';
+import {
+  confirmConfigClose,
+  hasUnsavedConfigWork,
+} from './components/GolemConfig/configCloseGuard';
+
+/**
+ * The one place the docked host learns it is not the owner (#271 §5.1). A
+ * component rather than a read inside `App`, so the subscription re-renders the
+ * island alone — and so the whole tree below stays out of `App`'s render.
+ */
+function GolemIsland({ visible }: { visible: boolean }) {
+  const frozen = useGolemStore((state) => state.hostFrozen);
+  return <GolemPanel visible={visible} frozen={frozen} />;
+}
+
+// Module scope, not an inline arrow: IDEShell memoizes the Golem island on this
+// callback's identity, and a fresh function per App render would throw that
+// memo away every time App re-renders (sidebar view, workspace, …).
+const renderGolemPanel = (visible: boolean) => <GolemIsland visible={visible} />;
 
 function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
   // collapse into one mis-scoped refetch.
   const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // The app-close handshake (§5.5) asks the configuration surface first: it may
+  // hold a dirty draft, an open editor, or a pending settings challenge that the
+  // backend must not tear down underneath. A dirty surface is revealed before it
+  // is asked, because the dialog it raises lives inside that pane.
+  const golemConfigCloseGuard = useCallback(async () => {
+    if (hasUnsavedConfigWork()) focusConfigTab();
+    return confirmConfigClose('quit');
+  }, []);
+
   useAutosave();
-  useWorkspacePersistence(flushAllFileEdits);
+  useWorkspacePersistence(flushAllFileEdits, drainRunHistoryForClose, golemConfigCloseGuard);
+  // Own run-event capture at the always-mounted App so collapsing the bottom
+  // panel (which unmounts Terminal) cannot drop run output or history (#235).
+  useRunOutputListener();
+  // The Golem island stays mounted now (#271), but the bridge and the
+  // repository binding it owns still live at the always-mounted App: they are
+  // app-level, not panel-level.
+  useGolemBridge();
+  // The undocked-window owner, mounted beside the bridge and only here: the
+  // satellite runs `startGolemSatellite()` in its own JS context instead, and
+  // this one is ready — subscriptions and core wiring — whether or not the
+  // bridge ever binds a repository.
+  useGolemWindow();
   useWorkspaceDetection();
   useLSPDocumentSync();
   useLSPEvents();
@@ -49,6 +96,10 @@ function App() {
   // request guards (workspace switch, unmount) survive panel toggling.
   useWorkspaceSearch();
   useGitSync();
+  // Own the conflict-state reads at the always-mounted App: the Problems panel
+  // unmounts when the bottom panel collapses, but the StatusBar consumes the
+  // same conflict-aware projection and is always visible (#254).
+  useConflictProjectionSync();
   const workspace = useWorkspace();
   const sidebarView = useSidebarView();
   const activeAccent = useActiveAccent();
@@ -95,6 +146,17 @@ function App() {
       // Any working-tree event can change git status; the store debounces.
       useGitStore.getState().scheduleRefresh();
 
+      // An open merge session is not an open editor buffer, so the reload path
+      // below never sees it. Hand it every event for a file — including both
+      // ends of a rename, since the session's path may be either — and let the
+      // store decide whether anything actually moved. The backend watcher
+      // already coalesces per path, so there is no timer here.
+      if (!event.isDir) {
+        const git = useGitStore.getState();
+        void git.notifyMergeFileChanged(event.path);
+        if (event.oldPath) void git.notifyMergeFileChanged(event.oldPath);
+      }
+
       const { openFiles } = useIDEStore.getState();
       const openFile = openFiles.find((f) => f.path === event.path);
 
@@ -103,6 +165,9 @@ function App() {
 
         ReadFile(event.path)
           .then((result) => {
+            if (result === null) {
+              throw new Error(`ReadFile returned no content for ${event.path}`);
+            }
             const state = useIDEStore.getState();
             const file = state.openFiles.find((f) => f.path === event.path);
             if (file && !file.isModified) {
@@ -143,7 +208,7 @@ function App() {
     <ErrorBoundary>
       <IDEShell
         accent={activeAccent}
-        header={<Header />}
+        header={(openCommandPalette) => <Header onOpenCommandPalette={openCommandPalette} />}
         sidebar={<Sidebar />}
         leftPanel={
           sidebarView === 'search' ? (
@@ -157,6 +222,7 @@ function App() {
           )
         }
         centerPanel={<Editor />}
+        golemPanel={renderGolemPanel}
         bottomPanel={<Terminal />}
         rightPanel={<RunProfiles />}
         statusBar={<StatusBar />}

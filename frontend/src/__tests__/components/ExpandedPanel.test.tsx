@@ -28,9 +28,7 @@ function makeRunOutput(entries: OutputEntry[], state: RunOutput['state'] = 'succ
     profileId: 'test-1',
     state,
     exitCode: 0,
-    runCount: 1,
     entries,
-    previousEntries: [],
   };
 }
 
@@ -106,9 +104,7 @@ describe('ExpandedPanel', () => {
         profileId: 'test-1',
         state: 'failed',
         exitCode: 2,
-        runCount: 1,
         entries: [{ stream: 'stderr', text: 'boom', timestamp: Date.now() }],
-        previousEntries: [],
       },
       runHistory: [{ state: 'failed', duration: 1800, timestamp: Date.now() }],
     });
@@ -125,9 +121,7 @@ describe('ExpandedPanel', () => {
         profileId: 'test-1',
         state: 'running',
         exitCode: 0,
-        runCount: 1,
         entries: [],
-        previousEntries: [],
       },
     });
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');

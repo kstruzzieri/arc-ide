@@ -15,12 +15,12 @@ const SIDEBAR_ITEMS: Array<{
   view: SidebarView;
   icon: typeof FilesIcon;
   label: string;
-  shortcut: string;
+  shortcut?: string;
 }> = [
   { view: 'explorer', icon: FilesIcon, label: 'Explorer', shortcut: '⌘1' },
   { view: 'search', icon: SearchIcon, label: 'Search', shortcut: '⌘⇧F' },
   { view: 'git', icon: GitBranchIcon, label: 'Source Control', shortcut: '⌘⇧G' },
-  { view: 'run', icon: PlayIcon, label: 'Run Profiles', shortcut: '⌘⇧P' },
+  { view: 'run', icon: PlayIcon, label: 'Run Profiles' },
   { view: 'structure', icon: StructureIcon, label: 'Structure', shortcut: '⌘⇧Y' },
 ];
 
@@ -51,9 +51,10 @@ export function Sidebar() {
     <>
       {SIDEBAR_ITEMS.map(({ view, icon: Icon, label, shortcut }) => (
         <button
+          type="button"
           key={view}
           className={`${styles.activityBtn} ${activeView === view && !isLeftPanelCollapsed ? styles.active : ''}`}
-          title={`${label} (${formatShortcut(shortcut)})`}
+          title={shortcut ? `${label} (${formatShortcut(shortcut)})` : label}
           onClick={() => handleSidebarClick(view)}
           aria-pressed={activeView === view && !isLeftPanelCollapsed}
           aria-label={label}
@@ -64,7 +65,7 @@ export function Sidebar() {
 
       <div className={styles.spacer} />
 
-      <button className={styles.activityBtn} title="Settings" aria-label="Settings">
+      <button type="button" className={styles.activityBtn} title="Settings" aria-label="Settings">
         <SettingsIcon aria-hidden="true" />
       </button>
     </>

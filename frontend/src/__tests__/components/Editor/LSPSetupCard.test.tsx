@@ -10,7 +10,7 @@ const mockSetInterpreter = jest.fn().mockResolvedValue(undefined);
 const mockClearInterpreter = jest.fn().mockResolvedValue(undefined);
 const mockDoctor = jest.fn().mockResolvedValue({ family: 'python', candidates: ['/cand'] });
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   LSPRetryProvision: (...args: unknown[]) => mockRetry(...args),
   LSPSetInterpreter: (...args: unknown[]) => mockSetInterpreter(...args),
   LSPClearInterpreter: (...args: unknown[]) => mockClearInterpreter(...args),

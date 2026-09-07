@@ -181,43 +181,43 @@
 
 /* Symbol-kind badge colors, mapped to Firn accents. */
 .kClass {
-  background: var(--accent-orange);
+  background: var(--palette-orange);
 }
 .kInterface {
-  background: var(--accent-blue);
+  background: var(--palette-blue);
   color: #dbeafe;
 }
 .kMethod {
-  background: var(--accent-purple);
+  background: var(--palette-purple);
   color: #faf5ff;
 }
 .kFunction {
-  background: var(--accent-purple);
+  background: var(--palette-purple);
   color: #faf5ff;
 }
 .kProperty {
-  background: var(--accent-cyan);
+  background: var(--palette-cyan);
 }
 .kField {
-  background: var(--accent-cyan);
+  background: var(--palette-cyan);
 }
 .kVariable {
-  background: var(--accent-blue);
+  background: var(--palette-blue);
   color: #dbeafe;
 }
 .kConstant {
-  background: var(--accent-amber);
+  background: var(--palette-amber);
 }
 .kEnum {
-  background: var(--accent-green);
+  background: var(--palette-green);
 }
 .kStruct {
-  background: var(--accent-orange);
+  background: var(--palette-orange);
 }
 .kModule,
 .kNamespace,
 .kTypeParam {
-  background: var(--accent-cyan);
+  background: var(--palette-cyan);
 }
 .kFile,
 .kString,
@@ -260,14 +260,16 @@
   height: 20px;
 }
 
+/* Backgrounds derive from the same token as the glyph colour, so repointing the
+   ramp cannot leave the wash on the old hue. */
 .emptyGlyph.warn {
-  color: var(--accent-amber);
-  background: rgba(245, 158, 11, 0.1);
+  color: var(--palette-amber);
+  background: color-mix(in srgb, var(--palette-amber) 10%, transparent);
 }
 
 .emptyGlyph.error {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
+  color: var(--palette-red);
+  background: color-mix(in srgb, var(--palette-red) 10%, transparent);
 }
 
 .emptyTitle {

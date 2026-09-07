@@ -3,7 +3,7 @@ import { useIDEStore } from '../../stores/ideStore';
 
 // Mock Wails WriteFile
 const mockWriteFile = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   WriteFile: (...args: unknown[]) => mockWriteFile(...args),
 }));
 

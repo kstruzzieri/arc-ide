@@ -1,18 +1,21 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useIDEStore } from '../stores/ideStore';
 import {
+  CancelBeforeClose,
   ConfirmBeforeCloseReady,
   SaveWorkspaceState,
   LoadWorkspaceState,
   ReadFile,
-} from '../../wailsjs/go/main/App';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
-import type { workspace, filesystem } from '../../wailsjs/go/models';
+} from '../wails/bindings';
+import { EventsOn } from '../wails/runtime';
+import type { workspace, filesystem } from '../wails/bindings';
 import { createEditorFile } from '../utils/editorFile';
 import { pathsReferToSameFile } from '../utils/lspUri';
 import { relativePathFromRoot } from '../utils/workspaceRegions';
+import { normalizeCenterLayout } from '../utils/centerLayout';
 import { getCachedWorkspaceTree, setCachedWorkspaceTree } from '../utils/workspaceTreeCache';
 import { ensurePathLoaded } from './useEnsurePathLoaded';
+import { drainRunHistoryForClose } from './useRunOutput';
 
 const SAVE_DEBOUNCE_MS = 2000;
 
@@ -88,6 +91,11 @@ function collectWorkspaceState(
       leftCollapsed: state.isLeftPanelCollapsed,
       rightCollapsed: state.isRightPanelCollapsed,
       bottomCollapsed: state.isBottomPanelCollapsed,
+      // #271: preferences only. The transient centerReveal and any effective
+      // (window-pressure) collapse are deliberately not written.
+      centerOrder: state.centerOrder,
+      golemCollapsed: state.isGolemPanelCollapsed,
+      filesCollapsed: state.isFilesPanelCollapsed,
     },
     editor: {
       activeFilePath: state.activeFileId ?? '',
@@ -136,22 +144,50 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
 
     // Restore layout
     if (state.layout) {
-      if (state.layout.panelSizes) {
-        const { left, right, bottom } = state.layout.panelSizes;
-        if (left > 0) store.setPanelSize('left', left);
-        if (right > 0) store.setPanelSize('right', right);
-        if (bottom > 0) store.setPanelSize('bottom', bottom);
+      // Validate before the setters. A wrongly *typed* size never reaches here:
+      // Go's decode rejects the whole file on a type mismatch, so a hand-edited
+      // `"260"` fails the load outright. What does reach here is an absent or
+      // null field and any finite number the file cares to name — zero, a
+      // negative, an absurd one — so the guard is about range, not type.
+      const sizes = state.layout.panelSizes;
+      for (const panel of ['left', 'right', 'bottom'] as const) {
+        const size: unknown = sizes?.[panel];
+        if (typeof size === 'number' && Number.isFinite(size) && size > 0) {
+          store.setPanelSize(panel, Math.max(1, Math.round(size)));
+        }
       }
 
-      // Restore collapsed states — only toggle if current state differs
+      // #271: one normalized, atomic apply. Direct setters alone would not make
+      // a malformed both-collapsed pair order-independent, so the normalizer
+      // decides the whole pair first.
+      store.applyCenterLayout(
+        normalizeCenterLayout({
+          centerOrder: state.layout.centerOrder,
+          golemWidth: state.layout.panelSizes?.golem,
+          golemCollapsed: state.layout.golemCollapsed,
+          filesCollapsed: state.layout.filesCollapsed,
+        })
+      );
+
+      // Restore collapsed states — only toggle if a real boolean differs, so an
+      // absent legacy field cannot toggle a default panel closed.
       const current = useIDEStore.getState();
-      if (state.layout.leftCollapsed !== current.isLeftPanelCollapsed) {
+      if (
+        typeof state.layout.leftCollapsed === 'boolean' &&
+        state.layout.leftCollapsed !== current.isLeftPanelCollapsed
+      ) {
         store.toggleLeftPanel();
       }
-      if (state.layout.rightCollapsed !== current.isRightPanelCollapsed) {
+      if (
+        typeof state.layout.rightCollapsed === 'boolean' &&
+        state.layout.rightCollapsed !== current.isRightPanelCollapsed
+      ) {
         store.toggleRightPanel();
       }
-      if (state.layout.bottomCollapsed !== current.isBottomPanelCollapsed) {
+      if (
+        typeof state.layout.bottomCollapsed === 'boolean' &&
+        state.layout.bottomCollapsed !== current.isBottomPanelCollapsed
+      ) {
         store.toggleBottomPanel();
       }
     }
@@ -218,6 +254,13 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
         try {
           const fileContent = await ReadFile(fileState.path);
           if (signal.aborted) return;
+          // Matches the other ReadFile call sites (gitStore, editorNavigation):
+          // a null answer is a backend contract violation, not a fact about
+          // the file, so it goes through the catch below rather than being
+          // indistinguishable from a deliberate skip.
+          if (fileContent === null) {
+            throw new Error(`ReadFile returned no content for ${fileState.path}`);
+          }
           if (fileContent.isBinary) continue;
 
           const editorFile = createEditorFile(fileState.path, fileContent);
@@ -236,8 +279,12 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
               column: fileState.cursorColumn || 1,
             };
           }
-        } catch {
-          // File no longer exists — skip silently
+        } catch (err) {
+          // The file is gone, unreadable, or came back empty-handed — drop it
+          // from the restore and keep going, so one missing file cannot cost
+          // the user every other tab in the session. Still logged, so a
+          // silently dropped tab has a trail to follow.
+          console.warn(`Failed to restore file ${fileState.path}:`, err);
           continue;
         }
       }
@@ -300,7 +347,11 @@ function restoreActiveWorkspaceId(activeWorkspaceId: string): void {
  * - Restore on workspace switch (with correct flush of old workspace)
  * - Immediate flush on visibility change, blur, and app close
  */
-export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
+export function useWorkspacePersistence(
+  beforeClose?: () => Promise<void>,
+  drainHistory: () => Promise<void> = drainRunHistoryForClose,
+  closeGuard?: () => Promise<boolean>
+) {
   const workspace = useIDEStore((state) => state.workspace);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -396,6 +447,9 @@ export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
         state.isLeftPanelCollapsed !== prevState.isLeftPanelCollapsed ||
         state.isRightPanelCollapsed !== prevState.isRightPanelCollapsed ||
         state.isBottomPanelCollapsed !== prevState.isBottomPanelCollapsed ||
+        state.centerOrder !== prevState.centerOrder ||
+        state.isGolemPanelCollapsed !== prevState.isGolemPanelCollapsed ||
+        state.isFilesPanelCollapsed !== prevState.isFilesPanelCollapsed ||
         state.activeSidebarView !== prevState.activeSidebarView ||
         state.expandedPaths !== prevState.expandedPaths ||
         state.isRootExpanded !== prevState.isRootExpanded ||
@@ -477,17 +531,45 @@ export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
     };
   }, [flushSave]);
 
-  // Listen for app:beforeclose event from Go backend
+  // Listen for app:beforeclose event from Go backend. The backend is now
+  // waiting in `awaiting_frontend` and has torn down nothing, so this handler
+  // owns the decision: confirm and let the app quit, or cancel and leave it
+  // exactly as it was.
   useEffect(() => {
+    // abandonClose returns the backend to idle. A transport failure is
+    // reported, never thrown: the backend backstop is the remaining net.
+    const abandonClose = async () => {
+      try {
+        await CancelBeforeClose();
+      } catch (err) {
+        console.error('Failed to cancel app close:', err);
+      }
+    };
+
     const handleBeforeClose = async () => {
       try {
+        // The guard settles anything that must not be interrupted — an
+        // in-flight settings write, an unsaved draft, staged secrets — and
+        // answers whether the close may proceed at all.
+        if (closeGuard && !(await closeGuard())) {
+          await abandonClose();
+          return;
+        }
         await Promise.all([
           flushSave(undefined, { includeTreeSnapshot: true }),
           beforeClose?.() ?? Promise.resolve(),
+          Promise.resolve()
+            .then(() => drainHistory())
+            .catch((err) => {
+              console.error('Failed to drain run history before close:', err);
+            }),
         ]);
       } catch (err) {
-        console.error('Failed to flush editor state before close:', err);
-        return; // let the backend deadline expire rather than approve data loss
+        // Never approve data loss — and never leave the window wedged behind
+        // an unanswered handshake either.
+        console.error('Failed to prepare for app close:', err);
+        await abandonClose();
+        return;
       }
       try {
         await ConfirmBeforeCloseReady();
@@ -500,7 +582,7 @@ export function useWorkspacePersistence(beforeClose?: () => Promise<void>) {
       void handleBeforeClose();
     });
     return cancel;
-  }, [beforeClose, flushSave]);
+  }, [beforeClose, closeGuard, drainHistory, flushSave]);
 
   // Cleanup timer on unmount
   useEffect(() => {

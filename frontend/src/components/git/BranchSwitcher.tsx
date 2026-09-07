@@ -37,6 +37,7 @@ export function BranchSwitcher({
   const [query, setQuery] = useState('');
   const [pos, setPos] = useState<PopupPos | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
 
@@ -101,7 +102,10 @@ export function BranchSwitcher({
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -122,12 +126,14 @@ export function BranchSwitcher({
   const checkout = (name: string, create: boolean) => {
     setOpen(false);
     setQuery('');
+    triggerRef.current?.focus();
     void useGitStore.getState().checkout(name, create);
   };
 
   return (
     <div className={`${styles.wrap} ${compact ? styles.compact : ''}`} ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={styles.trigger}
         onClick={() => setOpen((v) => !v)}

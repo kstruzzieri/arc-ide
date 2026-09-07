@@ -8,6 +8,8 @@ const baseProps = {
   rowId: rowDomId('/repo/a.ts'),
   isActive: false,
   canExpand: false,
+  unreadable: false,
+  fileAccent: null,
   onToggle: noop,
   onSelect: noop,
   onOpen: noop,
@@ -77,6 +79,7 @@ describe('TreeRow', () => {
     );
     expect(screen.getByText('a.ts')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /toggle/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('file-accent-marker')).not.toBeInTheDocument();
   });
 
   it('creates a sanitized active-descendant id from a path key', () => {
@@ -142,7 +145,7 @@ describe('TreeRow', () => {
         isDir={false}
         isExpanded={false}
         isSelected={false}
-        regionAccent="blue"
+        regionAccent="frontend"
         setSize={1}
         posInSet={1}
       />
@@ -150,6 +153,133 @@ describe('TreeRow', () => {
     const row = container.querySelector('[role="treeitem"]') as HTMLElement;
     expect(row.className).toContain('tinted');
     expect(row.getAttribute('style')).toContain('--region-accent');
+  });
+
+  it('keeps file and region accents independent without changing Git or tree semantics', () => {
+    const props = {
+      ...baseProps,
+      kind: 'entry' as const,
+      path: '/repo/frontend/Dockerfile',
+      rowId: rowDomId('/repo/frontend/Dockerfile'),
+      name: 'Dockerfile',
+      depth: 2,
+      level: 3,
+      isDir: false,
+      isExpanded: false,
+      isSelected: true,
+      regionAccent: 'frontend' as const,
+      fileAccent: 'docker' as const,
+      setSize: 2,
+      posInSet: 1,
+      gitStatus: 'modified' as const,
+    };
+    render(<TreeRow {...props} />);
+
+    const row = screen.getByRole('treeitem', { name: 'Dockerfile' });
+    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
+    expect(row.style.getPropertyValue('--file-accent')).toBe('var(--accent-docker)');
+    expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+    expect(row).toHaveAttribute('id', rowDomId('/repo/frontend/Dockerfile'));
+    expect(row).toHaveAttribute('tabindex', '-1');
+    expect(row).toHaveAttribute('aria-level', '3');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row).toHaveAttribute('data-git', 'modified');
+    expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
+  });
+
+  it('clears the workspace ownership rail when a virtual row is recycled', () => {
+    const props = {
+      ...baseProps,
+      kind: 'entry' as const,
+      path: '/repo/frontend/App.tsx',
+      name: 'App.tsx',
+      depth: 2,
+      level: 3,
+      isDir: false,
+      isExpanded: false,
+      isSelected: true,
+      isActive: true,
+      regionAccent: 'frontend' as const,
+      ownershipAccent: 'go' as const,
+      setSize: 1,
+      posInSet: 1,
+    };
+    const { rerender } = render(<TreeRow {...props} />);
+
+    const row = screen.getByRole('treeitem', { name: 'App.tsx' });
+    expect(row.className).toContain('ownershipRail');
+    expect(row.style.getPropertyValue('--ownership-accent')).toBe('var(--accent-go)');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row.className).toContain('active');
+
+    rerender(<TreeRow {...props} ownershipAccent={null} />);
+    expect(row.className).not.toContain('ownershipRail');
+    expect(row.style.getPropertyValue('--ownership-accent')).toBe('');
+  });
+
+  it('renders unreadable visually and in the tree item name without changing row state', () => {
+    render(
+      <TreeRow
+        {...baseProps}
+        kind="entry"
+        path="/repo/src"
+        name="src"
+        depth={1}
+        level={2}
+        isDir={true}
+        isExpanded={false}
+        isSelected={true}
+        isActive={true}
+        regionAccent="frontend"
+        fileAccent={null}
+        setSize={2}
+        posInSet={1}
+        canExpand={true}
+        unreadable={true}
+        gitStatus="modified"
+      />
+    );
+
+    const row = screen.getByRole('treeitem', { name: 'src, unreadable' });
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(row).toHaveAttribute('aria-level', '2');
+    expect(row).toHaveAttribute('tabindex', '-1');
+    expect(row.className).toContain('active');
+    expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
+    expect(row).toHaveAttribute('data-git', 'modified');
+    expect(screen.getByTestId('git-badge')).toHaveTextContent('M');
+    const indicator = screen.getByTestId('unreadable-indicator');
+    expect(indicator).toHaveAttribute('title', 'Unable to read this item');
+    expect(indicator).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button', { name: 'Toggle src' })).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('keeps an unreadable file marker independent from its file accent', () => {
+    render(
+      <TreeRow
+        {...baseProps}
+        kind="entry"
+        path="/repo/Dockerfile"
+        name="Dockerfile"
+        depth={1}
+        level={2}
+        isDir={false}
+        isExpanded={false}
+        isSelected={false}
+        regionAccent={null}
+        fileAccent="docker"
+        setSize={1}
+        posInSet={1}
+        unreadable={true}
+      />
+    );
+
+    expect(screen.getByRole('treeitem', { name: 'Dockerfile, unreadable' })).toHaveStyle({
+      '--file-accent': 'var(--accent-docker)',
+    });
+    expect(screen.getByTestId('file-accent-marker')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('exposes both tinted and aria-selected when a region file is selected', () => {
@@ -167,7 +297,7 @@ describe('TreeRow', () => {
         isDir={false}
         isExpanded={false}
         isSelected={true}
-        regionAccent="blue"
+        regionAccent="frontend"
         setSize={1}
         posInSet={1}
       />
@@ -193,7 +323,7 @@ describe('TreeRow', () => {
         isDir={false}
         isExpanded={false}
         isSelected={false}
-        regionAccent="blue"
+        regionAccent="frontend"
         setSize={1}
         posInSet={1}
       />
@@ -246,6 +376,32 @@ describe('TreeRow', () => {
       />
     );
     expect(container.querySelector('[data-hidden]')).toBeInTheDocument();
+  });
+
+  it('keeps the shortened root path in an unreadable root accessible name', () => {
+    render(
+      <TreeRow
+        {...baseProps}
+        kind="root"
+        name="Go"
+        rootPath="/repo/backend"
+        depth={0}
+        level={1}
+        isDir={true}
+        isExpanded={false}
+        isSelected={false}
+        regionAccent={null}
+        setSize={1}
+        posInSet={1}
+        canExpand={true}
+        unreadable={true}
+      />
+    );
+
+    // The label override must not drop the path a sighted user still sees.
+    expect(
+      screen.getByRole('treeitem', { name: 'Go, unreadable, /repo/backend' })
+    ).toBeInTheDocument();
   });
 
   it('renders the root row with its label and path and toggles the root', () => {

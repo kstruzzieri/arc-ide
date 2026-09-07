@@ -22,7 +22,7 @@
   },
   "include": [
     "src",
-    "wailsjs"
+    "bindings"
   ],
   "references": [
     {

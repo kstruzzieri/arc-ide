@@ -33,6 +33,7 @@ interface PanelActionProps {
 export function PanelAction({ icon, title, onClick, disabled, ariaLabel }: PanelActionProps) {
   return (
     <button
+      type="button"
       className={styles.action}
       title={title}
       onClick={onClick}

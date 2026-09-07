@@ -4,9 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Version assertion (e.g. v0.11.0-rc.1); dispatch is a dry run and never publishes'
+        required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-macos:
@@ -29,38 +34,38 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: 'go.mod'
           cache-dependency-path: go.sum
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
 
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-
-      - name: Build application
+      # The Taskfile's common:install:frontend:deps step installs frontend
+      # deps exactly once inside wails3 task <os>:build; a second install
+      # here races file locks on Windows (EBUSY deleting node_modules
+      # mid-build).
+      - name: Build and package application
         env:
           BUILD_ARCH: ${{ matrix.arch }}
-        run: wails build -platform "darwin/${BUILD_ARCH}"
+        run: wails3 task darwin:package ARCH=${BUILD_ARCH}
 
-      - name: Package application
+      - name: Zip application bundle
         env:
           BUILD_ARCH: ${{ matrix.arch }}
         run: |
-          cd build/bin
+          cd bin
           zip -r "Firn-macos-${BUILD_ARCH}.zip" Firn.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Firn-macos-${{ matrix.arch }}
-          path: build/bin/Firn-macos-${{ matrix.arch }}.zip
+          path: bin/Firn-macos-${{ matrix.arch }}.zip
 
   build-linux:
     name: Build Linux
-    runs-on: ubuntu-latest
+    # Pinned to 22.04: the image IS the WebKit2GTK 4.1 compatibility floor.
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -75,35 +80,36 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: 'go.mod'
           cache-dependency-path: go.sum
-
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
 
       - name: Install Linux dependencies for Wails
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # The CLI links WebKit itself on Linux; without -tags gtk3 it wants
+      # GTK4/WebKitGTK 6.0, which the 22.04 floor does not ship.
+      - name: Install Wails
+        run: go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
+
+      # The Taskfile's common:install:frontend:deps step installs frontend
+      # deps exactly once inside wails3 task <os>:build; a second install
+      # here races file locks on Windows (EBUSY deleting node_modules
+      # mid-build).
       - name: Build application
-        run: wails build -platform linux/amd64 -tags webkit2_41
+        run: wails3 task linux:build ARCH=amd64
 
       - name: Package application
         run: |
-          cd build/bin
+          cd bin
           tar -czvf Firn-linux-amd64.tar.gz firn
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Firn-linux-amd64
-          path: build/bin/Firn-linux-amd64.tar.gz
+          path: bin/Firn-linux-amd64.tar.gz
 
   build-windows:
     name: Build Windows
@@ -122,34 +128,32 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: 'go.mod'
           cache-dependency-path: go.sum
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
 
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-
+      # The Taskfile's common:install:frontend:deps step installs frontend
+      # deps exactly once inside wails3 task <os>:build; a second install
+      # here races file locks on Windows (EBUSY deleting node_modules
+      # mid-build).
       - name: Build application
-        run: wails build -platform windows/amd64
+        run: wails3 task windows:build ARCH=amd64
 
       - name: Package application
-        run: Compress-Archive -Path build/bin/firn.exe -DestinationPath build/bin/Firn-windows-amd64.zip
+        run: Compress-Archive -Path bin/firn.exe -DestinationPath bin/Firn-windows-amd64.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Firn-windows-amd64
-          path: build/bin/Firn-windows-amd64.zip
+          path: bin/Firn-windows-amd64.zip
 
-  release:
-    name: Create Release
+  verify:
+    name: Verify Artifacts
     needs: [build-macos, build-linux, build-windows]
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -160,19 +164,58 @@ jobs:
         with:
           path: artifacts
 
+      - name: Verify archive roots
+        run: sh .github/scripts/verify-archive-roots.sh artifacts
+
       - name: Generate changelog
-        id: changelog
-        run: sh .github/scripts/extract-changelog.sh "$GITHUB_REF_NAME" CHANGELOG.md changelog.md frontend/package.json wails.json
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+        run: sh .github/scripts/extract-changelog.sh "$RELEASE_TAG" CHANGELOG.md changelog.md frontend/package.json build/config.yml
 
       - name: Generate checksums
         run: sh .github/scripts/generate-checksums.sh artifacts SHA256SUMS
 
+      - name: Verify checksum manifest covers all targets
+        run: test "$(wc -l < SHA256SUMS)" -eq 4
+
+      - name: Upload release bundle (dry-run inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: |
+            SHA256SUMS
+            changelog.md
+
+  release:
+    name: Create Release
+    if: github.event_name == 'push'
+    needs: [verify]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Includes the release-bundle artifact `verify` uploaded, so the notes
+      # and checksums published below are the exact bytes `verify` gated --
+      # regenerating them here would publish artefacts no job ever checked.
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Verify archive roots
+        run: sh .github/scripts/verify-archive-roots.sh artifacts
+
+      - name: Verify checksum manifest covers all targets
+        run: test "$(wc -l < artifacts/release-bundle/SHA256SUMS)" -eq 4
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: changelog.md
+          body_path: artifacts/release-bundle/changelog.md
           files: |
-            SHA256SUMS
+            artifacts/release-bundle/SHA256SUMS
             artifacts/**/*.zip
             artifacts/**/*.tar.gz
           draft: false

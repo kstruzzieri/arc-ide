@@ -75,6 +75,32 @@ func TestResolveRustServer_ManagedAvailable(t *testing.T) {
 	}
 }
 
+func TestResolveRustServer_BrokenPathTriggersManagedInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a shell script")
+	}
+	binDir := t.TempDir()
+	broken := filepath.Join(binDir, "rust-analyzer")
+	if err := os.WriteFile(broken, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("HOME", t.TempDir())
+
+	r := NewRegistry()
+	r.SetProvisioners(map[string]provision.Provisioner{
+		"rust": fakeProv{res: provision.Resolution{State: provision.StateMissing}},
+	})
+	_, err := r.ServerConfigFor("rust", t.TempDir())
+	var miss *ServerMissError
+	if !errors.As(err, &miss) {
+		t.Fatalf("err = %v, want *ServerMissError", err)
+	}
+	if !miss.Provisionable {
+		t.Error("broken rust-analyzer should trigger managed provisioning")
+	}
+}
+
 // gopls not on PATH and not in the Go bin dirs: with a provisioner registered
 // the miss becomes Provisionable (previously always Provisionable=false).
 func TestResolveGoServer_ManagedWhenMissing(t *testing.T) {
@@ -138,6 +164,9 @@ func TestResolveTypeScriptServer_ManagedWhenMissing(t *testing.T) {
 // A managed rust-analyzer at ~/.cargo/bin is preferred over a managed download
 // so a rustup user's own install wins even when the app is Finder-launched.
 func TestResolveRustServer_PrefersCargoBin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a shell script")
+	}
 	home := t.TempDir()
 	cargoBin := filepath.Join(home, ".cargo", "bin")
 	if err := os.MkdirAll(cargoBin, 0o755); err != nil {
@@ -155,7 +184,7 @@ func TestResolveRustServer_PrefersCargoBin(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	r := NewRegistry()
-	cfg, err := r.ServerConfigFor("rust", "/proj")
+	cfg, err := r.ServerConfigFor("rust", t.TempDir())
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}

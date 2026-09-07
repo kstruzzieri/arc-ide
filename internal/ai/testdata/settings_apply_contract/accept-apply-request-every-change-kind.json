@@ -1,0 +1,79 @@
+{
+  "verdict": "accept",
+  "document": "apply_request",
+  "mode": "apply",
+  "value": {
+    "targetRevision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "source": {
+      "kind": "applied"
+    },
+    "changes": [
+      {
+        "kind": "route",
+        "useCase": "agent",
+        "modelFacts": {
+          "provider": "hosted",
+          "model": "wire-model",
+          "type": "dense"
+        },
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "exposedCaps": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "thinkMode": "",
+        "confirmUnknown": false
+      },
+      {
+        "kind": "route-unassign",
+        "useCase": "chat"
+      },
+      {
+        "kind": "provider-add",
+        "name": "hosted",
+        "endpoint": "https://api.example.com/v1",
+        "apiFormat": "openai-compat"
+      },
+      {
+        "kind": "provider-update",
+        "name": "local",
+        "endpoint": "http://localhost:11434"
+      },
+      {
+        "kind": "provider-key-set",
+        "name": "hosted"
+      },
+      {
+        "kind": "provider-key-clear",
+        "name": "local"
+      },
+      {
+        "kind": "role-remove",
+        "role": "orphan-m"
+      },
+      {
+        "kind": "provider-remove",
+        "name": "stale"
+      }
+    ],
+    "keys": {
+      "hosted": "sk-literal-value"
+    }
+  }
+}

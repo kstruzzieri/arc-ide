@@ -5,7 +5,7 @@ import { useLSPStore, type LSPServerStatus } from '../../stores/lspStore';
 const mockDocumentSymbol = jest.fn();
 const mockFlush = jest.fn().mockResolvedValue(true);
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   LSPDocumentSymbol: (...args: unknown[]) => mockDocumentSymbol(...args),
 }));
 

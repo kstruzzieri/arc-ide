@@ -1,0 +1,20 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "missing",
+    "sourceOrigin": "none",
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [
+      {
+        "code": "config_missing",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      }
+    ],
+    "readOnly": false,
+    "editable": false
+  }
+}

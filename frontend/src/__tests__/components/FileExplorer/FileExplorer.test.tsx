@@ -2,22 +2,26 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { FileExplorer, rowDomId } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
 import { useGitStore } from '../../../stores/gitStore';
-import { ReadDirectory, ReadFile } from '../../../../wailsjs/go/main/App';
-import { filesystem } from '../../../../wailsjs/go/models';
+import { ReadDirectory, ReadFile } from '../../../wails/bindings';
+import { filesystem } from '../../../wails/bindings';
 import { installVirtualLayout } from '../../helpers/virtualTree';
 
 // Mock Wails bindings
-jest.mock('../../../../wailsjs/go/main/App', () => ({
-  ReadDirectory: jest.fn(),
-  ReadFile: jest.fn(),
-  OpenFolderDialog: jest.fn(),
-}));
+jest.mock('../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../wails/bindings');
+  return {
+    ...actual,
+    ReadDirectory: jest.fn(),
+    ReadFile: jest.fn(),
+    OpenFolderDialog: jest.fn(),
+  };
+});
 
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 
-import { OpenFolderDialog } from '../../../../wailsjs/go/main/App';
+import { OpenFolderDialog } from '../../../wails/bindings';
 
 // Mock the useDirectoryTree hook to prevent automatic fetching
 const mockRefetch = jest.fn();

@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"fmt"
 	"io/fs"
 )
 
@@ -40,7 +41,12 @@ func (m *Mock) Stat(path string) (fs.FileInfo, error) {
 	if m.StatFunc != nil {
 		return m.StatFunc(path)
 	}
-	return nil, nil
+	// A nil FileInfo with a nil error is not a valid fs.Stat result: success
+	// means the info is dereferenceable, and every caller does dereference it —
+	// filesystem.Lstat falls back to Stat, so an unset StatFunc used to hand a
+	// nil info to code that immediately called IsDir() or Mode() on it. Report a
+	// not-exist error instead so a test missing a stub fails where the gap is.
+	return nil, fmt.Errorf("%w: Mock.StatFunc is not set for %s", fs.ErrNotExist, path)
 }
 
 func (m *Mock) MkdirAll(path string, perm fs.FileMode) error {

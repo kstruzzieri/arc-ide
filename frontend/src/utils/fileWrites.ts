@@ -1,10 +1,78 @@
-import { WriteFile } from '../../wailsjs/go/main/App';
+import { WriteFile } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import { normalizePathForComparison, pathsReferToSameFile } from './lspUri';
 
 /** All editor and diff writes share this queue so one path is never written
  * concurrently by two UI surfaces. */
-const writeQueues = new Map<string, Promise<void>>();
+interface FileWriteQueueEntry {
+  promise?: Promise<unknown>;
+}
+
+const writeQueues = new Map<string, FileWriteQueueEntry>();
+const fileWriteRevisions = new Map<string, number>();
+
+type LockedFileWrite = (
+  content: string,
+  encoding: string,
+  lineEndings: string,
+  createBackup?: boolean
+) => Promise<void>;
+
+export function getFileWriteRevision(path: string): number {
+  return fileWriteRevisions.get(normalizePathForComparison(path)) ?? 0;
+}
+
+/** Record a worktree write performed by a backend operation that already owns
+ * the path lock (for example, choosing one side of a binary conflict). */
+export function markFileWriteAttempt(path: string): void {
+  const key = normalizePathForComparison(path);
+  fileWriteRevisions.set(key, (fileWriteRevisions.get(key) ?? 0) + 1);
+}
+
+function queueFileOperation<T>(
+  path: string,
+  operation: (write: LockedFileWrite, hasQueuedWrites: () => boolean) => Promise<T>,
+  continueAfterFailure: boolean
+): Promise<T> {
+  const key = normalizePathForComparison(path);
+  const previous = writeQueues.get(key)?.promise;
+  const entry: FileWriteQueueEntry = {};
+  writeQueues.set(key, entry);
+  const run = (): Promise<T> =>
+    operation(
+      (content, encoding, lineEndings, createBackup = false) => {
+        markFileWriteAttempt(path);
+        return WriteFile(path, content, encoding, lineEndings, createBackup);
+      },
+      () => writeQueues.get(key) !== entry
+    );
+  const start = (): Promise<T> => {
+    try {
+      return run();
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  };
+  const predecessor = previous && continueAfterFailure ? previous.catch(() => undefined) : previous;
+  const current = predecessor ? predecessor.then(run) : start();
+  entry.promise = current;
+  void current
+    .finally(() => {
+      if (writeQueues.get(key) === entry) writeQueues.delete(key);
+    })
+    .catch(() => undefined);
+  return current;
+}
+
+/** Run one operation exclusively against a file's write queue. The supplied
+ * writer bypasses the queue because the operation already owns it. A failed
+ * predecessor aborts the operation so barriers never bless stale bytes. */
+export function withFileWriteLock<T>(
+  path: string,
+  operation: (write: LockedFileWrite, hasQueuedWrites: () => boolean) => Promise<T>
+): Promise<T> {
+  return queueFileOperation(path, operation, false);
+}
 
 export function writeFileSerialized(
   path: string,
@@ -13,20 +81,83 @@ export function writeFileSerialized(
   lineEndings: string,
   createBackup = false
 ): Promise<void> {
+  // A newer explicit save should still run after an older failed save.
+  return queueFileOperation(
+    path,
+    (write) => write(content, encoding, lineEndings, createBackup),
+    true
+  );
+}
+
+async function waitForFileWrites(path: string): Promise<void> {
   const key = normalizePathForComparison(path);
-  const previous = writeQueues.get(key);
-  const write = previous
-    ? previous
-        .catch(() => undefined)
-        .then(() => WriteFile(path, content, encoding, lineEndings, createBackup))
-    : WriteFile(path, content, encoding, lineEndings, createBackup);
-  writeQueues.set(key, write);
-  void write
-    .finally(() => {
-      if (writeQueues.get(key) === write) writeQueues.delete(key);
-    })
-    .catch(() => undefined);
-  return write;
+  for (;;) {
+    const queued = writeQueues.get(key)?.promise;
+    if (!queued) return;
+    await queued;
+  }
+}
+
+async function settleAllFileWrites(): Promise<PromiseRejectedResult | undefined> {
+  let firstFailure: PromiseRejectedResult | undefined;
+  while (writeQueues.size > 0) {
+    const results = await Promise.allSettled([...writeQueues.keys()].map(waitForFileWrites));
+    firstFailure ??= results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+  }
+  return firstFailure;
+}
+
+/** Encodings and line endings WriteFile can round-trip without loss. The
+ * single source of truth for "may this surface write this file" — shared by
+ * the editable diff pane and the merge resolution session. */
+const WRITABLE_ENCODINGS = new Set(['utf-8', 'utf-8-bom', 'utf-16le', 'utf-16be']);
+const WRITABLE_LINE_ENDINGS = new Set(['lf', 'crlf', 'none']);
+
+export function isWritableFormat(encoding?: string, lineEndings?: string): boolean {
+  return WRITABLE_ENCODINGS.has(encoding ?? '') && WRITABLE_LINE_ENDINGS.has(lineEndings ?? '');
+}
+
+/**
+ * Await a durable flush of an open editor buffer to disk. Unlike autosave
+ * (debounced, hook-local) and queueWorkingTreeEdit (whose open-file branch only
+ * updates the buffer), this WRITES through the per-path serialized queue and
+ * resolves only when the on-disk bytes match a stable buffer snapshot — looping
+ * if a keystroke lands mid-write — then clears isModified. A file that is not
+ * open, or is already clean, resolves after any queued path writes settle.
+ * Callers that must read the file's true on-disk state await this first.
+ */
+export async function saveOpenFileToDisk(absPath: string): Promise<void> {
+  const initial = openFileFor(absPath);
+  if (initial?.isModified && !isWritableFormat(initial.encoding, initial.lineEndings)) {
+    throw new Error(`Unsupported file format: ${initial.encoding}/${initial.lineEndings}`);
+  }
+  // Settle any pending debounced diff edit first so buffer/disk ordering holds.
+  await flushWorkingTreeEdit(absPath);
+  // A close-save or autosave may already own the path even when the file is
+  // absent or marked clean. Snapshot callers need that write to finish first.
+  await waitForFileWrites(absPath);
+  for (;;) {
+    const stable = await withFileWriteLock(absPath, async (write, hasQueuedWrites) => {
+      const file = openFileFor(absPath);
+      if (!file || !file.isModified) return true;
+      if (!isWritableFormat(file.encoding, file.lineEndings)) {
+        throw new Error(`Unsupported file format: ${file.encoding}/${file.lineEndings}`);
+      }
+      const snapshot = file.content;
+      await write(snapshot, file.encoding, file.lineEndings, false);
+      const after = openFileFor(absPath);
+      // A save queued while this write was in flight must run before we can
+      // decide which buffer revision is durably last.
+      if (hasQueuedWrites()) return false;
+      if (!after) return true;
+      if (after.content !== snapshot) return false;
+      useIDEStore.getState().setFileModified(after.id, false);
+      return true;
+    });
+    if (stable) return;
+  }
 }
 
 interface WorkingTreeEdit {
@@ -153,6 +284,9 @@ export async function flushAllWorkingTreeEdits(): Promise<void> {
 /** Final close flush: settle diff drafts first, then persist the resulting
  * latest editor buffers through the same per-path write queues. */
 export async function flushAllFileEdits(): Promise<void> {
+  // Capture writes that already exist before the first await so a fast
+  // rejection cannot disappear from the queue before close observes it.
+  const preexistingWrites = settleAllFileWrites();
   let diffFailure: unknown;
   try {
     await flushAllWorkingTreeEdits();
@@ -172,9 +306,10 @@ export async function flushAllFileEdits(): Promise<void> {
     )
   );
   const failure = results.find((result) => result.status === 'rejected');
-  const queued = await Promise.allSettled([...writeQueues.values()]);
-  const queuedFailure = queued.find((result) => result.status === 'rejected');
+  const preexistingWriteFailure = await preexistingWrites;
+  const queuedFailure = await settleAllFileWrites();
   if (diffFailure !== undefined) throw diffFailure;
   if (failure?.status === 'rejected') throw failure.reason;
-  if (queuedFailure?.status === 'rejected') throw queuedFailure.reason;
+  if (preexistingWriteFailure) throw preexistingWriteFailure.reason;
+  if (queuedFailure) throw queuedFailure.reason;
 }

@@ -1,9 +1,17 @@
-# Wails regenerates these bindings on every build and emits trailing whitespace
-# on blank lines, producing perpetual no-op diffs. The `trimws` clean filter
-# strips trailing whitespace when git reads the working tree, so regenerated
-# whitespace is invisible to `git status`/`git diff` and never gets committed.
-#
-# Each clone must enable the filter once (CI/passthrough is safe without it):
-#   git config filter.trimws.clean "sed -E 's/[[:space:]]+$//'"
-frontend/wailsjs/**/*.ts filter=trimws
-frontend/wailsjs/**/*.js filter=trimws
+# frontend/bindings/ is committed as the RAW bytes `wails3 generate bindings`
+# emits, trailing whitespace and all. Do not add a clean filter (a `trimws`
+# one lived here until #273): a filter rewrites the committed blob but not the
+# generator's output, and CI never configures `filter.trimws.clean`, so
+# build.yml's post-build `git status --porcelain -- frontend/bindings` gate
+# would fail on whitespace the local working tree cannot see.
+
+# The Taskfile's go:mod:tidy task runs `go mod tidy -diff`, a read-only
+# byte-for-byte comparison. Windows runners check out text files with CRLF
+# (core.autocrlf=true on GitHub's Windows images), and a CRLF go.sum is
+# regenerated wholesale, so without a forced LF eol it trips that byte
+# comparison as a whole-file diff even though tidy would not actually rewrite
+# anything; go.mod is normalised silently and is pinned here for symmetry.
+# Measured on go1.26.1, from the release dry run's Windows job (run
+# 33703781657) -- this job does not run on develop.
+go.mod text eol=lf
+go.sum text eol=lf

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { DocumentSymbolNode } from '../../../utils/documentSymbols';
 import type { UseDocumentSymbolsResult } from '../../../hooks/useDocumentSymbols';
 
@@ -25,6 +25,20 @@ function sym(
   children: DocumentSymbolNode[] = []
 ): DocumentSymbolNode {
   return { name, kind, range: range(selLine), selectionRange: range(selLine), children };
+}
+
+function row(name: string): HTMLElement {
+  return screen.getByText(name).closest('[role="treeitem"]') as HTMLElement;
+}
+
+function expectSoleTabStop(expected: HTMLElement) {
+  const items = screen.getAllByRole('treeitem');
+  expect(items.filter((item) => item.tabIndex === 0)).toEqual([expected]);
+  expect(items.filter((item) => item.tabIndex === -1)).toHaveLength(items.length - 1);
+}
+
+function focus(item: HTMLElement) {
+  act(() => item.focus());
 }
 
 beforeEach(() => {
@@ -70,7 +84,28 @@ it('renders a nested symbol tree and jumps to the selection range on click', () 
   expect(mockNavigate).toHaveBeenCalledWith('/ws/main.ts', 5, 1);
 });
 
-it('jumps via keyboard (Enter) so the tree is operable without a mouse', () => {
+it('associates every child group with its parent treeitem', () => {
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/main.ts',
+    refresh: mockRefresh,
+    symbols: [sym('Widget', 5, 0, [sym('Group', 5, 2, [sym('leaf', 6, 4)])])],
+  };
+  render(<StructureView />);
+
+  const groups = screen.getAllByRole('group');
+  expect(groups).toHaveLength(2);
+
+  for (const [owner, group] of [
+    [row('Widget'), groups[0]],
+    [row('Group'), groups[1]],
+  ] as const) {
+    expect(group).toHaveAttribute('id');
+    expect(owner.getAttribute('aria-owns')?.split(/\s+/)).toContain(group.id);
+  }
+});
+
+it('jumps via keyboard (Enter or Space) so the tree is operable without a mouse', () => {
   hookResult = {
     status: 'ready',
     filePath: '/ws/main.ts',
@@ -79,10 +114,151 @@ it('jumps via keyboard (Enter) so the tree is operable without a mouse', () => {
   };
   render(<StructureView />);
 
-  const row = screen.getByText('Widget').closest('[role="treeitem"]') as HTMLElement;
-  expect(row).toHaveAttribute('tabindex', '0');
-  fireEvent.keyDown(row, { key: 'Enter' });
-  expect(mockNavigate).toHaveBeenCalledWith('/ws/main.ts', 1, 1);
+  const widget = row('Widget');
+  expect(widget).toHaveAttribute('tabindex', '0');
+  fireEvent.keyDown(widget, { key: 'Enter' });
+  fireEvent.keyDown(widget, { key: ' ' });
+  expect(mockNavigate).toHaveBeenNthCalledWith(1, '/ws/main.ts', 1, 1);
+  expect(mockNavigate).toHaveBeenNthCalledWith(2, '/ws/main.ts', 1, 1);
+});
+
+it('roves one tab stop through visible order with arrows, Home, End, and clamped boundaries', () => {
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/main.ts',
+    refresh: mockRefresh,
+    symbols: [sym('Widget', 5, 0, [sym('render', 6, 4)]), sym('helper', 12, 8)],
+  };
+  render(<StructureView />);
+
+  const widget = row('Widget');
+  const renderRow = row('render');
+  const helper = row('helper');
+  expectSoleTabStop(widget);
+
+  focus(widget);
+  fireEvent.keyDown(widget, { key: 'ArrowDown' });
+  expect(renderRow).toHaveFocus();
+  expectSoleTabStop(renderRow);
+
+  fireEvent.keyDown(renderRow, { key: 'ArrowDown' });
+  expect(helper).toHaveFocus();
+  fireEvent.keyDown(helper, { key: 'ArrowDown' });
+  expect(helper).toHaveFocus();
+
+  fireEvent.keyDown(helper, { key: 'ArrowUp' });
+  expect(renderRow).toHaveFocus();
+  fireEvent.keyDown(renderRow, { key: 'Home' });
+  expect(widget).toHaveFocus();
+  fireEvent.keyDown(widget, { key: 'ArrowUp' });
+  expect(widget).toHaveFocus();
+
+  fireEvent.keyDown(widget, { key: 'End' });
+  expect(helper).toHaveFocus();
+  expectSoleTabStop(helper);
+});
+
+it('uses Right and Left for child focus, expansion, collapse, and parent focus', () => {
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/main.ts',
+    refresh: mockRefresh,
+    symbols: [sym('Widget', 5, 0, [sym('Group', 5, 2, [sym('leaf', 6, 4)])])],
+  };
+  render(<StructureView />);
+
+  const widget = row('Widget');
+  let group = row('Group');
+  focus(widget);
+  fireEvent.keyDown(widget, { key: 'ArrowRight' });
+  expect(group).toHaveFocus();
+
+  fireEvent.keyDown(group, { key: 'ArrowLeft' });
+  expect(group).toHaveFocus();
+  expect(group).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByText('leaf')).not.toBeInTheDocument();
+
+  fireEvent.keyDown(group, { key: 'ArrowLeft' });
+  expect(widget).toHaveFocus();
+  fireEvent.keyDown(widget, { key: 'ArrowLeft' });
+  expect(widget).toHaveFocus();
+  expect(screen.queryByText('Group')).not.toBeInTheDocument();
+
+  fireEvent.keyDown(widget, { key: 'ArrowRight' });
+  expect(widget).toHaveFocus();
+  group = row('Group');
+  expect(group).toHaveAttribute('aria-expanded', 'false');
+
+  fireEvent.keyDown(widget, { key: 'ArrowRight' });
+  expect(group).toHaveFocus();
+  fireEvent.keyDown(group, { key: 'ArrowRight' });
+  expect(group).toHaveFocus();
+  fireEvent.keyDown(group, { key: 'ArrowRight' });
+  const leaf = row('leaf');
+  expect(leaf).toHaveFocus();
+
+  fireEvent.keyDown(leaf, { key: 'ArrowLeft' });
+  expect(group).toHaveFocus();
+  expectSoleTabStop(group);
+});
+
+it('repairs the sole tab stop when filtering hides the active row', () => {
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/main.ts',
+    refresh: mockRefresh,
+    symbols: [sym('alpha', 12, 0), sym('beta', 12, 1)],
+  };
+  render(<StructureView />);
+
+  const beta = row('beta');
+  focus(beta);
+  expectSoleTabStop(beta);
+
+  fireEvent.change(screen.getByLabelText('Filter symbols'), { target: { value: 'alph' } });
+  expect(screen.queryByText('beta')).not.toBeInTheDocument();
+  expectSoleTabStop(row('alpha'));
+});
+
+it('repairs the sole tab stop when collapse-all hides the active row', () => {
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/main.ts',
+    refresh: mockRefresh,
+    symbols: [sym('Widget', 5, 0, [sym('render', 6, 4)]), sym('helper', 12, 8)],
+  };
+  render(<StructureView />);
+
+  const renderRow = row('render');
+  focus(renderRow);
+  expectSoleTabStop(renderRow);
+  fireEvent.click(screen.getByTitle('Collapse all'));
+
+  expect(screen.queryByText('render')).not.toBeInTheDocument();
+  expectSoleTabStop(row('Widget'));
+});
+
+it('repairs the sole tab stop when the active file changes', () => {
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/a.ts',
+    refresh: mockRefresh,
+    symbols: [sym('alpha', 12, 0), sym('beta', 12, 1)],
+  };
+  const { rerender } = render(<StructureView />);
+
+  focus(row('beta'));
+  expectSoleTabStop(row('beta'));
+
+  hookResult = {
+    status: 'ready',
+    filePath: '/ws/b.ts',
+    refresh: mockRefresh,
+    symbols: [sym('gamma', 12, 0), sym('delta', 12, 1)],
+  };
+  rerender(<StructureView />);
+
+  expectSoleTabStop(row('gamma'));
 });
 
 it('collapses a subtree via ArrowLeft on the focused row', () => {

@@ -1,0 +1,8 @@
+{
+  "verdict": "reject",
+  "document": "confirm_request",
+  "mode": "apply",
+  "value": {
+    "challengeToken": "opaque-challenge-token"
+  }
+}

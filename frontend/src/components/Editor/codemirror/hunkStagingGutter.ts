@@ -6,7 +6,7 @@
  */
 import { EditorView, gutter, GutterMarker } from '@codemirror/view';
 import { RangeSet, type Extension } from '@codemirror/state';
-import type { git } from '../../../../wailsjs/go/models';
+import type { git } from '../../../wails/bindings';
 import { useGitStore, type DiffContext } from '../../../stores/gitStore';
 import { useIDEStore } from '../../../stores/ideStore';
 import { diffLines } from '../../../utils/lineDiff';

@@ -17,7 +17,7 @@ import {
   EditorView,
 } from '@codemirror/view';
 import { StateField, StateEffect } from '@codemirror/state';
-import { LSPDefinition } from '../../../../wailsjs/go/main/App';
+import { LSPDefinition } from '../../../wails/bindings';
 import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
 import { useIDEStore } from '../../../stores/ideStore';

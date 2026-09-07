@@ -1,4 +1,4 @@
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -14,10 +14,10 @@ jest.mock('../../wailsjs/go/main/App', () => ({
 }));
 
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { GitFileAtRev } from '../../wailsjs/go/main/App';
+import { GitFileAtRev } from '../wails/bindings';
 import { useGitBaseline } from './useGitBaseline';
 import { useGitStore } from '../stores/gitStore';
-import type { git } from '../../wailsjs/go/models';
+import type { git } from '../wails/bindings';
 
 const mockFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 

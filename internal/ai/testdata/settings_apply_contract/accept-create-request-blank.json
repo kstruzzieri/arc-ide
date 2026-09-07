@@ -1,0 +1,50 @@
+{
+  "verdict": "accept",
+  "document": "apply_request",
+  "mode": "create",
+  "value": {
+    "source": {
+      "kind": "blank"
+    },
+    "changes": [
+      {
+        "kind": "provider-add",
+        "name": "local",
+        "endpoint": "http://localhost:11434"
+      },
+      {
+        "kind": "route",
+        "useCase": "agent",
+        "modelFacts": {
+          "provider": "hosted",
+          "model": "wire-model",
+          "type": "dense"
+        },
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "exposedCaps": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "thinkMode": "",
+        "confirmUnknown": false
+      }
+    ],
+    "keys": {}
+  }
+}

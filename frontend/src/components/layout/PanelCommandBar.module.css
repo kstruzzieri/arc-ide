@@ -1,0 +1,167 @@
+/* #271 spec §2.2 — hue-keyed command bars. The bar echoes the app header's
+   gradient grammar: key at 12% over the elevated surface, 1px key-glow rule
+   beneath. FILES keys on --files-key; GOLEM on the pinned project accent. */
+.bar {
+  --bar-key: var(--files-key);
+  --bar-key-dim: var(--files-key-dim);
+  --bar-key-glow: var(--files-key-glow);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--panel-bar-height);
+  padding: 0 8px 0 10px;
+  flex: none;
+  background: linear-gradient(180deg, var(--bar-key-dim) 0%, var(--surface-elevated) 100%);
+  background-color: var(--surface-elevated); /* explicit contrast substrate */
+  border-bottom: 1px solid var(--bar-key-glow);
+}
+
+.bar[data-panel='golem'] {
+  /* This bar mounts inside GolemPanel today (data-accent="project"), but the
+     rule must not depend on where it is mounted — a future move outside that
+     pin, under the `.ide` root's dynamic per-workspace data-accent attribute,
+     would repaint GOLEM in the active workspace hue (rust/node/...) if these
+     read the --accent-dim / --accent-glow custom properties, which ARE
+     overridden per workspace. --accent-project itself is stable (never
+     repointed), so it stays a var(); the dim/glow are mixed from it — the
+     house idiom for opacity variants of the pinned accent — rather than
+     copying its literal bytes, which would stop tracking a retuned
+     --accent-project (#271 review round 3). */
+  --bar-key: var(--accent-project);
+  --bar-key-dim: color-mix(in srgb, var(--accent-project) 12%, transparent);
+  --bar-key-glow: color-mix(in srgb, var(--accent-project) 25%, transparent);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.identity[data-dragging='true'] {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.identity:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.grip {
+  display: flex;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.grip svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid var(--bar-key-glow);
+  border-radius: 7px;
+  background: var(--bar-key-dim);
+  color: var(--bar-key);
+}
+
+.tile svg,
+.tile img {
+  width: 16px;
+  height: 16px;
+}
+
+/* No token covers this exact alpha (accent-glow is 0.25, accent-dim 0.12), so
+   it is mixed from the pinned project accent at the alpha this halo needs. */
+.bar[data-panel='golem'] .tile {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent-project) 45%, transparent));
+}
+
+.name {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--bar-key);
+  white-space: nowrap;
+}
+
+/* Same as above: 0.4 has no token equivalent, mixed from the pinned accent. */
+.bar[data-panel='golem'] .name {
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent-project) 40%, transparent);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.controls {
+  display: flex;
+  gap: 5px;
+  flex: none;
+  margin-left: auto;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.control svg {
+  width: 13px;
+  height: 13px;
+}
+
+.control:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.control:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.control:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control {
+    transition: none;
+  }
+}

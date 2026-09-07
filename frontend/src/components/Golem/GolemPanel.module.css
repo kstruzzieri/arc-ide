@@ -1,0 +1,951 @@
+/*
+ * The approved Golem mockups (.superpowers/brainstorm/37347-1785974314):
+ * `chat-paradigm.html` concept B — Plan Spine — as the primary, with concept
+ * A's Mission Timeline rail stolen into the transcript, docked right per
+ * `layout.html` option A. The spine itself is Phase 2+ (there are no plans and
+ * no file edits yet); what Phase 1 adopts is the visual language around it —
+ * the chip header, the right-aligned prompt chip, tool calls as chips, the
+ * timeline rail, and the composer strip.
+ *
+ * The panel root carries data-accent="project" (the Terminal.tsx idiom), which
+ * re-points --accent/--accent-dim/--accent-glow to the glacier blue for every
+ * descendant — Send, focus rings, and the Golem chrome wear ONE accent instead
+ * of following the workspace. Pinning matters for contrast: as chip text on
+ * the 12% tint over --surface-elevated, --accent-general lands at 2.98:1 and
+ * --accent-docker at 3.06:1, both under the 4.5:1 text floor.
+ *
+ * Three hues are held locally rather than added to tokens.css, which carries
+ * its own reviewed contrast contract:
+ *   --golem-teal    the mockups' --go. A literal duplicating --accent-go
+ *                   (tokens.css), deliberately invisible to that token's
+ *                   dE-10 drift guard: repointing a workspace accent must
+ *                   never restyle the workspace chip. If --accent-go moves,
+ *                   this stays the mockups' color.
+ *   --golem-purple  the mockups' --purple; the generic hue ramp already carries
+ *                   that exact value with no workspace meaning attached.
+ *   --golem-red     the mockups' cancel uses --err (#ef4444), which lands at
+ *                   3.90:1 on its own 12% tint — under AA. Lifted to the ramp's
+ *                   lighter red: same idiom, 5.00:1 (hover tint 18%, 4.53:1).
+ */
+.panel {
+  --golem-accent: var(--accent);
+  --golem-teal: #12b5cd;
+  --golem-purple: var(--palette-purple);
+  --golem-red: var(--palette-red);
+
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 8px;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+/* Full-bleed chrome: the bar and chips row sit above the padded chat body
+   (the same negative-margin idiom the retired header used). */
+.chrome {
+  display: flex;
+  flex-direction: column;
+  margin: -8px -8px 0;
+  flex: none;
+}
+
+/* While a run is active the mark breathes: a smooth opacity fade 100%↔30% plus
+   a constant soft golem-blue halo so it reads as "lit". Opacity is animated, not
+   `drop-shadow` — WKWebView does not interpolate an animated `drop-shadow`
+   filter and snaps between keyframes (the blink); opacity tweens reliably. The
+   halo is a static filter, so it never blinks and dims together with the mark. */
+.tileIcon[data-live='true'] {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--golem-accent) 40%, transparent));
+  animation: golemBreathe 2s ease-in-out infinite;
+}
+
+/* The undock control's glyph. A character rather than an icon component: it is
+   the standard "open in a new window" mark, and the button's label carries the
+   meaning for anyone who cannot see it. */
+.undockGlyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.liveDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: var(--golem-accent);
+  box-shadow: 0 0 8px var(--golem-accent);
+  animation: golemBreath 1.2s ease-in-out infinite;
+}
+
+.chipsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background-color: var(--surface-elevated);
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.chipDetails {
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.chipSummary {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid var(--surface-border);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chipSummary::-webkit-details-marker {
+  display: none;
+}
+
+.chipSummary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chipDetails[open] .chipSummary {
+  color: var(--text-primary);
+  border-color: var(--golem-accent);
+}
+
+.chipDetailsBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+@keyframes golemBreathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* The streaming caret / working dot blink. */
+@keyframes golemBreath {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.workspace,
+.badge,
+.modelChip {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* `.chip.ws` */
+.workspace {
+  min-width: 0;
+  max-width: 100%;
+  border-color: color-mix(in srgb, var(--golem-teal) 35%, transparent);
+  background-color: color-mix(in srgb, var(--golem-teal) 12%, transparent);
+  color: var(--golem-teal);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Not in the mockups, and not droppable: which machine the prompt would reach
+   is the panel's whole safety story. Given chip geometry so it sits in the row. */
+.badge {
+  border-color: var(--surface-border);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge[data-classification='remote'] {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+/* `.chip.model` — truncation lives on the provider/model children:
+   text-overflow is inert on a flex container itself. */
+.modelChip {
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.provider,
+.model {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The working line under the transcript: an obvious "agent is running" notice,
+   dim like the surrounding chrome, with a glowing golem-blue pulse. */
+.workingNotice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.workingDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--golem-accent);
+  box-shadow: 0 0 6px var(--golem-accent);
+  animation: golemBreath 1.2s ease-in-out infinite;
+}
+
+.workingElapsed {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.endpoint {
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.conversations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.conversationButton {
+  padding: 2px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.conversationButton:hover {
+  background-color: var(--surface-hover);
+}
+
+.conversationButton[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background-color: var(--accent-dim);
+}
+
+/*
+ * Status rows are flat metadata, not content cards: no box, no border bar.
+ * Severity lives in the leading dot (the repo's color-as-marker convention,
+ * 3:1 floor) while the text itself stays slate at AA contrast.
+ */
+.notice,
+.warning {
+  position: relative;
+  margin: 0;
+  padding: 2px 0 2px 14px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.notice::before,
+.warning::before {
+  content: '';
+  position: absolute;
+  top: 8px; /* optically centered on the first line */
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+}
+
+.warning::before {
+  background-color: var(--status-warning);
+}
+
+/* Inline text action inside the unavailable notice — a link, not a chip,
+   since it sits mid-sentence in a status paragraph. */
+.reviewConfigButton {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--golem-accent);
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.reviewConfigButton:hover {
+  color: var(--text-primary);
+}
+
+.reviewConfigButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/*
+ * No timeline rail: the card-rail-with-dots idiom was cut by design revision
+ * (2026-08-09) as generic AI-frontend furniture. Structure comes from the
+ * message idioms themselves — prompt chips right, replies flat, tool chips
+ * small — and liveness from the streaming caret below plus the header chip.
+ */
+.transcript {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.entry {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0;
+}
+
+/* The mockups' block caret: the live reply is plain text for cheap streaming. */
+.transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  margin-left: 2px;
+  vertical-align: middle;
+  background-color: var(--golem-accent);
+  animation: golemBreath 1s infinite;
+}
+
+/* Errors keep the repo's color-as-marker convention: a leading red dot, same
+   geometry as the notice/warning dots above. */
+.entry.error {
+  padding-left: 14px;
+  color: var(--text-secondary);
+}
+
+.entry.error::before {
+  content: '';
+  position: absolute;
+  top: 9px; /* optically centered on the first line */
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--status-error);
+}
+
+.bubble {
+  display: block;
+  min-width: 0;
+}
+
+/* `.usr`: the prompt as a right-aligned chip on an elevated surface. */
+.entry.user {
+  align-items: flex-end;
+}
+
+.entry.user .bubble {
+  max-width: 85%;
+  padding: 7px 10px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+  background-color: var(--surface-hover);
+}
+
+/* `.asst`: flat text, no container at all. */
+.entry.assistant .bubble {
+  line-height: 1.5;
+}
+
+/*
+ * Sanitized assistant markdown, scoped under `.markdown` so nothing here leaks
+ * to the plain user/error rows. Kept compact for the ~280px dock. Contrast on
+ * --surface-panel unless noted: --text-primary 16.30:1, --text-muted 6.71:1,
+ * table --text-secondary 6.96:1, .mdLink --golem-accent 8.33:1; inline and
+ * fenced code use --text-primary on --surface-frame at 17.19:1.
+ */
+.markdown {
+  overflow-wrap: anywhere;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 6px 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 8px 0 4px;
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.markdown h1 {
+  font-size: 14px;
+}
+
+.markdown h2 {
+  font-size: 13px;
+}
+
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 12px;
+}
+
+.markdown strong {
+  font-weight: 700;
+}
+
+.markdown em {
+  font-style: italic;
+}
+
+.markdown del {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.markdown code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background-color: var(--surface-frame);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* The fenced block scrolls inside its own box so the panel body never scrolls
+   horizontally. */
+.markdown pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.markdown ul {
+  list-style: disc;
+}
+
+.markdown ol {
+  list-style: decimal;
+}
+
+/* GFM task items already carry disabled checkboxes; a bullet would duplicate
+   their marker. Attribute matching keeps the plugin-owned class global. */
+.markdown ul[class~='contains-task-list'] {
+  list-style: none;
+}
+
+.markdown li {
+  margin: 2px 0;
+}
+
+/* A loose or task-list item wraps its text in a <p>; don't double its spacing. */
+.markdown li > p {
+  margin: 0;
+}
+
+.markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--golem-accent) 40%, transparent);
+  color: var(--text-muted);
+}
+
+/* Links are our own inert span (never an <a>); style it as a link but with a
+   default cursor since it does not navigate. */
+.mdLink {
+  color: var(--golem-accent);
+  text-decoration: underline;
+  cursor: default;
+  user-select: text;
+}
+
+.mdLinkDestination {
+  color: var(--text-muted);
+}
+
+/* Dropped image, shown as its alt text so the reply still reads. */
+.mdImage {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* react-markdown emits a bare <table> with no wrapper, so the table itself is
+   the scroll box — it can be wider than the dock without pushing the panel. */
+.markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 6px 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.markdown th,
+.markdown td {
+  padding: 3px 6px;
+  border: 1px solid var(--surface-border);
+  text-align: left;
+}
+
+.markdown th {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.markdown td {
+  color: var(--text-secondary);
+}
+
+/* `.tool`: a compact bordered chip, the tool's name in the mockups' purple.
+   The chip is a button now — clicking it reveals the operation detail below. */
+.entry.tool {
+  align-items: flex-start;
+  color: var(--text-secondary);
+}
+
+.toolChip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: baseline;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.toolChip:hover {
+  background-color: var(--surface-hover);
+}
+
+.toolName {
+  color: var(--golem-purple);
+  font-family: var(--font-mono);
+}
+
+.toolActivity {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/*
+ * A collapsed run of tool calls. The header carries the summary and a leading
+ * status marker (failed > running > done), colour as marker at the 3:1 floor
+ * while --text-secondary summary text holds 6.96:1 on --surface-panel.
+ */
+.cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.clusterHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.clusterHeader:hover {
+  background-color: var(--surface-hover);
+}
+
+.clusterMarker {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-muted); /* done: 6.71:1 on --surface-panel */
+}
+
+.clusterMarker[data-status='running'] {
+  background-color: var(--golem-accent); /* 8.34:1 */
+}
+
+.clusterMarker[data-status='failed'] {
+  background-color: var(--status-error); /* 4.75:1 */
+}
+
+.clusterSummary {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
+.clusterChevron {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.clusterBody {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/*
+ * Chip detail: the honest fields plus the raw payload JSON as text. Labels in
+ * --text-muted (6.71:1), values in --text-secondary (7.35:1) on --surface-frame;
+ * the raw <pre> sits on --surface-base where --text-secondary holds 7.87:1.
+ */
+.toolDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 5px;
+  background-color: var(--surface-frame);
+  font-size: 10px;
+}
+
+.detailPair {
+  display: flex;
+  gap: 6px;
+}
+
+.detailPair dt {
+  flex: none;
+  min-width: 54px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.detailPair dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.detailText {
+  white-space: pre-wrap;
+}
+
+.detailNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.entryText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.background,
+.consent,
+.queued {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 6px;
+}
+
+.backgroundRow,
+.queued {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.backgroundRow {
+  padding: 0;
+  border: none;
+}
+
+.backgroundLabel {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.backgroundLabel:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.consent {
+  border-color: var(--status-warning);
+}
+
+.consentCopy {
+  margin: 0;
+  font-size: 11px;
+}
+
+.destinationList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.destinationPair {
+  display: flex;
+  gap: 6px;
+}
+
+.destinationPair dt {
+  color: var(--text-muted);
+  min-width: 58px;
+}
+
+.destinationPair dd {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.consentActions,
+.composerActions {
+  display: flex;
+  gap: 6px;
+}
+
+.queuedInput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 4px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.queuedState {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* `.composer`: an elevated strip under the transcript, the field sitting on the
+   panel surface inside it. Ours stays a column — the field is a 3-row textarea
+   and the actions are three buttons, not the mockup's single line plus Cancel. */
+.composerRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 -8px -8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--surface-border-subtle);
+  background-color: var(--surface-elevated);
+}
+
+/* Auto-grown from JS to fit the draft; rows=3 is the first-paint floor and the
+   ceiling below is where it starts to scroll. No native handle to jump. */
+.composer {
+  width: 100%;
+  max-height: 160px;
+  padding: 7px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 7px;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
+  resize: none;
+  overflow-y: auto;
+}
+
+.composer:focus-visible,
+.queuedInput:focus-visible,
+.conversationButton:focus-visible,
+.backgroundLabel:focus-visible,
+.toolChip:focus-visible,
+.clusterHeader:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.composer:disabled {
+  color: var(--text-disabled);
+}
+
+/* `flex: none` so a long label in the row beside them — a background workspace
+   name, a queued message — never crushes the button out of a narrow panel. */
+.primaryButton,
+.secondaryButton {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.primaryButton {
+  border-color: var(--accent);
+  background-color: var(--accent-dim);
+}
+
+.primaryButton:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+/* `.composer .cancel`: the one red affordance in the panel, and only while a
+   run is live. Ordered after the shared rules so it wins on equal specificity. */
+.cancelButton {
+  border-color: color-mix(in srgb, var(--golem-red) 40%, transparent);
+  background-color: color-mix(in srgb, var(--golem-red) 12%, transparent);
+  color: var(--golem-red);
+  font-weight: 600;
+}
+
+/* 18%, not the mockups' visual 20%: #f87171 holds 4.53:1 at 18% and drops to
+   4.37:1 at 20%. */
+.cancelButton:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--golem-red) 18%, transparent);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversationButton,
+  .toolChip,
+  .clusterHeader,
+  .primaryButton,
+  .secondaryButton {
+    transition: none;
+  }
+
+  .tileIcon[data-live='true'],
+  .liveDot,
+  .workingDot,
+  .transcript[data-live='true'] .entry.assistant:last-child .entryText::after {
+    animation: none;
+  }
+}

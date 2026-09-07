@@ -1,0 +1,14 @@
+{
+  "verdict": "reject",
+  "projection": {
+    "state": "limited",
+    "sourceOrigin": "working_directory",
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "readOnly": false,
+    "editable": true,
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": []
+  }
+}

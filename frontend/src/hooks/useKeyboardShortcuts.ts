@@ -1,31 +1,14 @@
-import { useEffect } from 'react';
-import { useOpenFolder } from './useOpenFolder';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { isMac } from '../utils/platform';
-import { useIDEStore, type NavigationLocation } from '../stores/ideStore';
-import { useSearchStore } from '../stores/searchStore';
-import { navigateToEditorLocation } from '../utils/editorNavigation';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { resolveEffectiveRunTargetId } from '../utils/resolveEffectiveRunTarget';
-import { getVisualState } from '../utils/visualState';
-import { startProfile, restartProfile } from '../utils/profileActions';
-
-function navigateBack() {
-  const state = useIDEStore.getState();
-  const current = currentEditorLocation(state);
-  if (!current) return;
-  const target = state.goBack(current);
-  if (!target) return;
-  navigateToEditorLocation(target.fileId, target.line, target.column);
-}
-
-function navigateForward() {
-  const state = useIDEStore.getState();
-  const current = currentEditorLocation(state);
-  if (!current) return;
-  const target = state.goForward(current);
-  if (!target) return;
-  navigateToEditorLocation(target.fileId, target.line, target.column);
-}
+import { useIDEStore } from '../stores/ideStore';
+import { EventsOn } from '../wails/runtime';
+import {
+  navigateBack,
+  navigateForward,
+  runOrRestartSelectedProfile,
+  showGolem,
+  showSidebarView,
+} from '../utils/commands';
 
 /**
  * Registers global keyboard shortcuts for the IDE.
@@ -37,8 +20,15 @@ function navigateForward() {
  * "navigate:back" / "navigate:forward" events to the frontend. Both
  * the native events and the JS keydown handler call the same nav functions.
  */
-export function useKeyboardShortcuts() {
-  const { openFolder } = useOpenFolder();
+export function useKeyboardShortcuts(
+  openFolder: () => void,
+  openCommandPalette: () => void,
+  isCommandPaletteOpen: boolean
+) {
+  const commandPaletteOpenRef = useRef(isCommandPaletteOpen);
+  useLayoutEffect(() => {
+    commandPaletteOpenRef.current = isCommandPaletteOpen;
+  }, [isCommandPaletteOpen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -54,58 +44,46 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      const exactPaletteModifier = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (exactPaletteModifier && e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        openCommandPalette();
+        return;
+      }
+
       // Cmd+R / Ctrl+R — run (or restart) the selected run-profile target.
       // preventDefault is essential: WKWebView treats Cmd+R as page reload.
       if (modifier && (e.key === 'r' || e.key === 'R') && !e.shiftKey) {
         e.preventDefault();
-        const s = useIDEStore.getState();
-        const id = resolveEffectiveRunTargetId({
-          selectedProfileId: s.selectedProfileId,
-          profiles: s.runProfiles,
-          profileState: s.runProfileState,
-          hiddenProfileIds: s.hiddenProfileIds,
-          activeWorkspaceId: s.activeWorkspaceId,
-        });
-        if (!id) return;
-        if (s.restartingProfileIds.includes(id)) return; // restart already in flight
-        const target = s.runProfiles.find((p) => p.id === id);
-        if (!target) return;
-        const vs = getVisualState(
-          id,
-          s.runOutputs[id]?.state,
-          s.stoppingProfileIds,
-          s.restartingProfileIds
-        );
-        if (vs === 'stopping') return; // includes stop-in-flight
-        if (vs === 'running') restartProfile(id, target.name);
-        else startProfile(id, target.name);
+        runOrRestartSelectedProfile();
         return;
       }
 
+      // One shape for every platform-modifier+Shift chord below. Alt is
+      // excluded: Alt makes a different chord, not a sloppier spelling of this
+      // one, and the OS or the webview may already own it.
+      const chordModifier = modifier && e.shiftKey && !e.altKey;
+
       // Cmd+Shift+F / Ctrl+Shift+F — Workspace search.
-      if (modifier && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      if (chordModifier && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
-        const ide = useIDEStore.getState();
-        if (ide.activeSidebarView !== 'search') {
-          ide.setSidebarView('search');
-        }
-        if (ide.isLeftPanelCollapsed) {
-          ide.toggleLeftPanel();
-        }
-        useSearchStore.getState().requestInputFocus();
+        showSidebarView('search');
+        return;
+      }
+
+      // Cmd+Shift+I / Ctrl+Shift+I — Golem chat.
+      // preventDefault is essential: both WKWebView and Chromium claim this
+      // chord for developer tools.
+      if (chordModifier && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        showGolem();
         return;
       }
 
       // Cmd+Shift+Y / Ctrl+Shift+Y — Structure (current-file outline).
-      if (modifier && e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+      if (chordModifier && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
-        const ide = useIDEStore.getState();
-        if (ide.activeSidebarView !== 'structure') {
-          ide.setSidebarView('structure');
-        }
-        if (ide.isLeftPanelCollapsed) {
-          ide.toggleLeftPanel();
-        }
+        showSidebarView('structure');
         return;
       }
 
@@ -121,21 +99,26 @@ export function useKeyboardShortcuts() {
 
       if (isBack || isForward) {
         const state = useIDEStore.getState();
-        const current = currentEditorLocation(state);
-        if (!current) return;
-
-        const target = isBack ? state.goBack(current) : state.goForward(current);
-        if (!target) return;
+        const hasTarget = isBack
+          ? state.navigationHistory.length > 0
+          : state.navigationForward.length > 0;
+        if (!state.activeFileId || !hasTarget) return;
 
         e.preventDefault();
-        navigateToEditorLocation(target.fileId, target.line, target.column);
+        if (isBack) navigateBack();
+        else navigateForward();
+        return;
       }
     };
 
     // Native menu events from Wails (needed on macOS where WKWebView
     // may intercept Cmd+[ / Cmd+] for browser navigation).
-    const cancelBack = EventsOn('navigate:back', navigateBack);
-    const cancelForward = EventsOn('navigate:forward', navigateForward);
+    const cancelBack = EventsOn('navigate:back', () => {
+      if (!commandPaletteOpenRef.current) navigateBack();
+    });
+    const cancelForward = EventsOn('navigate:forward', () => {
+      if (!commandPaletteOpenRef.current) navigateForward();
+    });
 
     window.addEventListener('keydown', handleKeyDown);
     return () => {
@@ -143,19 +126,5 @@ export function useKeyboardShortcuts() {
       cancelBack();
       cancelForward();
     };
-  }, [openFolder]);
-}
-
-function currentEditorLocation(
-  state: ReturnType<typeof useIDEStore.getState>
-): NavigationLocation | null {
-  const fileId = state.activeFileId;
-  if (!fileId) return null;
-
-  const cursor = state.cursorPositions[fileId] ?? state.cursorPosition;
-  return {
-    fileId,
-    line: cursor.line,
-    column: cursor.column,
-  };
+  }, [openFolder, openCommandPalette]);
 }

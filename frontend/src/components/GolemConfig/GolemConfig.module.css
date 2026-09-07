@@ -1,0 +1,1471 @@
+/*
+ * Golem configuration workspace (#263 Slice B, spec §4, mockup v10).
+ *
+ * Grammar, verbatim from §4.7: only buttons are filled; status is a dot plus
+ * plain text, never a bordered pill; cards hold separated row strips; errors
+ * render inside the strip that owns them. Data is plain text with mono
+ * identifiers. Instructional copy never drops below --text-muted (6.71:1 on
+ * --surface-panel); --text-disabled is reserved for the inert em-dash placeholder
+ * and for status dots, which always carry a text label beside them.
+ *
+ * The v10 mockup's palette is this app's token set already (--base/--frame/
+ * --panel/--elevated/--hover/--border/--tp/--ts/--tm/--td/--accent/--teal/
+ * --warn/--red map 1:1 onto the tokens used below), so nothing is re-declared.
+ *
+ * Width: the page caps at 920px and the ROOT is the container. Below 720px of
+ * container width the column strips stack into label/value rows, so a narrow
+ * centre pane never scrolls horizontally — no viewport media query and no
+ * width prop is involved.
+ */
+
+.root {
+  container-type: inline-size;
+  container-name: golem-config;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.page {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background-color: var(--surface-base);
+  box-shadow: var(--shadow-panel);
+}
+
+/* ── masthead ───────────────────────────────────────────────────────────── */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--surface-border);
+  border-radius: 9px 9px 0 0;
+  background-color: var(--surface-elevated);
+}
+
+.title {
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.title:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.revision {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.source {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── buttons: the only filled elements on the page ──────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.quiet {
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+/* ── status: dot + text, never a bordered pill ──────────────────────────── */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.statusDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-disabled);
+}
+
+.status[data-tone='ok'] .statusDot {
+  background-color: var(--accent-go);
+}
+
+.status[data-tone='warn'] .statusDot {
+  background-color: var(--status-warning);
+}
+
+.status[data-tone='bad'] .statusDot {
+  background-color: var(--palette-red);
+}
+
+/* ── body + cards ───────────────────────────────────────────────────────── */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 18px 22px 22px;
+}
+
+.card {
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background-color: var(--surface-panel);
+}
+
+/*
+ * No left accent bar. A 3px rule down one rounded edge reads as a stray sliver
+ * rather than structure; the header already separates itself with its own
+ * background and its bottom border.
+ */
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--surface-border);
+  border-radius: 9px 9px 0 0;
+  background-color: var(--surface-hover);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 12px;
+}
+
+/*
+ * The header row and the strips below it are SEPARATE grids that must line up,
+ * so they share one template per card (.providerGrid / .routeGrid /
+ * .definedGrid) and one horizontal inset. The inset is 15px, not 14px, because
+ * a strip carries a 1px border and the header does not — with border-box that
+ * is 1px of content-box offset the header has to match.
+ */
+.columns {
+  display: grid;
+  gap: 14px;
+  padding: 2px 15px 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A row is its strip plus whatever the strip owns: its diagnostics and, while
+   it is expanded, its editor. */
+.row {
+  display: flex;
+  flex-direction: column;
+}
+
+.strip {
+  display: grid;
+  gap: 14px;
+  align-items: center;
+  padding: 9px 14px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+  background-color: var(--surface-frame);
+}
+
+/*
+ * Each cell names its own column, because the visible header row above the
+ * strips is decorative. Visually hidden while that header row is showing, and
+ * promoted to a real stacked label under the narrow container query below — one
+ * element serving both, so nothing is announced twice.
+ */
+.cellLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * The expanded strip is the open editor's MASTHEAD: the record's title bar,
+ * not another row of the editable surface below. It takes one surface step up
+ * from the strips' frame fill (the same header idiom .cardHead uses), keeps
+ * its full-width hairline beneath, and shares the editor's accent edge.
+ * Closed strips stay on the flat frame fill, so the open row is the one that
+ * pops.
+ */
+.strip[data-expanded] {
+  border-color: var(--accent);
+  border-bottom-color: var(--surface-border-subtle);
+  border-radius: 8px 8px 0 0;
+  background-color: var(--surface-hover);
+}
+
+/* The record's identity leads the masthead — one size up from every other
+   cell in the row (weight is already 700 on the base class). */
+.strip[data-expanded] .useCase {
+  font-size: 13px;
+}
+
+/* The metadata trail (provider, model) steps back to secondary ink so the
+   name and the live state carry the row. .meta cells are muted already. */
+.strip[data-expanded] .value {
+  color: var(--text-muted);
+}
+
+/* The live-state signal: "editing…" reads in accent, dot and text, so the
+   eye lands on the state after the name. Copy still carries the meaning. */
+.strip[data-expanded] .status {
+  color: var(--accent);
+}
+
+.strip[data-expanded] .statusDot {
+  background-color: var(--accent);
+}
+
+/*
+ * Every template below ends in a FIXED actions track, never `auto`. An `auto`
+ * track sizes to its content, and the header's actions cell is empty while a
+ * strip's holds a status and one or two buttons — so `auto` resolved to 0 in
+ * the header and ~60-160px in the rows, and the `1fr` column swallowed the
+ * difference. That pushed every column AFTER the `1fr` to the right in the
+ * header only, which is exactly the drift Keith saw on THINK and STATUS.
+ *
+ * ponytail: a fixed reserve, sized to each card's ordinary row. The rare wide
+ * row (a staged provider's extra Unstage, a defined model's "Unstage removal"
+ * beside "Needs review") wraps inside .rowActions rather than widening the
+ * track. `grid-template-columns: subgrid` is the real fix and needs the header
+ * and the strips to share one grid container — a DOM change that would break
+ * the list semantics the rows carry, so it waits for a reason bigger than this.
+ */
+.providerGrid {
+  grid-template-columns: 130px 1fr 110px 150px 172px;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ── row editor ─────────────────────────────────────────────────────────── */
+
+.editor {
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--accent);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background-color: var(--surface-frame);
+}
+
+.editorLegend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/*
+ * The variant's belowgrid: capabilities left, Think right. Auto-fit rather than
+ * a fixed pair, so the single-child case (no thinking capability exposed) fills
+ * the width instead of being squeezed into half of it.
+ */
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px 18px;
+  align-items: start;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.fieldHint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--palette-red);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * One EXPLICIT control box for every single-line field on this surface, the
+ * mockup's .ctl rule verbatim: a min-height lets a <select>'s intrinsic
+ * metrics win over the text input beside it (the API-format select rendered
+ * shorter than Endpoint), so the height and line box are stated instead of
+ * inferred, and the select below drops its native chrome so nothing native
+ * can disagree. Every .input consumer is a single-line input or select —
+ * introduce a textarea and it needs its own class, not this one.
+ */
+.input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 28px;
+}
+
+/* The drawn caret, so a select's box cannot compute taller than an input. */
+select.input {
+  appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2390a0b6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--palette-red);
+}
+
+.input:disabled {
+  opacity: 0.5;
+}
+
+.checkbox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/*
+ * A DRAWN indicator, not `accent-color`. The browser desaturates an
+ * accent-coloured native box, which at 13px left checked and unchecked barely
+ * distinguishable on this dark theme. The real input stays in the DOM,
+ * focusable and labelled — it is only made transparent, with a span drawn in
+ * its place — so keyboard, screen-reader state, and label clicks are untouched.
+ */
+.checkboxInput {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  opacity: 0;
+}
+
+.checkboxBox {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  background-color: var(--surface-base);
+}
+
+/* The tick: two borders of an empty box, rotated. Dark ink over the accent. */
+.checkboxBox::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid var(--surface-base);
+  border-width: 0 2px 2px 0;
+  opacity: 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.checkboxInput:checked + .checkboxBox {
+  border-color: var(--accent);
+  background-color: var(--accent);
+}
+
+.checkboxInput:checked + .checkboxBox::after {
+  opacity: 1;
+}
+
+/*
+ * Locked on by the use-case floor: still filled — it IS checked — but one step
+ * back from the live accent, so a required capability does not read as loudly
+ * as one the user chose.
+ */
+.checkboxInput:checked:disabled + .checkboxBox {
+  border-color: var(--accent-dark);
+  background-color: var(--accent-dark);
+}
+
+/* The input carries focus, so the drawn box has to show it. */
+.checkboxInput:focus-visible + .checkboxBox {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A capability the use-case floor requires: checked, disabled, and labelled. */
+.checkboxLocked {
+  color: var(--text-muted);
+}
+
+/*
+ * The mockup greys this to its --td. Here it names WHY a control is locked, so
+ * it is instructional copy and holds the §4.7 --text-muted floor instead.
+ */
+.requiredTag {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.editorFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.primary {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--surface-base);
+  font-weight: 600;
+}
+
+/* v9's danger-quiet: destructive, and never the filled control on the page. */
+.danger {
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--palette-red);
+}
+
+.danger:hover:not(:disabled) {
+  border-color: var(--palette-red);
+}
+
+/* ── notice tones ───────────────────────────────────────────────────────────
+ *
+ * Every boxed notice on this surface carries a `data-tone`, and the tone owns
+ * the WHOLE outline plus a faint tint of the same hue. A neutral outline made
+ * three different intents — "here is a fact", "this reaches further than you
+ * think", "this will not proceed" — look identical, which is the one thing a
+ * notice must never do.
+ *
+ * info     — a fact the reader should know; nothing is required of them.
+ * caution  — this changes more than the row, or needs a decision before Apply.
+ * blocking — nothing was written, or nothing can be until this is resolved.
+ *
+ * Severity never rests on colour alone: each of these carries copy, and the
+ * page diagnostics also print the literal word Blocking or Notice.
+ */
+.notice[data-tone='info'],
+.disclosure[data-tone='info'],
+.panel[data-tone='info'],
+.rowDiagnostic[data-tone='info'],
+.diagnostic[data-tone='info'] {
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface-panel));
+}
+
+.notice[data-tone='caution'],
+.disclosure[data-tone='caution'],
+.panel[data-tone='caution'],
+.rowDiagnostic[data-tone='caution'],
+.diagnostic[data-tone='caution'] {
+  border-color: var(--status-warning);
+  background-color: color-mix(in srgb, var(--status-warning) 10%, var(--surface-panel));
+}
+
+.notice[data-tone='blocking'],
+.disclosure[data-tone='blocking'],
+.panel[data-tone='blocking'],
+.rowDiagnostic[data-tone='blocking'],
+.diagnostic[data-tone='blocking'] {
+  border-color: var(--palette-red);
+  background-color: color-mix(in srgb, var(--palette-red) 10%, var(--surface-panel));
+}
+
+/* One side of the editor below the band: capabilities, or the think control. */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* A checklist is a real fieldset — the legend is its accessible name. */
+.capabilities,
+.manual {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+}
+
+.manual {
+  gap: 10px;
+}
+
+/*
+ * A disclosure is copy the reader must act on — what else this change governs,
+ * what it removes — so it never drops below --text-secondary (§4.7).
+ */
+.disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.disclosureText {
+  margin: 0;
+}
+
+/* ── inline model band (revamp v2, Treatment 1) ─────────────────────────────
+ *
+ * The editor grows instead of overlaying, and nothing here is positioned, so
+ * nothing can drift from its anchor or be clipped by an ancestor — the whole
+ * class of bug the portaled popup had. Cards stay uniformly compact; the
+ * master-detail strip below the grid owns every fact beyond name and type.
+ */
+.band {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bandHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.bandFilter {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* Slice D's explicit "Refresh list" action lands here; empty today. */
+.bandRefreshSlot {
+  display: contents;
+}
+
+.bandRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Height parity is the BASE .input rule now: the band's explicit-height fix
+   moved there when the provider editor's API-format select showed the same
+   select-vs-input drift, so every field on the surface shares one box. */
+.bandProvider {
+  flex: none;
+  width: 160px;
+}
+
+.bandRow input {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Four card rows plus a peek of the fifth: the partial row is the affordance
+ * that says "this scrolls". Derived from the card height rather than a magic
+ * number, so tuning the card tunes the bound with it. The 20px peek spans the
+ * fourth inter-row gap plus a sliver of the fifth row's cards.
+ *
+ * The card height is the card's own two fixed lines — 18px padding + ~16px
+ * name line + 6px gap + ~17px metadata line + 2px border ≈ 59px, rounded up so
+ * the bound never clips the fourth row. The metadata row renders even when its
+ * facts are sparse, so every card resolves to the same height — NOMINALLY: a
+ * long name wrapping to a second line or a blocked card's reason-chip row can
+ * exceed the token, so "four rows plus a peek" is the ordinary geometry, not
+ * a guarantee. The bound and its scroll behave the same either way.
+ *
+ * This is the one deliberate scroll region in the editor. The strip below sits
+ * in normal flow — an earlier sticky strip overlaid the last card row and its
+ * implicit scroll fought the workspace's own.
+ */
+.modelGrid {
+  --golem-card-height: 60px;
+  --golem-grid-gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--golem-grid-gap);
+  max-height: calc(4 * var(--golem-card-height) + 3 * var(--golem-grid-gap) + 20px);
+  overflow-y: auto;
+  /* Scrollbar treatment is the app-wide one in styles/reset.css. */
+}
+
+.modelCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--golem-card-height, 52px);
+  padding: 9px 11px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 8px;
+  background-color: var(--surface-base);
+  cursor: pointer;
+}
+
+.modelCard:hover {
+  background-color: var(--surface-hover);
+}
+
+/* The roving tabindex lands here, so the focus ring is the card itself. */
+.modelCard[data-active] {
+  border-color: var(--accent);
+}
+
+.modelCard:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.modelCardChosen {
+  border-color: var(--palette-cyan);
+  background-color: color-mix(in srgb, var(--palette-cyan) 10%, transparent);
+}
+
+.modelCardTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modelCardMark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--palette-cyan);
+}
+
+/*
+ * Base rules, not only descendant ones: these classes are referenced straight
+ * from ModelBand, and .factTag lives in the DOCK's module — a different
+ * stylesheet this tree never loads. Without them the tags render unstyled in a
+ * real build, and .modelName loses the mono/wrap treatment that keeps a long
+ * identifier inside a 190px cell.
+ */
+.factTag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.modelName {
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The declare fieldset, in flow beneath the grid. */
+.bandFacts {
+  display: flex;
+  flex-direction: column;
+}
+
+.modelCardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.modelCardFacts {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.modelCardDeclare {
+  border-style: dashed;
+  border-color: var(--surface-border);
+}
+
+.modelCardDeclare .modelName {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+/* Shown for its REASON, never chosen. */
+.modelCardBlocked {
+  cursor: default;
+}
+
+.modelCardBlocked:hover {
+  background-color: var(--surface-base);
+}
+
+.modelCardBlocked .modelName {
+  color: var(--text-muted);
+}
+
+.capChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.capChip {
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* This capability is one the floor asked for. */
+.capChipFloor {
+  border-color: color-mix(in srgb, var(--palette-cyan) 45%, transparent);
+  color: var(--palette-cyan);
+}
+
+/* Exactly why a hidden model is hidden. */
+.capChipMissing {
+  border-color: var(--palette-red);
+  color: var(--palette-red);
+}
+
+/* ── the master-detail strip (revamp v2, Treatment 1) ──────────────────────
+ *
+ * One surface below the grid in three states — declare form, dashed
+ * placeholder, or readout — so it never jumps into existence and the grid never
+ * reflows. In NORMAL FLOW: it was sticky, which overlaid the last card row and
+ * gave the band a second scroll context fighting the workspace's. The grid is
+ * bounded instead, which keeps the strip permanently visible without either.
+ */
+.detail {
+  padding: 10px 14px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-frame);
+}
+
+.detailEmpty {
+  padding: 9px 14px;
+  border-style: dashed;
+  border-color: var(--surface-border-subtle);
+  background-color: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.detailName {
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* Names the owner explicitly, so the strip is never read as free-floating. */
+.detailOwner {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Previewing, not assigned: says how to commit instead of claiming a state. */
+.detailHint {
+  flex: none;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.detailBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 20px;
+  align-items: start;
+}
+
+/* Two halves only when there is a second half to show. */
+.detailBody[data-split] {
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+}
+
+/* The hairline that separates read-only facts from the editable exposure. */
+.detailExposure {
+  padding-left: 20px;
+  border-left: 1px solid var(--surface-border-subtle);
+}
+
+/* The declaration's exposure editor, under its facts form rather than beside
+   it: the form already owns both columns. */
+.detailDeclaredExposure {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+.detailStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+
+/* One overline-to-content distance for the whole strip: these 4px are the
+   rhythm the DECLARES block and the checklist legend share. */
+.detailStat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detailStatKey {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.detailStatValue {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.detailDeclares {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+/*
+ * Mockup density inside the strip: the capability checklist flows as a
+ * wrapping row of columns instead of one tall column, and sheds the boxed
+ * chrome — the strip already draws the surface, and the stacked column was
+ * most of the strip's height. The 4px row gap matches the overline-to-content
+ * rhythm of the facts half (.detailStat / .detailDeclares), so the legend sits
+ * over its checkboxes exactly as TYPE sits over its value across the hairline.
+ */
+.detail .capabilities {
+  flex-flow: row wrap;
+  gap: 4px 14px;
+  padding: 0;
+  border: 0;
+}
+
+.detail .capabilities > legend,
+.detail .capabilities > .fieldHint {
+  flex-basis: 100%;
+}
+
+/*
+ * Engines pull a fieldset legend into the border area, where it sits flush on
+ * the first checkbox row with no gap at all. A floated legend is exempt from
+ * that special-casing, and floats are inert inside a flex container — so this
+ * only forces the legend to lay out as a normal flex item, where the row gap
+ * above actually applies to it.
+ */
+.detail .capabilities > legend {
+  float: left;
+}
+
+/* Even columns, per the mockup's minmax(118px, 1fr) checkbox grid. */
+.detail .capabilities .checkbox {
+  flex: 0 0 auto;
+  min-width: 118px;
+}
+
+/* The think control inline, per the mockup: label beside a narrow select. */
+.detailExposure .field,
+.detailDeclaredExposure .field {
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.detailExposure .field select.input,
+.detailDeclaredExposure .field select.input {
+  flex: none;
+  width: 130px;
+}
+
+.hiddenLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hiddenLine:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.hiddenCount {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.hiddenToggle {
+  color: var(--accent);
+}
+
+.rowDiagnostic {
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid var(--surface-border);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background-color: var(--surface-panel);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* ── draft bar ──────────────────────────────────────────────────────────── */
+
+.draftBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.draftCount {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.draftBlocked {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* One chip per change, reading `target → effect`; each opens its editor. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chip {
+  padding: 2px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--status-warning);
+  color: var(--text-primary);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── result panels: consent, drops, conflict, recovery ──────────────────── */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.panelText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.destination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+
+.dropList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+}
+
+/* ── confirmation dialog (§4.6a) ────────────────────────────────────────── */
+
+.dialog {
+  max-width: 420px;
+  padding: 16px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.dialogTitle {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dialogBody {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Routing rows carry exactly one button (Edit or Assign): a narrow reserve. */
+.routeGrid {
+  grid-template-columns: 90px 120px 1fr 70px 120px 76px;
+}
+
+/*
+ * THINK holds one short enumerated value, or an em-dash when there is none. Left
+ * ragged in a 70px column it lands under the first letters of its own header and
+ * reads as misaligned, so the column centres — header and values together, so
+ * `auto` and the placeholder sit in the same place.
+ */
+.routeGrid > *:nth-child(4) {
+  text-align: center;
+}
+
+.thinkCell {
+  align-items: center;
+}
+
+.definedGrid {
+  grid-template-columns: 130px 130px 1fr 152px;
+}
+
+.identifier {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.useCase {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.metaSub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * A neutral fact under the model name: this route's resolved model also
+ * serves others. Muted ink, no tone — it is coupling information, not a
+ * warning; the sibling names ride the title attribute.
+ */
+.sharedMarker {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/*
+ * The bare em-dash standing in for an absent optional value, and nothing else.
+ * It carries no information a reader could act on — the adjacent Status cell
+ * says what the row's condition is — so --text-disabled is safe here. Any copy
+ * a reader would actually use (an unset endpoint, the role a broken route names)
+ * is meaningful and stays on .value / .meta, above the §4.7 contrast floor.
+ */
+.absent {
+  color: var(--text-disabled);
+}
+
+.subgroup {
+  margin: 10px 0 0;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.empty {
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* ── notices ────────────────────────────────────────────────────────────── */
+
+.notice {
+  margin: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostic {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 14px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.severity {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.diagnosticText {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.subject {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.loading,
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 18px 22px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.error {
+  border: 1px solid var(--palette-red);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.errorText {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── narrow container: strips stack, nothing scrolls sideways ───────────── */
+
+@container golem-config (max-width: 720px) {
+  /* The strip stacks: facts over exposure, the hairline becoming a rule. */
+  .detailBody[data-split] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px 0;
+  }
+
+  .detailExposure {
+    padding-top: 10px;
+    padding-left: 0;
+    border-top: 1px solid var(--surface-border-subtle);
+    border-left: none;
+  }
+
+  .root {
+    padding: 8px;
+  }
+
+  /* Stacked rows have no column header to centre under. */
+  .routeGrid > *:nth-child(4) {
+    text-align: left;
+  }
+
+  .thinkCell {
+    align-items: flex-start;
+  }
+
+  .columns {
+    display: none;
+  }
+
+  .providerGrid,
+  .routeGrid,
+  .definedGrid {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .rowActions {
+    justify-content: flex-start;
+  }
+
+  .editorGrid {
+    grid-template-columns: 1fr;
+  }
+
+  /* The column header row is gone, so each cell's own label becomes visible. */
+  .cellLabel {
+    position: static;
+    display: block;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .diagnostic {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

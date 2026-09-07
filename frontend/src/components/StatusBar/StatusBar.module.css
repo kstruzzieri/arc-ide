@@ -53,3 +53,14 @@
   width: 12px;
   height: 12px;
 }
+
+/* Primary text, not the accent: at 11px on the frame the `general` and
+   `docker` accents fall under 4.5:1, and `general` is the catch-all. */
+.segmentBtn[data-golem-state='active'] {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.segmentBtn[data-golem-state='attention'] {
+  color: var(--status-warning);
+}

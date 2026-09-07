@@ -1,11 +1,11 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.12.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build --manifest && node scripts/check-language-bundle.mjs",
     "preview": "vite preview",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "check:language-bundle": "node scripts/check-language-bundle.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",
@@ -36,11 +37,14 @@
     "@codemirror/view": "^6.39.12",
     "@lezer/highlight": "^1.2.3",
     "@tanstack/react-virtual": "^3.13.22",
+    "@wailsio/runtime": "3.0.0-beta.16",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "devicons-react": "^1.5.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-markdown": "^9.1.0",
+    "remark-gfm": "^4.0.1",
     "zustand": "^5.0.10"
   },
   "devDependencies": {
@@ -64,6 +68,7 @@
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "yaml": "^2.9.0"
   }
 }

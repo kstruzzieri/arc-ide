@@ -84,6 +84,7 @@ function ReloadButton() {
 
   return (
     <button
+      type="button"
       onClick={() => window.location.reload()}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}

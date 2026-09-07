@@ -1,0 +1,129 @@
+version: '3'
+
+tasks:
+  go:mod:tidy:
+    summary: Verifies go.mod/go.sum are tidy without rewriting them
+    internal: true
+    # `-diff` (Go 1.23+) reports what `go mod tidy` WOULD change and exits
+    # non-zero instead of writing: a build must never mutate the module graph
+    # it is building from. Dependency drift fails the build loudly; the fix is
+    # to run `go mod tidy` yourself and commit the result.
+    # run: once so several build tasks depending on it pay for one check.
+    run: once
+    cmds:
+      - go mod tidy -diff
+
+  install:frontend:deps:
+    summary: Install frontend dependencies
+    run: once
+    dir: frontend
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules
+    preconditions:
+      - sh: npm version
+        msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
+    cmds:
+      # `npm ci`, not `npm install`: a build must install the exact pins in
+      # package-lock.json and must never rewrite the lockfile. CI runs the same
+      # command, so a local build cannot drift from a release build.
+      - npm ci
+
+  build:frontend:
+    label: build:frontend (DEV={{.DEV}})
+    summary: Build the frontend project
+    # run: once so the several build tasks that depend on this one share a
+    # single execution: generate:bindings below deletes frontend/bindings
+    # (-clean=true) before rewriting it, and a second concurrent run would
+    # have its bundler read the directory mid-delete, failing intermittently
+    # with 'Could not resolve "./bindings/<pkg>"' (#4637).
+    run: once
+    dir: frontend
+    sources:
+      - "**/*"
+      - exclude: node_modules/**/*
+    generates:
+      - dist/**/*
+    deps:
+      - task: install:frontend:deps
+      - task: generate:bindings
+        vars:
+          BUILD_FLAGS:
+            ref: .BUILD_FLAGS
+          OBFUSCATED:
+            ref: .OBFUSCATED
+    cmds:
+      # Firn's frontend exposes a single `build` script (tsc + vite build +
+      # language-bundle check). The upstream template's DEV-only `build:dev`
+      # script does not exist here; `PRODUCTION` below still marks the mode.
+      - npm run build -q
+    env:
+      PRODUCTION: '{{if eq .DEV "true"}}false{{else}}true{{end}}'
+
+  generate:bindings:
+    summary: Generates bindings for the frontend
+    run: once
+    deps:
+      - task: go:mod:tidy
+    sources:
+      - "**/*.[jt]s"
+      - exclude: frontend/**/*
+      - frontend/bindings/**/*  # Rerun when switching between dev/production mode causes changes in output
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - frontend/bindings/**/*
+    cmds:
+      # `-ts -time-type=string` is the committed binding surface: TypeScript
+      # classes with `time.Time` rendered as ISO strings. Never add `-i`
+      # (interface mode) - it emits a different, incompatible shape.
+      - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true{{if eq .OBFUSCATED "true"}} -obfuscated{{end}} -ts -time-type=string
+
+  generate:icons:
+    summary: Generates Windows `.ico` and Mac `.icns` from `build/appicon.png`.
+    run: once
+    dir: build
+    sources:
+      - "appicon.png"
+    generates:
+      - "darwin/icons.icns"
+      - "windows/icon.ico"
+    cmds:
+      # PNG only. Firn ships no `appicon.icon` Icon Composer source, so the
+      # upstream `-iconcomposerinput/-macassetdir` flags would make macOS 26+
+      # `actool` fail on a missing input instead of using the PNG path.
+      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
+
+  dev:frontend:
+    summary: Runs the frontend in development mode
+    deps:
+      - task: install:frontend:deps
+    dir: frontend
+    cmds:
+      # VITE_PORT is the single source of truth for the dev-server port (root
+      # Taskfile.yml); vite.config.ts deliberately hard-codes no default.
+      - npm run dev -- --port {{.VITE_PORT}} --strictPort
+
+  update:build-assets:
+    summary: Updates the build assets
+    dir: build
+    cmds:
+      # -productdescription overrides config.yml info.description, which the
+      # upstream windows/info.json template otherwise maps to FileDescription.
+      # Windows renders FileDescription as the executable's display name (Task
+      # Manager, the .exe properties sheet), where v2 shipped the product name
+      # rather than a sentence. The value is read back out of config.yml so
+      # productName stays the single source; info.description keeps its real
+      # sentence for every other consumer. releaseScripts.test.ts asserts the
+      # resulting info.json FileDescription == config.yml info.productName.
+      # The extraction accepts a quoted or unquoted scalar (config.yml's exact
+      # YAML style is not a contract) and fails loudly on an empty result
+      # instead of silently handing wails3 an empty -productdescription.
+      - |
+        product_name="$(sed -n 's/^[[:space:]]*productName:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' config.yml)"
+        product_name="$(printf '%s' "$product_name" | sed 's/[[:space:]]*$//;s/^[[:space:]]*//')"
+        test -n "$product_name" || { echo "productName not found in config.yml" >&2; exit 1; }
+        wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir . -productdescription "$product_name"

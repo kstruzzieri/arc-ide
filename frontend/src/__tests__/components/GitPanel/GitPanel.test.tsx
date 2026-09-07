@@ -1,4 +1,4 @@
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -14,6 +14,11 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   GitFileHunks: jest.fn(),
   GitApplyHunk: jest.fn(),
   ReadFile: jest.fn(),
+}));
+
+const mockEnsureEditorFileOpen = jest.fn();
+jest.mock('../../../utils/editorNavigation', () => ({
+  ensureEditorFileOpen: (...args: unknown[]) => mockEnsureEditorFileOpen(...args),
 }));
 
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
@@ -33,8 +38,8 @@ import {
   GitFileAtRev,
   GitFileHunks,
   ReadFile,
-} from '../../../../wailsjs/go/main/App';
-import type { git, workspace } from '../../../../wailsjs/go/models';
+} from '../../../wails/bindings';
+import type { git, workspace } from '../../../wails/bindings';
 
 const mockGitStatus = GitStatus as jest.MockedFunction<typeof GitStatus>;
 const mockGenerate = GitGenerateCommitMessage as jest.MockedFunction<
@@ -91,7 +96,7 @@ function focusWorkspace(
       workspaces: defs.map((d) => ({
         ...d,
         type: 'node',
-        accent: 'blue',
+        accent: 'frontend',
       })) as unknown as workspace.WorkspaceDef[],
     });
   });
@@ -328,7 +333,6 @@ describe('GitPanel diff open', () => {
   });
 
   it('clicking a conflict row opens the file itself, not a diff', async () => {
-    (ReadFile as jest.Mock).mockResolvedValue({ content: 'conflict body' });
     seed([file('clash.go', 'U', 'U', true)]);
 
     render(<GitPanel />);
@@ -337,6 +341,7 @@ describe('GitPanel diff open', () => {
     );
     await act(async () => {});
 
+    expect(mockEnsureEditorFileOpen).toHaveBeenCalledWith('/repo/clash.go');
     expect(useGitStore.getState().diffSession).toBeNull();
     expect(GitFileAtRev).not.toHaveBeenCalled();
   });
@@ -501,8 +506,14 @@ describe('GitPanel commit area', () => {
     act(() => {
       useIDEStore.setState({
         workspaces: [
-          { id: 'ws-frontend', name: 'Frontend', relDir: 'frontend', type: 'node', accent: 'blue' },
-          { id: 'ws-go', name: 'Go', relDir: 'backend', type: 'go', accent: 'green' },
+          {
+            id: 'ws-frontend',
+            name: 'Frontend',
+            relDir: 'frontend',
+            type: 'node',
+            accent: 'frontend',
+          },
+          { id: 'ws-go', name: 'Go', relDir: 'backend', type: 'go', accent: 'python' },
         ] as unknown as workspace.WorkspaceDef[],
       });
     });
@@ -590,6 +601,36 @@ describe('GitPanel conflicts and errors', () => {
     render(<GitPanel />);
 
     expect(screen.getByTestId('git-error')).toHaveTextContent('hook rejected: lint failed');
+  });
+
+  it('opens the selected conflict with the panel-scoped conflict queue', () => {
+    const openMergeResolution = jest.fn();
+    seed([file('clash.go', 'U', 'U', true), file('next.go', 'U', 'U', true)]);
+    useGitStore.setState({ openMergeResolution });
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve clash.go' }));
+
+    expect(openMergeResolution).toHaveBeenCalledWith('clash.go', ['clash.go', 'next.go']);
+  });
+
+  it('delegates ConflictBanner Open to the shared editor navigation utility', async () => {
+    seed([file('clash.go', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open clash.go' }));
+    await act(async () => {});
+
+    expect(mockEnsureEditorFileOpen).toHaveBeenCalledWith('/repo/clash.go');
+  });
+
+  it('distinguishes duplicate conflict basenames by repository path', () => {
+    seed([file('frontend/index.ts', 'U', 'U', true), file('backend/index.ts', 'U', 'U', true)]);
+
+    render(<GitPanel />);
+
+    expect(screen.getByRole('button', { name: 'Open frontend/index.ts' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open backend/index.ts' })).toBeInTheDocument();
   });
 });
 

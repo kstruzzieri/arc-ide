@@ -1,0 +1,9 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "conflict",
+    "conflict": "target",
+    "consentOutcome": "maybe"
+  }
+}

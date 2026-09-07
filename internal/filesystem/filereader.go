@@ -32,7 +32,14 @@ func (r *FileReader) ReadFileWithMetadata(path string) (*FileContent, error) {
 	if err != nil {
 		return nil, err
 	}
+	return r.DecodeBytes(data), nil
+}
 
+// DecodeBytes runs the same detection and decoding ReadFileWithMetadata applies,
+// against bytes the caller already holds. Callers that must decode the exact
+// bytes they hashed or otherwise inspected use this so a second read cannot
+// substitute different content; there is no separate decoder to drift from.
+func (r *FileReader) DecodeBytes(data []byte) *FileContent {
 	result := &FileContent{
 		Size: int64(len(data)),
 	}
@@ -42,7 +49,7 @@ func (r *FileReader) ReadFileWithMetadata(path string) (*FileContent, error) {
 		result.Encoding = "utf-8"
 		result.LineEndings = "none"
 		result.Content = ""
-		return result, nil
+		return result
 	}
 
 	// Detect encoding and decode content
@@ -60,7 +67,7 @@ func (r *FileReader) ReadFileWithMetadata(path string) (*FileContent, error) {
 		result.LineEndings = "none"
 	}
 
-	return result, nil
+	return result
 }
 
 // detectAndDecode detects the encoding and decodes the content to UTF-8 string.

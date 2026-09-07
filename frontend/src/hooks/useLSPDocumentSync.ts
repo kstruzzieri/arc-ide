@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from 'react';
 import { useIDEStore, type EditorFile } from '../stores/ideStore';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { EventsOn } from '../wails/runtime';
 import { languageIdForFile } from '../utils/lspLanguageId';
 import { filePathToURI } from '../utils/lspUri';
 import { pathContainsOrEquals } from '../stores/lspStore';

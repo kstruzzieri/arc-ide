@@ -1,10 +1,17 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import type { filesystem, workspace } from '../../wailsjs/go/models';
+import type { filesystem, runhistory, workspace } from '../wails/bindings';
 import type { RunProfile, RunProfileUIState } from '../types/runProfile';
 import type { FormState } from '../utils/runProfileForm';
 import { LineAssembler } from '../utils/lineAssembler';
+import {
+  DEFAULT_CENTER_LAYOUT,
+  initialCenterReveal,
+  type CenterLayoutPrefs,
+  type CenterOrder,
+  type CenterPanel,
+} from '../utils/centerLayout';
 import type {
   CompoundRun,
   CompoundRunEvent,
@@ -12,10 +19,16 @@ import type {
   OutputEntry,
   RunHistoryEntry,
   RunOutput,
+  RunState,
   RunStatusEvent,
   RunOutputViewMode,
 } from '../types/runOutput';
-import { MAX_OUTPUT_ENTRIES, ALL_PROFILES_ID } from '../types/runOutput';
+import {
+  MAX_OUTPUT_ENTRIES,
+  MAX_RETAINED_RUNS,
+  ALL_PROFILES_ID,
+  historyIdFromSelection,
+} from '../types/runOutput';
 import { estimateDuration, estimateRemaining } from '../utils/estimateCompletion';
 import { parseFileReferences } from '../utils/parseFileReferences';
 import { pathsReferToSameFile } from '../utils/lspUri';
@@ -43,15 +56,13 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
-export type WorkspaceAccent =
-  | 'project'
-  | 'blue'
-  | 'cyan'
-  | 'green'
-  | 'purple'
-  | 'orange'
-  | 'amber'
-  | 'general';
+// Named per workspace type, matching the --accent-* tokens and the accent
+// strings emitted by internal/workspace/detect.go. Re-exported from
+// utils/accent, which owns the one tuple the type and the runtime lookup are
+// both derived from. 'rust' is accepted so the palette is complete; nothing
+// emits it until Cargo.toml detection lands.
+import type { WorkspaceAccent } from '../utils/accent';
+export type { WorkspaceAccent };
 
 // Re-export FileEntry for convenience
 export type FileEntry = filesystem.FileEntry;
@@ -97,7 +108,12 @@ export interface NavigationLocation {
 
 const MAX_NAVIGATION_HISTORY = 50;
 
-const defaultPanelSizes = { left: 260, right: 280, bottom: 200 };
+const defaultPanelSizes = {
+  left: 260,
+  right: 280,
+  bottom: 200,
+  golem: DEFAULT_CENTER_LAYOUT.golemWidth,
+};
 
 function createDefaultWorkspaceSessionState() {
   return {
@@ -106,6 +122,18 @@ function createDefaultWorkspaceSessionState() {
     isRightPanelCollapsed: false,
     isBottomPanelCollapsed: false,
     panelSizes: { ...defaultPanelSizes },
+    // #271 center pair. Preferences persist per repository session; centerReveal
+    // is the transient "which center panel was explicitly requested" target
+    // that the effective-layout budget protects under window pressure.
+    centerOrder: DEFAULT_CENTER_LAYOUT.centerOrder,
+    isGolemPanelCollapsed: DEFAULT_CENTER_LAYOUT.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: DEFAULT_CENTER_LAYOUT.isFilesPanelCollapsed,
+    // Deliberately not seeded here: the revision is a monotonic marker, not a
+    // session preference. Resetting it to 0 would let a session that was never
+    // restored (no saved state file) hand the next reset an unchanged marker,
+    // and the shell would read that reset as a gesture.
+    centerReveal: 'files' as CenterPanel,
+    centerDrag: null as CenterPanel | null,
     openFiles: [] as EditorFile[],
     activeFileId: null as string | null,
     cursorPosition: { line: 1, column: 1 },
@@ -116,6 +144,11 @@ function createDefaultWorkspaceSessionState() {
     dirtyPaths: new Set<string>(),
     selectedPath: null as string | null,
     isRootExpanded: true,
+    // Cleared here rather than in resetWorkspaceRunState: the workspace switch
+    // flush serializes the outgoing workspace synchronously, and that runs
+    // after openWorkspaceByPath but before this restore reset. Clearing any
+    // earlier would persist an empty list under the workspace being left.
+    hiddenProfileIds: [] as string[],
     pendingEditorNavigation: null as EditorNavigationRequest | null,
     navigationHistory: [] as NavigationLocation[],
     navigationForward: [] as NavigationLocation[],
@@ -149,7 +182,20 @@ interface IDEState {
   isLeftPanelCollapsed: boolean;
   isRightPanelCollapsed: boolean;
   isBottomPanelCollapsed: boolean;
-  panelSizes: { left: number; right: number; bottom: number };
+  panelSizes: { left: number; right: number; bottom: number; golem: number };
+  // #271 center pair
+  centerOrder: CenterOrder;
+  isGolemPanelCollapsed: boolean;
+  isFilesPanelCollapsed: boolean;
+  centerReveal: CenterPanel;
+  /**
+   * Counts restores of the center pair; never persisted. A layout that arrives
+   * this way is not a change the user made, and the shell owes it neither an
+   * announcement nor a focus move (spec §2.4, D2, §7).
+   */
+  centerLayoutRevision: number;
+  /** Panel currently being dragged for reorder; never persisted. */
+  centerDrag: CenterPanel | null;
 
   // Editor
   openFiles: EditorFile[];
@@ -172,12 +218,25 @@ interface IDEState {
   runProfileForm: FormState;
   isLoadingProfiles: boolean;
   profilesError: string | null;
+  /** Bumped to re-run the run-profile loader after a failed load. */
+  profilesReloadNonce: number;
   // Header selector: session-only single Cmd+R target. Not persisted; the
   // effective target re-resolves from recency on launch (see resolveEffectiveRunTarget).
   selectedProfileId: string | null;
 
   // Run Output
   runOutputs: Record<string, RunOutput>;
+  runInstanceIdsByProfile: Record<string, string[]>;
+  runLaunchSeqByInstance: Record<string, number>;
+  discardedRunLaunchSeqsByProfile: Record<string, number[]>;
+  discardedThroughLaunchSeqByProfile: Record<string, number>;
+  workspaceEpoch: number;
+  runEventsPaused: boolean;
+  // Explicit current-execution pointer per profile. May point at an id already
+  // removed from runOutputs — that dangling value is the deliberate "cleared
+  // tab" tombstone that keeps late events from resurrecting a run or falling
+  // back to a predecessor (see clearRunOutput / appendRunOutput guards).
+  latestRunInstanceIdByProfile: Record<string, string>;
   runCompounds: Record<string, CompoundRun>;
   compoundIdByRunInstance: Record<string, string>; // aggregate runInstanceId -> compoundId
   activeRunOutputId: string | null;
@@ -187,7 +246,11 @@ interface IDEState {
   // Process lifecycle UI
   stoppingProfileIds: string[];
   restartingProfileIds: string[];
+  stoppingRunInstanceIds: string[];
+  restartingRunInstanceIds: string[];
   runHistory: Record<string, RunHistoryEntry[]>;
+  runHistorySummaries: Record<string, runhistory.Summary>;
+  runHistoryRecords: Record<string, runhistory.Summary | runhistory.Record>;
   waveformData: Record<string, number[]>;
   hiddenProfileIds: string[];
   runStartTimestamps: Record<string, number>;
@@ -226,6 +289,7 @@ interface IDEActions {
   // File Explorer actions
   setDirectoryTree: (tree: filesystem.FileEntry[]) => void;
   mergeChildren: (path: string, children: FileEntry[]) => void;
+  markUnreadable: (path: string) => void;
   toggleExpanded: (path: string) => void;
   addLoadingPath: (path: string) => void;
   removeLoadingPath: (path: string) => void;
@@ -243,7 +307,15 @@ interface IDEActions {
   toggleLeftPanel: () => void;
   toggleRightPanel: () => void;
   toggleBottomPanel: () => void;
-  setPanelSize: (panel: 'left' | 'right' | 'bottom', size: number) => void;
+  setPanelSize: (panel: 'left' | 'right' | 'bottom' | 'golem', size: number) => void;
+  // #271 center pair
+  setCenterOrder: (order: CenterOrder) => void;
+  swapCenterOrder: () => void;
+  setGolemPanelCollapsed: (collapsed: boolean) => void;
+  setFilesPanelCollapsed: (collapsed: boolean) => void;
+  revealCenterPanel: (panel: CenterPanel) => void;
+  applyCenterLayout: (prefs: CenterLayoutPrefs) => void;
+  setCenterDrag: (panel: CenterPanel | null) => void;
 
   // Editor actions
   openFile: (file: EditorFile) => void;
@@ -269,22 +341,25 @@ interface IDEActions {
   // Run Profile actions
   setRunProfilesSnapshot: (
     profiles: RunProfile[],
-    profileState: Record<string, RunProfileUIState>
+    profileState: Record<string, RunProfileUIState>,
+    workspaceEpoch?: number,
+    historySnapshot?: runhistory.Snapshot
   ) => void;
   setSelectedProfile: (id: string | null) => void;
   adoptProfileLocal: (id: string) => void;
   unadoptProfileLocal: (id: string) => void;
   setProfilesLoading: (loading: boolean) => void;
   setProfilesError: (error: string | null) => void;
+  reloadRunProfiles: () => void;
   addOrUpdateProfile: (profile: RunProfile) => void;
   removeProfile: (id: string) => void;
   openRunProfileForm: (state: Exclude<FormState, null>) => void;
   closeRunProfileForm: () => void;
 
   // Run Output actions
-  appendRunOutput: (chunk: OutputChunk) => void;
+  appendRunOutput: (chunk: OutputChunk) => boolean;
   handleRunStatus: (status: RunStatusEvent) => void;
-  clearRunOutput: (profileId: string) => void;
+  clearRunOutput: (runInstanceId: string) => void;
   clearAllRunOutputs: () => void;
   handleCompoundRun: (event: CompoundRunEvent) => void;
   appendCompoundRunOutput: (compoundId: string, stepIdx: number, chunk: OutputChunk) => void;
@@ -298,11 +373,16 @@ interface IDEActions {
   clearProfileStopping: (profileId: string) => void;
   setProfileRestarting: (profileId: string) => void;
   clearProfileRestarting: (profileId: string) => void;
+  setRunStopping: (runInstanceId: string) => void;
+  clearRunStopping: (runInstanceId: string) => void;
+  setRunRestarting: (runInstanceId: string) => void;
+  clearRunRestarting: (runInstanceId: string) => void;
   appendRunHistory: (profileId: string, entry: RunHistoryEntry) => void;
   updateWaveform: (profileId: string, entryCount: number) => void;
   hideProfile: (id: string) => void;
   unhideProfile: (id: string) => void;
   focusProfileOutput: (profileId: string) => void;
+  pauseRunEvents: () => void;
   resetWorkspaceRunState: () => void;
 
   // Per-file view state actions
@@ -331,25 +411,24 @@ interface IDEActions {
 
 type IDEStore = IDEState & IDEActions;
 
-// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable)
-// Line assemblers are per-profile, stored outside Zustand (mutable, not serializable).
+// Line assemblers are per-run-instance, stored outside Zustand (mutable, not serializable).
 // Each assembler's emit callback is swappable so appendRunOutput can collect lines
 // into a local array per chunk, then commit once to the store.
 const lineAssemblers = new Map<string, LineAssembler>();
 const assemblerCallbacks = new Map<string, (entry: OutputEntry) => void>();
 
 function getOrCreateAssembler(
-  profileId: string,
+  runInstanceId: string,
   emitFn: (entry: OutputEntry) => void
 ): LineAssembler {
-  assemblerCallbacks.set(profileId, emitFn);
-  let assembler = lineAssemblers.get(profileId);
+  assemblerCallbacks.set(runInstanceId, emitFn);
+  let assembler = lineAssemblers.get(runInstanceId);
   if (!assembler) {
     assembler = new LineAssembler((entry) => {
-      const cb = assemblerCallbacks.get(profileId);
+      const cb = assemblerCallbacks.get(runInstanceId);
       if (cb) cb(entry);
     });
-    lineAssemblers.set(profileId, assembler);
+    lineAssemblers.set(runInstanceId, assembler);
   }
   return assembler;
 }
@@ -360,6 +439,14 @@ function getOrCreateAssembler(
 // backend key encoding.
 function compoundStepAssemblerKey(compoundId: string, stepIdx: number): string {
   return JSON.stringify([compoundId, stepIdx]);
+}
+
+function clearCompoundStepAssemblers(compoundId: string, steps: CompoundRun['steps']): void {
+  for (const step of steps) {
+    const key = compoundStepAssemblerKey(compoundId, step.idx);
+    lineAssemblers.delete(key);
+    assemblerCallbacks.delete(key);
+  }
 }
 
 // Push a chunk through the assembler for `key` and return the complete lines it
@@ -391,16 +478,482 @@ function getProfileWorkingDirSnapshot(
   return state.runProfiles.find((profile) => profile.id === profileId)?.workingDir;
 }
 
-function createRunOutput(profileId: string, workingDir?: string): RunOutput {
+function createRunOutput(
+  profileId: string,
+  runInstanceId: string,
+  launchSeq: number,
+  workspaceEpoch: number,
+  workingDir?: string
+): RunOutput {
   return {
     profileId,
-    runInstanceId: '',
+    runInstanceId,
+    launchSeq,
+    workspaceEpoch,
     workingDir,
     state: 'idle',
     exitCode: 0,
-    runCount: 0,
     entries: [],
-    previousEntries: [],
+  };
+}
+
+// Caps the merged buffer and reports whether the cap actually dropped anything,
+// so a run whose oldest output was discarded archives as partial.
+function cappedRunEntries(
+  existing: OutputEntry[],
+  incoming: OutputEntry[],
+  wasTruncated: boolean | undefined
+): { entries: OutputEntry[]; truncated: boolean } {
+  const combined = [...existing, ...incoming];
+  const entries = capOutputEntries(combined);
+  return { entries, truncated: wasTruncated === true || entries.length < combined.length };
+}
+
+function capOutputEntries(entries: OutputEntry[]): OutputEntry[] {
+  if (entries.length <= MAX_OUTPUT_ENTRIES) return entries;
+  const retained = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
+  retained.unshift({
+    stream: 'stdout',
+    text: '[truncated — oldest output removed]',
+    timestamp: retained[0]?.timestamp ?? Date.now(),
+  });
+  return retained;
+}
+
+const isTerminalRunState = (state: RunState | undefined): boolean =>
+  state === 'stopped' || state === 'failed' || state === 'success';
+
+export const isLiveRunState = (state: RunState | undefined): boolean =>
+  state === 'idle' || state === 'running';
+
+const MAX_DISCARDED_RUN_SEQS = 50;
+
+type RunIndexState = Pick<
+  IDEState,
+  'runOutputs' | 'runInstanceIdsByProfile' | 'runLaunchSeqByInstance'
+>;
+
+// The run indexes a workspace switch or a failed load must drop together. Kept
+// as one helper so a newly added index cannot be cleared in one caller and
+// missed in the other.
+function emptyWorkspaceRunState() {
+  return {
+    selectedProfileId: null,
+    runOutputs: {},
+    runInstanceIdsByProfile: {},
+    runLaunchSeqByInstance: {},
+    discardedRunLaunchSeqsByProfile: {},
+    discardedThroughLaunchSeqByProfile: {},
+    latestRunInstanceIdByProfile: {},
+    runCompounds: {},
+    compoundIdByRunInstance: {},
+    activeRunOutputId: null,
+    stoppingProfileIds: [],
+    restartingProfileIds: [],
+    stoppingRunInstanceIds: [],
+    restartingRunInstanceIds: [],
+    runHistory: {},
+    runHistorySummaries: {},
+    runHistoryRecords: {},
+    waveformData: {},
+    runStartTimestamps: {},
+    stopRequestTimestamps: {},
+  } satisfies Partial<IDEState>;
+}
+
+/** Run instance ids for a profile, oldest launch first. */
+export function orderedRunIds(state: RunIndexState, profileId: string): string[] {
+  return [...(state.runInstanceIdsByProfile[profileId] ?? [])].sort(
+    (a, b) =>
+      (state.runLaunchSeqByInstance[a] ?? state.runOutputs[a]?.launchSeq ?? 0) -
+      (state.runLaunchSeqByInstance[b] ?? state.runOutputs[b]?.launchSeq ?? 0)
+  );
+}
+
+export function newestLiveRunInstanceId(
+  state: RunIndexState,
+  profileId: string
+): string | undefined {
+  return orderedRunIds(state, profileId)
+    .reverse()
+    .find((id) => isLiveRunState(state.runOutputs[id]?.state));
+}
+
+export function representativeRunInstanceId(
+  state: RunIndexState,
+  profileId: string
+): string | undefined {
+  return newestLiveRunInstanceId(state, profileId) ?? orderedRunIds(state, profileId).at(-1);
+}
+
+function nextLaunchSeq(state: Pick<IDEState, 'runLaunchSeqByInstance'>): number {
+  return Math.max(0, ...Object.values(state.runLaunchSeqByInstance)) + 1;
+}
+
+function eventLaunchSeq(
+  state: Pick<IDEState, 'runLaunchSeqByInstance'>,
+  runInstanceId: string,
+  launchSeq: number | undefined
+): number {
+  return state.runLaunchSeqByInstance[runInstanceId] ?? launchSeq ?? nextLaunchSeq(state);
+}
+
+function acceptsRunEvent(
+  state: Pick<
+    IDEState,
+    | 'workspaceEpoch'
+    | 'runEventsPaused'
+    | 'runOutputs'
+    | 'runInstanceIdsByProfile'
+    | 'runLaunchSeqByInstance'
+    | 'discardedRunLaunchSeqsByProfile'
+    | 'discardedThroughLaunchSeqByProfile'
+    | 'compoundIdByRunInstance'
+  >,
+  event: {
+    runInstanceId: string;
+    profileId: string;
+    launchSeq?: number;
+    workspaceEpoch?: number;
+  }
+): boolean {
+  if (state.runEventsPaused) return false;
+  if (event.workspaceEpoch != null && event.workspaceEpoch !== state.workspaceEpoch) return false;
+
+  const retained =
+    state.runOutputs[event.runInstanceId] != null ||
+    state.runInstanceIdsByProfile[event.profileId]?.includes(event.runInstanceId) === true ||
+    state.compoundIdByRunInstance[event.runInstanceId] != null;
+  const knownSeq = state.runLaunchSeqByInstance[event.runInstanceId];
+  if (retained) {
+    return event.launchSeq == null || knownSeq == null || event.launchSeq === knownSeq;
+  }
+
+  const launchSeq = event.launchSeq ?? knownSeq;
+  if (launchSeq == null) return true;
+  if (state.discardedRunLaunchSeqsByProfile[event.profileId]?.includes(launchSeq)) return false;
+  return launchSeq > (state.discardedThroughLaunchSeqByProfile[event.profileId] ?? 0);
+}
+
+function discardRunSeqs(
+  state: Pick<
+    IDEState,
+    | 'runLaunchSeqByInstance'
+    | 'discardedRunLaunchSeqsByProfile'
+    | 'discardedThroughLaunchSeqByProfile'
+  >,
+  profileId: string,
+  runInstanceIds: string[]
+) {
+  const additions = runInstanceIds
+    .map((id) => state.runLaunchSeqByInstance[id])
+    .filter((seq): seq is number => seq != null);
+  if (additions.length === 0) {
+    return {
+      discardedRunLaunchSeqsByProfile: state.discardedRunLaunchSeqsByProfile,
+      discardedThroughLaunchSeqByProfile: state.discardedThroughLaunchSeqByProfile,
+    };
+  }
+
+  const seqs = [
+    ...new Set([...(state.discardedRunLaunchSeqsByProfile[profileId] ?? []), ...additions]),
+  ].sort((a, b) => a - b);
+  const compacted = seqs.slice(-MAX_DISCARDED_RUN_SEQS);
+  const removed = seqs.slice(0, -MAX_DISCARDED_RUN_SEQS);
+  return {
+    discardedRunLaunchSeqsByProfile: {
+      ...state.discardedRunLaunchSeqsByProfile,
+      [profileId]: compacted,
+    },
+    discardedThroughLaunchSeqByProfile: {
+      ...state.discardedThroughLaunchSeqByProfile,
+      [profileId]: Math.max(state.discardedThroughLaunchSeqByProfile[profileId] ?? 0, ...removed),
+    },
+  };
+}
+
+function retainRunOutput(
+  state: Pick<
+    IDEState,
+    | 'runOutputs'
+    | 'runInstanceIdsByProfile'
+    | 'runLaunchSeqByInstance'
+    | 'discardedRunLaunchSeqsByProfile'
+    | 'discardedThroughLaunchSeqByProfile'
+    | 'latestRunInstanceIdByProfile'
+    | 'activeRunOutputId'
+  >,
+  output: RunOutput
+) {
+  const previousIds = state.runInstanceIdsByProfile[output.profileId] ?? [];
+  const indexedIds = previousIds.includes(output.runInstanceId)
+    ? previousIds
+    : [...previousIds, output.runInstanceId];
+  const runOutputs = { ...state.runOutputs, [output.runInstanceId]: output };
+  const runLaunchSeqByInstance = {
+    ...state.runLaunchSeqByInstance,
+    [output.runInstanceId]: output.launchSeq ?? 0,
+  };
+  const orderedIds = [...indexedIds].sort(
+    (a, b) => (runLaunchSeqByInstance[a] ?? 0) - (runLaunchSeqByInstance[b] ?? 0)
+  );
+  const prunedIds: string[] = [];
+  while (orderedIds.length > MAX_RETAINED_RUNS) {
+    const terminalIndex = orderedIds.findIndex((id) => isTerminalRunState(runOutputs[id]?.state));
+    prunedIds.push(...orderedIds.splice(terminalIndex >= 0 ? terminalIndex : 0, 1));
+  }
+  const retainedIds = orderedIds;
+  for (const runInstanceId of prunedIds) {
+    delete runOutputs[runInstanceId];
+    lineAssemblers.delete(runInstanceId);
+    assemblerCallbacks.delete(runInstanceId);
+  }
+  const discarded = discardRunSeqs(
+    {
+      runLaunchSeqByInstance,
+      discardedRunLaunchSeqsByProfile: state.discardedRunLaunchSeqsByProfile,
+      discardedThroughLaunchSeqByProfile: state.discardedThroughLaunchSeqByProfile,
+    },
+    output.profileId,
+    prunedIds
+  );
+  const previousLatest = state.latestRunInstanceIdByProfile[output.profileId];
+  const previousLatestSeq =
+    (previousLatest == null ? undefined : runLaunchSeqByInstance[previousLatest]) ??
+    Math.max(
+      state.discardedThroughLaunchSeqByProfile[output.profileId] ?? 0,
+      ...(state.discardedRunLaunchSeqsByProfile[output.profileId] ?? [])
+    );
+  const latestRunInstanceId =
+    previousLatest == null ||
+    (runLaunchSeqByInstance[output.runInstanceId] ?? 0) >= previousLatestSeq
+      ? output.runInstanceId
+      : previousLatest;
+  for (const runInstanceId of prunedIds) {
+    delete runLaunchSeqByInstance[runInstanceId];
+  }
+  return {
+    runOutputs,
+    runLaunchSeqByInstance,
+    ...discarded,
+    runInstanceIdsByProfile: {
+      ...state.runInstanceIdsByProfile,
+      [output.profileId]: retainedIds,
+    },
+    latestRunInstanceIdByProfile: {
+      ...state.latestRunInstanceIdByProfile,
+      [output.profileId]: latestRunInstanceId,
+    },
+    activeRunOutputId: prunedIds.includes(state.activeRunOutputId ?? '')
+      ? output.runInstanceId
+      : state.activeRunOutputId,
+  };
+}
+
+function selectionProfileId(
+  state: Pick<
+    IDEState,
+    'runOutputs' | 'runHistorySummaries' | 'runHistoryRecords' | 'compoundIdByRunInstance'
+  >,
+  selection: string | null
+): string | undefined {
+  if (!selection || selection === ALL_PROFILES_ID) return undefined;
+  const historyId = historyIdFromSelection(selection);
+  if (historyId != null) {
+    return (
+      state.runHistorySummaries[historyId]?.profileId ??
+      state.runHistoryRecords[historyId]?.profileId
+    );
+  }
+  return state.runOutputs[selection]?.profileId ?? state.compoundIdByRunInstance[selection];
+}
+
+const MAX_RUN_HISTORY_SUMMARIES = 50;
+const MAX_RICH_RUN_HISTORY_RECORDS = 5;
+
+// Mirrors the Go store's ordering exactly: completion time, then history ID by
+// code-unit order. Plain `<` rather than localeCompare so both sides agree on
+// same-millisecond ties without depending on the runtime's collation.
+export function compareRunHistorySummaries(a: runhistory.Summary, b: runhistory.Summary): number {
+  if (a.completedAt !== b.completedAt) return a.completedAt - b.completedAt;
+  if (a.historyId === b.historyId) return 0;
+  return a.historyId < b.historyId ? -1 : 1;
+}
+
+export function archivedRunLabel(
+  summary: runhistory.Summary,
+  sortedSummaries: runhistory.Summary[],
+  profileName: string
+): string {
+  const profileSummaries = sortedSummaries.filter(
+    (candidate) => candidate.profileId === summary.profileId
+  );
+  if (profileSummaries.length < 2) return `${profileName} (saved)`;
+  // Match by id, not object identity: a summary rebuilt by the merge compares
+  // unequal to the one in the list and would silently label "saved 0 of N".
+  const position = profileSummaries.findIndex(
+    (candidate) => candidate.historyId === summary.historyId
+  );
+  if (position < 0) return `${profileName} (saved)`;
+  return `${profileName} (saved ${position + 1} of ${profileSummaries.length})`;
+}
+
+function runHistorySummary(value: runhistory.Summary | runhistory.Record): runhistory.Summary {
+  return {
+    historyId: value.historyId,
+    kind: value.kind,
+    profileId: value.profileId,
+    profileName: value.profileName,
+    state: value.state,
+    exitCode: value.exitCode,
+    startedAt: value.startedAt,
+    completedAt: value.completedAt,
+    outputAvailable: value.outputAvailable,
+    truncated: value.truncated,
+  };
+}
+
+export function mergeRunHistoryArchiveMaps(
+  state: Pick<IDEState, 'runHistorySummaries' | 'runHistoryRecords'>,
+  incoming: Array<runhistory.Summary | runhistory.Record>
+): Pick<IDEState, 'runHistorySummaries' | 'runHistoryRecords'> {
+  const runHistorySummaries = { ...state.runHistorySummaries };
+  const runHistoryRecords = { ...state.runHistoryRecords };
+  const incomingRecordIds: string[] = [];
+  for (const value of incoming) {
+    const summary = runHistorySummary(value);
+    if (!summary.historyId) continue;
+    runHistorySummaries[summary.historyId] = summary;
+    if (!summary.outputAvailable || summary.kind !== 'ordinary') {
+      delete runHistoryRecords[summary.historyId];
+    } else if ('version' in value && value.version === 1) {
+      runHistoryRecords[summary.historyId] = value;
+      incomingRecordIds.push(summary.historyId);
+    } else if (!runHistoryRecords[summary.historyId]) {
+      runHistoryRecords[summary.historyId] = summary;
+    }
+  }
+
+  const summariesByProfile = new Map<string, runhistory.Summary[]>();
+  for (const summary of Object.values(runHistorySummaries)) {
+    const summaries = summariesByProfile.get(summary.profileId) ?? [];
+    summaries.push(summary);
+    summariesByProfile.set(summary.profileId, summaries);
+  }
+  const retainedSummaryIds = new Set<string>();
+  for (const summaries of summariesByProfile.values()) {
+    for (const summary of summaries
+      .sort(compareRunHistorySummaries)
+      .slice(-MAX_RUN_HISTORY_SUMMARIES)) {
+      retainedSummaryIds.add(summary.historyId);
+    }
+  }
+  for (const historyId of Object.keys(runHistorySummaries)) {
+    if (!retainedSummaryIds.has(historyId)) {
+      delete runHistorySummaries[historyId];
+      delete runHistoryRecords[historyId];
+    }
+  }
+
+  const richByProfile = new Map<string, runhistory.Summary[]>();
+  for (const historyId of Object.keys(runHistoryRecords)) {
+    const summary = runHistorySummaries[historyId];
+    if (!summary?.outputAvailable || summary.kind !== 'ordinary') {
+      delete runHistoryRecords[historyId];
+      continue;
+    }
+    const summaries = richByProfile.get(summary.profileId) ?? [];
+    summaries.push(summary);
+    richByProfile.set(summary.profileId, summaries);
+  }
+  for (const summaries of richByProfile.values()) {
+    const retained = new Set<string>();
+    const profileId = summaries[0]?.profileId;
+    for (const historyId of [
+      ...incomingRecordIds.filter(
+        (historyId) => runHistorySummaries[historyId]?.profileId === profileId
+      ),
+      ...summaries
+        .sort(compareRunHistorySummaries)
+        .reverse()
+        .map((summary) => summary.historyId),
+    ]) {
+      if (retained.size === MAX_RICH_RUN_HISTORY_RECORDS) break;
+      retained.add(historyId);
+    }
+    for (const summary of summaries) {
+      if (!retained.has(summary.historyId)) delete runHistoryRecords[summary.historyId];
+    }
+  }
+
+  return { runHistorySummaries, runHistoryRecords };
+}
+
+function mergeRunHistorySnapshot(
+  state: Pick<IDEState, 'runHistory' | 'runHistorySummaries' | 'runHistoryRecords'>,
+  snapshot: runhistory.Snapshot
+): Pick<IDEState, 'runHistory' | 'runHistorySummaries' | 'runHistoryRecords'> {
+  const runHistory = Object.fromEntries(
+    Object.entries(state.runHistory).map(([profileId, entries]) => [profileId, [...entries]])
+  );
+  const existingSummaryIds = new Set(Object.keys(state.runHistorySummaries));
+  const seen = new Set<string>();
+  const summaries = (snapshot.summaries ?? [])
+    .map((summary, index) => ({ summary, index }))
+    .sort((a, b) => a.summary.completedAt - b.summary.completedAt || a.index - b.index);
+  const archives = mergeRunHistoryArchiveMaps(
+    state,
+    summaries.map(({ summary }) => summary)
+  );
+
+  for (const { summary } of summaries) {
+    if (!summary.historyId || seen.has(summary.historyId)) continue;
+    seen.add(summary.historyId);
+
+    if (
+      existingSummaryIds.has(summary.historyId) ||
+      !archives.runHistorySummaries[summary.historyId]
+    ) {
+      continue;
+    }
+    if (summary.state !== 'success' && summary.state !== 'failed' && summary.state !== 'stopped') {
+      continue;
+    }
+
+    const entries = runHistory[summary.profileId] ?? [];
+    entries.push({
+      state: summary.state,
+      duration: Math.max(0, summary.completedAt - summary.startedAt),
+      timestamp: summary.completedAt,
+    });
+    runHistory[summary.profileId] = entries;
+  }
+
+  for (const [profileId, entries] of Object.entries(runHistory)) {
+    runHistory[profileId] = entries
+      .map((entry, index) => ({ entry, index }))
+      .sort((a, b) => a.entry.timestamp - b.entry.timestamp || a.index - b.index)
+      .slice(-50)
+      .map(({ entry }) => entry);
+  }
+
+  return { runHistory, ...archives };
+}
+
+/**
+ * The whole center-pair truth a reveal writes (#271 §2.3): the requested panel
+ * becomes the explicit intent and stops being a rail, and the peer is left as
+ * the user set it. `revealCenterPanel` and `focusProfileOutput` both go through
+ * here so the pair invariant has one definition rather than one per caller.
+ */
+function revealCenterPatch(
+  state: Pick<IDEState, 'isGolemPanelCollapsed' | 'isFilesPanelCollapsed'>,
+  panel: CenterPanel
+): Pick<IDEState, 'centerReveal' | 'isGolemPanelCollapsed' | 'isFilesPanelCollapsed'> {
+  return {
+    centerReveal: panel,
+    isGolemPanelCollapsed: panel === 'golem' ? false : state.isGolemPanelCollapsed,
+    isFilesPanelCollapsed: panel === 'files' ? false : state.isFilesPanelCollapsed,
   };
 }
 
@@ -417,6 +970,10 @@ export const useIDEStore = create<IDEStore>()(
       isLoadingTree: false,
       treeError: null,
       ...createDefaultWorkspaceSessionState(),
+      // Bumped by applyCenterLayout and by every session reset, so a consumer
+      // can tell a restore from a change the user just made. Transient: never
+      // collected into the persisted state and never in the save-subscribe list.
+      centerLayoutRevision: 0,
       toast: null,
       activeTerminalTab: 'terminal',
       terminalSessions: [],
@@ -427,8 +984,16 @@ export const useIDEStore = create<IDEStore>()(
       runProfileForm: null,
       isLoadingProfiles: false,
       profilesError: null,
+      profilesReloadNonce: 0,
       selectedProfileId: null,
       runOutputs: {},
+      runInstanceIdsByProfile: {},
+      runLaunchSeqByInstance: {},
+      discardedRunLaunchSeqsByProfile: {},
+      discardedThroughLaunchSeqByProfile: {},
+      workspaceEpoch: 0,
+      runEventsPaused: false,
+      latestRunInstanceIdByProfile: {},
       runCompounds: {},
       compoundIdByRunInstance: {},
       activeRunOutputId: null,
@@ -436,9 +1001,12 @@ export const useIDEStore = create<IDEStore>()(
       runOutputAutoScroll: true,
       stoppingProfileIds: [],
       restartingProfileIds: [],
+      stoppingRunInstanceIds: [],
+      restartingRunInstanceIds: [],
       runHistory: {},
+      runHistorySummaries: {},
+      runHistoryRecords: {},
       waveformData: {},
-      hiddenProfileIds: [],
       runStartTimestamps: {},
       stopRequestTimestamps: {},
       isRestoringWorkspace: false,
@@ -535,6 +1103,15 @@ export const useIDEStore = create<IDEStore>()(
           },
           false,
           'mergeChildren'
+        ),
+
+      markUnreadable: (path) =>
+        set(
+          (state) => ({
+            directoryTree: replaceChildrenAt(state.directoryTree, path, undefined, true),
+          }),
+          false,
+          'markUnreadable'
         ),
 
       addLoadingPath: (path) =>
@@ -638,6 +1215,60 @@ export const useIDEStore = create<IDEStore>()(
           'setPanelSize'
         );
       },
+
+      // #271 center pair. The not-both-collapsed invariant lives in the two
+      // setters, so no caller has to order a collapse against the other panel.
+      setCenterOrder: (centerOrder) => set({ centerOrder }, false, 'setCenterOrder'),
+
+      swapCenterOrder: () =>
+        set(
+          (state) => ({
+            centerOrder: state.centerOrder === 'files-first' ? 'golem-first' : 'files-first',
+          }),
+          false,
+          'swapCenterOrder'
+        ),
+
+      setGolemPanelCollapsed: (collapsed) =>
+        set(
+          (state) => ({
+            isGolemPanelCollapsed: collapsed,
+            isFilesPanelCollapsed: collapsed ? false : state.isFilesPanelCollapsed,
+          }),
+          false,
+          'setGolemPanelCollapsed'
+        ),
+
+      setFilesPanelCollapsed: (collapsed) =>
+        set(
+          (state) => ({
+            isFilesPanelCollapsed: collapsed,
+            isGolemPanelCollapsed: collapsed ? false : state.isGolemPanelCollapsed,
+          }),
+          false,
+          'setFilesPanelCollapsed'
+        ),
+
+      revealCenterPanel: (panel) =>
+        set((state) => revealCenterPatch(state, panel), false, 'revealCenterPanel'),
+
+      // Restore path: one set, already normalized, so the subscribe-and-save
+      // hook never observes a half-applied pair.
+      applyCenterLayout: (prefs) =>
+        set(
+          (state) => ({
+            centerOrder: prefs.centerOrder,
+            isGolemPanelCollapsed: prefs.isGolemPanelCollapsed,
+            isFilesPanelCollapsed: prefs.isFilesPanelCollapsed,
+            panelSizes: { ...state.panelSizes, golem: prefs.golemWidth },
+            centerReveal: initialCenterReveal(prefs),
+            centerLayoutRevision: state.centerLayoutRevision + 1,
+          }),
+          false,
+          'applyCenterLayout'
+        ),
+
+      setCenterDrag: (centerDrag) => set({ centerDrag }, false, 'setCenterDrag'),
 
       // Editor actions
       openFile: (file) =>
@@ -770,9 +1401,29 @@ export const useIDEStore = create<IDEStore>()(
         set({ workingDirectory }, false, 'setWorkingDirectory'),
 
       // Run Profile actions
-      setRunProfilesSnapshot: (runProfiles, runProfileState) =>
+      setRunProfilesSnapshot: (runProfiles, runProfileState, workspaceEpoch, historySnapshot) =>
         set(
-          { runProfiles, runProfileState, profilesError: null, isLoadingProfiles: false },
+          (state) => {
+            const reset = state.runEventsPaused ? emptyWorkspaceRunState() : {};
+            const historyState = {
+              runHistory: state.runEventsPaused ? {} : state.runHistory,
+              runHistorySummaries: state.runEventsPaused ? {} : state.runHistorySummaries,
+              runHistoryRecords: state.runEventsPaused ? {} : state.runHistoryRecords,
+            };
+            return {
+              runProfiles,
+              runProfileState,
+              profilesError: null,
+              isLoadingProfiles: false,
+              workspaceEpoch:
+                workspaceEpoch != null && workspaceEpoch > 0
+                  ? workspaceEpoch
+                  : state.workspaceEpoch,
+              runEventsPaused: false,
+              ...reset,
+              ...(historySnapshot ? mergeRunHistorySnapshot(historyState, historySnapshot) : {}),
+            };
+          },
           false,
           'setRunProfilesSnapshot'
         ),
@@ -814,7 +1465,28 @@ export const useIDEStore = create<IDEStore>()(
         set({ isLoadingProfiles }, false, 'setProfilesLoading'),
 
       setProfilesError: (profilesError) =>
-        set({ profilesError, isLoadingProfiles: false }, false, 'setProfilesError'),
+        set(
+          (state) => ({
+            profilesError,
+            isLoadingProfiles: false,
+            ...(state.runEventsPaused
+              ? { runProfiles: [], runProfileState: {}, ...emptyWorkspaceRunState() }
+              : {}),
+          }),
+          false,
+          'setProfilesError'
+        ),
+
+      // Bumping the nonce re-runs useRunProfilesLoader, which is the only path
+      // that clears runEventsPaused. Without it a failed load leaves the run
+      // controls disabled until the user switches workspaces, because the
+      // runprofiles:changed handler also bails while events are paused.
+      reloadRunProfiles: () =>
+        set(
+          (state) => ({ profilesReloadNonce: state.profilesReloadNonce + 1 }),
+          false,
+          'reloadRunProfiles'
+        ),
 
       openRunProfileForm: (state) => set({ runProfileForm: state }, false, 'openRunProfileForm'),
       closeRunProfileForm: () => set({ runProfileForm: null }, false, 'closeRunProfileForm'),
@@ -845,90 +1517,103 @@ export const useIDEStore = create<IDEStore>()(
 
       // Run Output actions
       appendRunOutput: (chunk) => {
+        const snapshot = get();
+        if (
+          snapshot.runEventsPaused ||
+          (chunk.workspaceEpoch != null && chunk.workspaceEpoch !== snapshot.workspaceEpoch)
+        ) {
+          return false;
+        }
+
         // Compound step output → routed by explicit fields into runCompounds.
         if (chunk.parentRunInstanceId) {
-          const state = useIDEStore.getState();
-          const compoundId = state.compoundIdByRunInstance[chunk.parentRunInstanceId];
-          if (!compoundId) return; // orphan parent → drop
-          const run = state.runCompounds[compoundId];
-          if (!run || run.runInstanceId !== chunk.parentRunInstanceId) return; // stale → drop
-          state.appendCompoundRunOutput(compoundId, chunk.stepIdx, chunk);
-          return;
+          const compoundId = snapshot.compoundIdByRunInstance[chunk.parentRunInstanceId];
+          if (!compoundId) return false;
+          const run = snapshot.runCompounds[compoundId];
+          if (!run || run.runInstanceId !== chunk.parentRunInstanceId) return false;
+          snapshot.appendCompoundRunOutput(compoundId, chunk.stepIdx, chunk);
+          return true;
         }
 
-        const existing = useIDEStore.getState().runOutputs[chunk.profileId];
+        if (!acceptsRunEvent(snapshot, chunk)) return false;
 
-        // Mismatched instance: stale only if the existing buffer is still running.
+        const launchSeq = eventLaunchSeq(snapshot, chunk.runInstanceId, chunk.launchSeq);
+        const latestRunInstanceId = snapshot.latestRunInstanceIdByProfile[chunk.profileId];
+        const existing = snapshot.runOutputs[chunk.runInstanceId];
+
+        if (latestRunInstanceId === chunk.runInstanceId && !existing) return false;
+        if (chunk.launchSeq == null && latestRunInstanceId !== chunk.runInstanceId) {
+          const latestRunStartedAt = snapshot.runStartTimestamps[latestRunInstanceId];
+          if (
+            existing ||
+            snapshot.runOutputs[latestRunInstanceId]?.state === 'running' ||
+            (latestRunStartedAt != null && chunk.timestamp <= latestRunStartedAt)
+          ) {
+            return false;
+          }
+        }
+        if (existing && isTerminalRunState(existing.state)) return false;
         if (
-          existing &&
-          existing.runInstanceId !== chunk.runInstanceId &&
-          existing.state === 'running'
+          !existing &&
+          (snapshot.runInstanceIdsByProfile[chunk.profileId] ?? []).filter((id) =>
+            isLiveRunState(snapshot.runOutputs[id]?.state)
+          ).length >= MAX_RETAINED_RUNS
         ) {
-          return;
+          return false;
         }
 
-        // No buffer, or a terminal buffer with a different id (a rerun whose
-        // output beat its running status) → provision/rotate a fresh buffer.
-        if (!existing || existing.runInstanceId !== chunk.runInstanceId) {
+        if (!existing) {
           set(
             (state) => {
-              const prev = state.runOutputs[chunk.profileId];
               const wd = getProfileWorkingDirSnapshot(state, chunk.profileId);
-              let provisioned: RunOutput;
-              if (prev) {
-                let prevEntries = prev.entries;
-                if (prevEntries.length > MAX_OUTPUT_ENTRIES) {
-                  prevEntries = prevEntries.slice(prevEntries.length - MAX_OUTPUT_ENTRIES);
-                }
-                provisioned = {
-                  ...prev,
-                  runInstanceId: chunk.runInstanceId,
-                  entries: [],
-                  previousEntries: prevEntries,
-                  previousWorkingDir: prev.workingDir,
-                  workingDir: wd,
-                };
-              } else {
-                provisioned = {
-                  ...createRunOutput(chunk.profileId, wd),
-                  runInstanceId: chunk.runInstanceId,
-                };
-              }
-              // Reset assembler so old carry-over does not leak into the new run.
-              lineAssemblers.delete(chunk.profileId);
-              assemblerCallbacks.delete(chunk.profileId);
-              return { runOutputs: { ...state.runOutputs, [chunk.profileId]: provisioned } };
+              const retained = retainRunOutput(
+                state,
+                createRunOutput(
+                  chunk.profileId,
+                  chunk.runInstanceId,
+                  launchSeq,
+                  chunk.workspaceEpoch ?? state.workspaceEpoch,
+                  wd
+                )
+              );
+              return {
+                ...retained,
+                runStartTimestamps: {
+                  ...state.runStartTimestamps,
+                  [chunk.runInstanceId]: chunk.timestamp,
+                  [chunk.profileId]: chunk.timestamp,
+                },
+              };
             },
             false,
             'appendRunOutput:provision'
           );
         }
 
-        const pendingEntries: OutputEntry[] = [];
-        const assembler = getOrCreateAssembler(chunk.profileId, (entry) =>
-          pendingEntries.push(entry)
-        );
-        assembler.push(chunk.stream, chunk.data, chunk.timestamp);
-        if (pendingEntries.length === 0) return;
+        const pendingEntries = collectChunkEntries(chunk.runInstanceId, chunk);
+        if (pendingEntries.length === 0) return true;
 
         set(
           (state) => {
-            const ex = state.runOutputs[chunk.profileId];
-            if (!ex) return state;
-            let entries = [...ex.entries, ...pendingEntries];
-            if (entries.length > MAX_OUTPUT_ENTRIES) {
-              entries = entries.slice(entries.length - MAX_OUTPUT_ENTRIES + 1);
-              entries.unshift({
-                stream: 'stdout',
-                text: '[truncated — oldest output removed]',
-                timestamp: entries[0]?.timestamp ?? Date.now(),
-              });
-            }
-            return { runOutputs: { ...state.runOutputs, [chunk.profileId]: { ...ex, entries } } };
+            const ex = state.runOutputs[chunk.runInstanceId];
+            if (!ex || isTerminalRunState(ex.state)) return state;
+            const combined = [...ex.entries, ...pendingEntries];
+            const entries = capOutputEntries(combined);
+            return {
+              runOutputs: {
+                ...state.runOutputs,
+                [chunk.runInstanceId]: {
+                  ...ex,
+                  entries,
+                  truncated: ex.truncated || entries.length < combined.length,
+                },
+              },
+            };
           },
           false,
           'appendRunOutput'
         );
+        return true;
       },
 
       handleRunStatus: (status) => {
@@ -936,117 +1621,215 @@ export const useIDEStore = create<IDEStore>()(
         const timestamp = status.timestamp ?? Date.now();
         if (parentRunInstanceId) return; // steps flow only via run:compound
 
-        const existingBefore = get().runOutputs[profileId];
-        // Stale guard: a mismatched non-running status is always stale once a
-        // newer buffer exists. A mismatched running status is only accepted when
-        // the existing buffer is terminal, which is how reruns rotate.
-        if (
-          existingBefore &&
-          existingBefore.runInstanceId !== runInstanceId &&
-          (newState !== 'running' || existingBefore.state === 'running')
-        ) {
-          return;
-        }
+        const snapshot = get();
+        if (!acceptsRunEvent(snapshot, status)) return;
+        const launchSeq = eventLaunchSeq(snapshot, runInstanceId, status.launchSeq);
+        const isCompoundAggregate =
+          snapshot.runProfiles.some(
+            (profile) => profile.id === profileId && profile.type === 'compound'
+          ) || snapshot.compoundIdByRunInstance[runInstanceId] != null;
+        const latestRunInstanceId = snapshot.latestRunInstanceIdByProfile[profileId];
+        const latestRunStartedAt = snapshot.runStartTimestamps[profileId];
+        const existingBefore = snapshot.runOutputs[runInstanceId];
 
-        // Flush the assembler on terminal states (only reached for the live run).
-        const flushedEntries: OutputEntry[] = [];
-        if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
-          const assembler = lineAssemblers.get(profileId);
-          if (assembler) {
-            assemblerCallbacks.set(profileId, (entry) => flushedEntries.push(entry));
-            assembler.flush();
-            lineAssemblers.delete(profileId);
-            assemblerCallbacks.delete(profileId);
+        if (isCompoundAggregate) {
+          const currentCompound = snapshot.runCompounds[profileId];
+          const indexedCompoundId = snapshot.compoundIdByRunInstance[runInstanceId];
+          if (!latestRunInstanceId) {
+            if (newState !== 'running' || indexedCompoundId != null) return;
+          } else if (latestRunInstanceId === runInstanceId) {
+            if (
+              indexedCompoundId !== profileId ||
+              currentCompound?.runInstanceId !== runInstanceId ||
+              isTerminalRunState(currentCompound.state) ||
+              (newState === 'running' && currentCompound.state === 'running')
+            ) {
+              return;
+            }
+          } else {
+            const latestCompoundId = snapshot.compoundIdByRunInstance[latestRunInstanceId];
+            const hasTerminalCurrent =
+              latestCompoundId === profileId &&
+              currentCompound?.runInstanceId === latestRunInstanceId &&
+              isTerminalRunState(currentCompound.state);
+            const hasClearedTombstone = latestCompoundId == null && currentCompound == null;
+            const latestLaunchSeq =
+              snapshot.runLaunchSeqByInstance[latestRunInstanceId] ?? currentCompound?.launchSeq;
+            const isNewerLaunch =
+              status.launchSeq != null
+                ? latestLaunchSeq != null && status.launchSeq > latestLaunchSeq
+                : status.timestamp != null &&
+                  latestRunStartedAt != null &&
+                  status.timestamp > latestRunStartedAt;
+            if (
+              newState !== 'running' ||
+              indexedCompoundId != null ||
+              (!hasTerminalCurrent && !hasClearedTombstone) ||
+              !isNewerLaunch
+            ) {
+              return;
+            }
           }
         }
+
+        if (!isCompoundAggregate && status.launchSeq != null) {
+          if (
+            existingBefore &&
+            (isTerminalRunState(existingBefore.state) ||
+              (newState === 'running' && existingBefore.state === 'running'))
+          ) {
+            return;
+          }
+          if (!existingBefore) {
+            if (newState !== 'running') return;
+            const liveCount = (snapshot.runInstanceIdsByProfile[profileId] ?? []).filter((id) =>
+              isLiveRunState(snapshot.runOutputs[id]?.state)
+            ).length;
+            if (liveCount >= MAX_RETAINED_RUNS) return;
+          }
+        } else if (!isCompoundAggregate) {
+          if (!latestRunInstanceId) {
+            if (isTerminalRunState(newState) && !existingBefore) return;
+          } else {
+            if (latestRunInstanceId === runInstanceId && !existingBefore) return;
+            if (
+              latestRunInstanceId === runInstanceId &&
+              existingBefore &&
+              (isTerminalRunState(existingBefore.state) ||
+                (newState === 'running' && existingBefore.state === 'running'))
+            ) {
+              return;
+            }
+            if (
+              latestRunInstanceId !== runInstanceId &&
+              (existingBefore ||
+                newState !== 'running' ||
+                status.timestamp == null ||
+                snapshot.runOutputs[latestRunInstanceId]?.state === 'running' ||
+                (latestRunStartedAt != null && status.timestamp <= latestRunStartedAt))
+            ) {
+              return;
+            }
+          }
+        }
+
+        const rotatesCompound =
+          isCompoundAggregate &&
+          latestRunInstanceId != null &&
+          latestRunInstanceId !== runInstanceId;
+        const priorCompound = snapshot.runCompounds[profileId];
+        if (rotatesCompound && priorCompound) {
+          clearCompoundStepAssemblers(profileId, priorCompound.steps);
+        }
+
+        const flushedEntries =
+          !isCompoundAggregate && isTerminalRunState(newState) ? flushAssembler(runInstanceId) : [];
 
         set(
           (state) => {
             const runWorkingDir = getProfileWorkingDirSnapshot(state, profileId);
-            const existing = state.runOutputs[profileId] ?? {
-              ...createRunOutput(profileId, runWorkingDir),
-              runInstanceId,
-            };
-
-            const mergedEntries =
-              flushedEntries.length > 0
-                ? [...existing.entries, ...flushedEntries]
-                : existing.entries;
-
-            const updated = {
-              ...existing,
-              runInstanceId,
-              state: newState,
-              exitCode,
-              entries: mergedEntries,
-            };
-
-            if (newState === 'running') {
-              const previousWorkingDir = existing.workingDir;
-              updated.workingDir = runWorkingDir;
-              updated.runCount = existing.runCount + 1;
-              // Rotate when this running event is a different instance than what
-              // the buffer currently holds (covers reruns; '' = never-run buffer).
-              const isRotation =
-                existing.runInstanceId !== '' && existing.runInstanceId !== runInstanceId;
-              if (isRotation) {
-                let prev = existing.entries;
-                if (prev.length > MAX_OUTPUT_ENTRIES)
-                  prev = prev.slice(prev.length - MAX_OUTPUT_ENTRIES);
-                updated.previousEntries = prev;
-                updated.previousWorkingDir = previousWorkingDir;
-                updated.entries = [];
-                lineAssemblers.delete(profileId);
-                assemblerCallbacks.delete(profileId);
-              }
-              // No unconditional previousWorkingDir clear: a fresh first run
-              // already has it undefined, and when appendRunOutput provisioned
-              // this rerun's buffer (output arrived before this running status,
-              // so isRotation is false) it already set previousWorkingDir from
-              // the prior run — clearing here would clobber that.
-            }
+            const existing = state.runOutputs[runInstanceId];
+            const updated: RunOutput | undefined = isCompoundAggregate
+              ? undefined
+              : {
+                  ...(existing ??
+                    createRunOutput(
+                      profileId,
+                      runInstanceId,
+                      launchSeq,
+                      status.workspaceEpoch ?? state.workspaceEpoch,
+                      runWorkingDir
+                    )),
+                  state: newState,
+                  exitCode,
+                  workingDir:
+                    newState === 'running'
+                      ? runWorkingDir
+                      : (existing?.workingDir ?? runWorkingDir),
+                  ...cappedRunEntries(existing?.entries ?? [], flushedEntries, existing?.truncated),
+                };
 
             // --- Lifecycle flags ---
             let { stoppingProfileIds, restartingProfileIds } = state;
+            let { stoppingRunInstanceIds, restartingRunInstanceIds } = state;
 
-            if (newState === 'stopped' || newState === 'failed' || newState === 'success') {
-              stoppingProfileIds = stoppingProfileIds.filter((id) => id !== profileId);
-              restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+            if (isTerminalRunState(newState)) {
+              stoppingRunInstanceIds = stoppingRunInstanceIds.filter((id) => id !== runInstanceId);
+              restartingRunInstanceIds = restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              );
+              const hasStoppingSibling = stoppingRunInstanceIds.some(
+                (id) => state.runOutputs[id]?.profileId === profileId
+              );
+              const hasRestartingSibling = restartingRunInstanceIds.some(
+                (id) => state.runOutputs[id]?.profileId === profileId
+              );
+              if (!hasStoppingSibling) {
+                stoppingProfileIds = stoppingProfileIds.filter((id) => id !== profileId);
+              }
+              if (!hasRestartingSibling) {
+                restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              }
             } else if (newState === 'running') {
-              restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              restartingRunInstanceIds = restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              );
+              if (
+                !restartingRunInstanceIds.some(
+                  (id) => state.runOutputs[id]?.profileId === profileId
+                )
+              ) {
+                restartingProfileIds = restartingProfileIds.filter((id) => id !== profileId);
+              }
             }
 
             // --- Stop request timestamp ---
             let { stopRequestTimestamps } = state;
-            if (
-              newState === 'stopped' ||
-              newState === 'failed' ||
-              newState === 'success' ||
-              newState === 'running'
-            ) {
-              if (stopRequestTimestamps[profileId] != null) {
+            if (isTerminalRunState(newState) || newState === 'running') {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { [runInstanceId]: _removedRun, ...withoutRun } = stopRequestTimestamps;
+              stopRequestTimestamps = withoutRun;
+              if (
+                !stoppingProfileIds.includes(profileId) &&
+                !restartingProfileIds.includes(profileId)
+              ) {
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                const { [profileId]: _removed, ...rest } = stopRequestTimestamps;
-                stopRequestTimestamps = rest;
+                const { [profileId]: _removedProfile, ...withoutProfile } = stopRequestTimestamps;
+                stopRequestTimestamps = withoutProfile;
               }
             }
 
             // --- Start timestamp ---
             let { runStartTimestamps } = state;
             if (newState === 'running') {
-              runStartTimestamps = { ...runStartTimestamps, [profileId]: timestamp };
+              const representative = representativeRunInstanceId(state, profileId);
+              const representativeSeq =
+                representative == null ? -1 : (state.runLaunchSeqByInstance[representative] ?? -1);
+              runStartTimestamps = {
+                ...runStartTimestamps,
+                [runInstanceId]: timestamp,
+                ...(launchSeq >= representativeSeq ? { [profileId]: timestamp } : {}),
+              };
+            } else if (isTerminalRunState(newState)) {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { [runInstanceId]: _removed, ...rest } = runStartTimestamps;
+              runStartTimestamps = rest;
             }
 
             // --- Run history ---
             let { runHistory } = state;
             if (
-              (newState === 'stopped' || newState === 'failed' || newState === 'success') &&
-              state.runStartTimestamps[profileId]
+              isTerminalRunState(newState) &&
+              (state.runStartTimestamps[runInstanceId] ?? state.runStartTimestamps[profileId]) !=
+                null &&
+              (isCompoundAggregate || existingBefore?.state === 'running')
             ) {
+              const startedAt =
+                state.runStartTimestamps[runInstanceId] ?? state.runStartTimestamps[profileId];
               const existingHistory = runHistory[profileId] ?? [];
               const entry: RunHistoryEntry = {
                 state: newState as RunHistoryEntry['state'],
-                duration: timestamp - state.runStartTimestamps[profileId],
+                duration: timestamp - startedAt,
                 timestamp,
               };
               const updatedHistory = [...existingHistory, entry];
@@ -1059,21 +1842,87 @@ export const useIDEStore = create<IDEStore>()(
 
             // --- Auto-select first running profile ---
             let { activeRunOutputId } = state;
+            const activeProfileId = selectionProfileId(state, activeRunOutputId);
             if (
               newState === 'running' &&
-              (!activeRunOutputId || activeRunOutputId === ALL_PROFILES_ID)
+              existingBefore?.state !== 'running' &&
+              (!activeRunOutputId ||
+                activeRunOutputId === ALL_PROFILES_ID ||
+                activeProfileId === profileId ||
+                (rotatesCompound && activeRunOutputId === latestRunInstanceId))
             ) {
-              activeRunOutputId = profileId;
+              activeRunOutputId = runInstanceId;
             }
 
+            const retainedOutput = updated ? retainRunOutput(state, updated) : undefined;
+            let { runCompounds } = state;
+            let { compoundIdByRunInstance } = state;
+            let runLaunchSeqByInstance =
+              retainedOutput?.runLaunchSeqByInstance ?? state.runLaunchSeqByInstance;
+            let latestRunInstanceIdByProfile =
+              retainedOutput?.latestRunInstanceIdByProfile ?? state.latestRunInstanceIdByProfile;
+            if (isCompoundAggregate) {
+              runLaunchSeqByInstance = {
+                ...runLaunchSeqByInstance,
+                [runInstanceId]: launchSeq,
+              };
+              if (rotatesCompound && latestRunInstanceId) {
+                delete runLaunchSeqByInstance[latestRunInstanceId];
+              }
+              latestRunInstanceIdByProfile = {
+                ...latestRunInstanceIdByProfile,
+                [profileId]: runInstanceId,
+              };
+              const compound = state.runCompounds[profileId];
+              if (newState === 'running' && compound?.runInstanceId !== runInstanceId) {
+                const profileName = state.runProfiles.find(
+                  (profile) => profile.id === profileId
+                )?.name;
+                const index = { ...compoundIdByRunInstance };
+                if (latestRunInstanceId) delete index[latestRunInstanceId];
+                index[runInstanceId] = profileId;
+                compoundIdByRunInstance = index;
+                runCompounds = {
+                  ...runCompounds,
+                  [profileId]: {
+                    compoundId: profileId,
+                    runInstanceId,
+                    launchSeq,
+                    workspaceEpoch: status.workspaceEpoch ?? state.workspaceEpoch,
+                    name: profileName ?? profileId,
+                    state: 'running',
+                    exitCode,
+                    currentStep: 0,
+                    steps: [],
+                    stepOutputs: {},
+                  },
+                };
+              } else if (compound?.runInstanceId === runInstanceId) {
+                // The aggregate run:status is the only carrier of a compound's
+                // exit code (run:compound snapshots omit it), so capture it here.
+                runCompounds = {
+                  ...runCompounds,
+                  [profileId]: { ...compound, state: newState, exitCode },
+                };
+              }
+            }
             return {
-              runOutputs: { ...state.runOutputs, [profileId]: updated },
+              ...(retainedOutput ?? {}),
+              runCompounds,
+              compoundIdByRunInstance,
+              runLaunchSeqByInstance,
+              latestRunInstanceIdByProfile,
               stoppingProfileIds,
               restartingProfileIds,
+              stoppingRunInstanceIds,
+              restartingRunInstanceIds,
               stopRequestTimestamps,
               runStartTimestamps,
               runHistory,
-              activeRunOutputId,
+              activeRunOutputId:
+                activeRunOutputId === state.activeRunOutputId
+                  ? (retainedOutput?.activeRunOutputId ?? activeRunOutputId)
+                  : activeRunOutputId,
             };
           },
           false,
@@ -1081,49 +1930,69 @@ export const useIDEStore = create<IDEStore>()(
         );
       },
 
-      clearRunOutput: (profileId) => {
-        // If this id refers to a compound run, clear its step outputs/assemblers
-        // and keep the run record (mirrors clearCompoundRunOutput).
-        if (useIDEStore.getState().runCompounds[profileId]) {
-          useIDEStore.getState().clearCompoundRunOutput(profileId);
+      clearRunOutput: (runInstanceId) => {
+        const snapshot = useIDEStore.getState();
+        const compoundId = snapshot.compoundIdByRunInstance[runInstanceId];
+        if (compoundId) {
+          snapshot.clearCompoundRunOutput(compoundId);
           return;
         }
         set(
           (state) => {
-            const existing = state.runOutputs[profileId];
+            const existing = state.runOutputs[runInstanceId];
             if (!existing) return state;
 
-            // If the profile is still running, only clear entries — preserve
-            // the RunOutput record so state/runCount stay correct for the
-            // active process. Otherwise remove the record entirely.
-            if (existing.state === 'running') {
-              // Reset assembler so partial carry-over doesn't leak into fresh output
-              lineAssemblers.delete(profileId);
-              assemblerCallbacks.delete(profileId);
+            if (!isTerminalRunState(existing.state)) {
+              lineAssemblers.delete(runInstanceId);
+              assemblerCallbacks.delete(runInstanceId);
               return {
                 runOutputs: {
                   ...state.runOutputs,
-                  [profileId]: {
-                    ...existing,
-                    entries: [],
-                    previousEntries: [],
-                    previousWorkingDir: undefined,
-                  },
+                  [runInstanceId]: { ...existing, entries: [] },
                 },
               };
             }
 
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { [profileId]: _discarded, ...rest } = state.runOutputs;
-            lineAssemblers.delete(profileId);
-            assemblerCallbacks.delete(profileId);
-            // If the cleared profile was active, select the first remaining or null
-            let activeRunOutputId = state.activeRunOutputId;
-            if (activeRunOutputId === profileId) {
-              const remaining = Object.keys(rest);
-              activeRunOutputId = remaining.length > 0 ? remaining[0] : null;
+            const { [runInstanceId]: _discarded, ...rest } = state.runOutputs;
+            lineAssemblers.delete(runInstanceId);
+            assemblerCallbacks.delete(runInstanceId);
+            const remainingForProfile = (
+              state.runInstanceIdsByProfile[existing.profileId] ?? []
+            ).filter((id) => id !== runInstanceId);
+            const runInstanceIdsByProfile = { ...state.runInstanceIdsByProfile };
+            if (remainingForProfile.length > 0) {
+              runInstanceIdsByProfile[existing.profileId] = remainingForProfile;
+            } else {
+              delete runInstanceIdsByProfile[existing.profileId];
             }
-            return { runOutputs: rest, activeRunOutputId };
+            let activeRunOutputId = state.activeRunOutputId;
+            if (activeRunOutputId === runInstanceId) {
+              const remainingOrdinary = Object.values(runInstanceIdsByProfile)
+                .flat()
+                .filter((id) => rest[id]);
+              const remainingCompounds = Object.values(state.runCompounds).map(
+                (compound) => compound.runInstanceId
+              );
+              activeRunOutputId =
+                remainingForProfile.at(-1) ?? remainingOrdinary[0] ?? remainingCompounds[0] ?? null;
+            }
+            const discarded = discardRunSeqs(state, existing.profileId, [runInstanceId]);
+            const runLaunchSeqByInstance = { ...state.runLaunchSeqByInstance };
+            delete runLaunchSeqByInstance[runInstanceId];
+            return {
+              runOutputs: rest,
+              runLaunchSeqByInstance,
+              runInstanceIdsByProfile,
+              activeRunOutputId,
+              ...discarded,
+              stoppingRunInstanceIds: state.stoppingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+              restartingRunInstanceIds: state.restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+            };
           },
           false,
           'clearRunOutput'
@@ -1135,17 +2004,10 @@ export const useIDEStore = create<IDEStore>()(
         assemblerCallbacks.clear();
         set(
           (state) => {
-            // Preserve RunOutput records for still-running profiles so their
-            // state/runCount stays correct. Only clear their entries.
             const preserved: Record<string, RunOutput> = {};
             for (const [id, output] of Object.entries(state.runOutputs)) {
-              if (output.state === 'running') {
-                preserved[id] = {
-                  ...output,
-                  entries: [],
-                  previousEntries: [],
-                  previousWorkingDir: undefined,
-                };
+              if (!isTerminalRunState(output.state)) {
+                preserved[id] = { ...output, entries: [] };
               }
             }
             // Preserve still-running compounds (entries cleared). Dropping them
@@ -1157,19 +2019,78 @@ export const useIDEStore = create<IDEStore>()(
                 preservedCompounds[id] = { ...compound, stepOutputs: {} };
               }
             }
-            const firstId = Object.keys(preserved)[0] ?? Object.keys(preservedCompounds)[0] ?? null;
+            const preservedRunIdsByProfile: Record<string, string[]> = {};
+            for (const [profileId, ids] of Object.entries(state.runInstanceIdsByProfile)) {
+              const liveIds = ids.filter((id) => preserved[id]);
+              if (liveIds.length > 0) preservedRunIdsByProfile[profileId] = liveIds;
+            }
+            const firstId =
+              Object.keys(preserved)[0] ??
+              Object.values(preservedCompounds)[0]?.runInstanceId ??
+              null;
+            const activeCompoundId =
+              state.activeRunOutputId != null
+                ? state.compoundIdByRunInstance[state.activeRunOutputId]
+                : undefined;
             const activeStillValid =
               state.activeRunOutputId != null &&
               (preserved[state.activeRunOutputId] != null ||
-                preservedCompounds[state.activeRunOutputId] != null);
+                (activeCompoundId != null && preservedCompounds[activeCompoundId] != null));
             const preservedIndex: Record<string, string> = {};
             for (const [id, compound] of Object.entries(preservedCompounds)) {
               if (compound.runInstanceId) preservedIndex[compound.runInstanceId] = id;
             }
+            let discardedRunLaunchSeqsByProfile = state.discardedRunLaunchSeqsByProfile;
+            let discardedThroughLaunchSeqByProfile = state.discardedThroughLaunchSeqByProfile;
+            for (const [profileId, ids] of Object.entries(state.runInstanceIdsByProfile)) {
+              const terminalIds = ids.filter((id) =>
+                isTerminalRunState(state.runOutputs[id]?.state)
+              );
+              const discarded = discardRunSeqs(
+                {
+                  runLaunchSeqByInstance: state.runLaunchSeqByInstance,
+                  discardedRunLaunchSeqsByProfile,
+                  discardedThroughLaunchSeqByProfile,
+                },
+                profileId,
+                terminalIds
+              );
+              discardedRunLaunchSeqsByProfile = discarded.discardedRunLaunchSeqsByProfile;
+              discardedThroughLaunchSeqByProfile = discarded.discardedThroughLaunchSeqByProfile;
+            }
+            const sequenceIds = new Set([
+              ...Object.keys(preserved),
+              ...Object.values(preservedCompounds).map((compound) => compound.runInstanceId),
+              ...Object.entries(state.runCompounds)
+                .filter(
+                  ([profileId, compound]) =>
+                    isTerminalRunState(compound.state) &&
+                    state.latestRunInstanceIdByProfile[profileId] === compound.runInstanceId
+                )
+                .map(([, compound]) => compound.runInstanceId),
+            ]);
+            const runLaunchSeqByInstance = Object.fromEntries(
+              [...sequenceIds].map((id) => [
+                id,
+                state.runLaunchSeqByInstance[id] ??
+                  Object.values(state.runCompounds).find(
+                    (compound) => compound.runInstanceId === id
+                  )?.launchSeq ??
+                  0,
+              ])
+            );
             return {
               runOutputs: preserved,
+              runLaunchSeqByInstance,
+              runInstanceIdsByProfile: preservedRunIdsByProfile,
+              discardedRunLaunchSeqsByProfile,
+              discardedThroughLaunchSeqByProfile,
               runCompounds: preservedCompounds,
               compoundIdByRunInstance: preservedIndex,
+              stoppingRunInstanceIds: state.stoppingRunInstanceIds.filter((id) => preserved[id]),
+              restartingRunInstanceIds: state.restartingRunInstanceIds.filter(
+                (id) => preserved[id]
+              ),
               activeRunOutputId: activeStillValid ? state.activeRunOutputId : firstId,
             };
           },
@@ -1189,12 +2110,21 @@ export const useIDEStore = create<IDEStore>()(
           steps,
         } = event;
 
-        // Snapshot the previous run so we can preserve outputs and detect
-        // step transitions that became terminal this event.
-        const prevRun = useIDEStore.getState().runCompounds[compoundId];
-        // Stale guard: a different-instance event while the current run is still
-        // running is a late snapshot from a superseded run — drop before flushing.
-        if (prevRun && prevRun.runInstanceId !== runInstanceId && prevRun.state === 'running') {
+        // Aggregate status is emitted before each snapshot and authorizes the RID.
+        const snapshot = useIDEStore.getState();
+        if (
+          snapshot.runEventsPaused ||
+          (event.workspaceEpoch != null && event.workspaceEpoch !== snapshot.workspaceEpoch)
+        ) {
+          return;
+        }
+        const prevRun = snapshot.runCompounds[compoundId];
+        if (
+          snapshot.latestRunInstanceIdByProfile[compoundId] !== runInstanceId ||
+          snapshot.compoundIdByRunInstance[runInstanceId] !== compoundId ||
+          prevRun?.runInstanceId !== runInstanceId ||
+          prevRun?.state !== aggregateState
+        ) {
           return;
         }
         const prevStepStates = new Map<number, string>();
@@ -1238,11 +2168,7 @@ export const useIDEStore = create<IDEStore>()(
             // Merge flushed carry-over into the corresponding step outputs.
             for (const [stepIdx, flushed] of flushedByStep) {
               const current = preservedOutputs[stepIdx] ?? [];
-              let merged = [...current, ...flushed];
-              if (merged.length > MAX_OUTPUT_ENTRIES) {
-                merged = merged.slice(merged.length - MAX_OUTPUT_ENTRIES);
-              }
-              preservedOutputs[stepIdx] = merged;
+              preservedOutputs[stepIdx] = capOutputEntries([...current, ...flushed]);
             }
 
             // --- Selected step ---
@@ -1327,6 +2253,8 @@ export const useIDEStore = create<IDEStore>()(
             const newRun: CompoundRun = {
               compoundId,
               runInstanceId,
+              launchSeq: event.launchSeq ?? existing?.launchSeq,
+              workspaceEpoch: event.workspaceEpoch ?? existing?.workspaceEpoch,
               name,
               state: aggregateState,
               currentStep,
@@ -1345,10 +2273,27 @@ export const useIDEStore = create<IDEStore>()(
             }
             index[runInstanceId] = compoundId;
 
+            let activeRunOutputId = state.activeRunOutputId;
+            const activeProfileId = selectionProfileId(state, activeRunOutputId);
+            if (
+              activeRunOutputId === prevRun?.runInstanceId ||
+              (aggregateState === 'running' &&
+                (!activeRunOutputId ||
+                  activeRunOutputId === ALL_PROFILES_ID ||
+                  activeProfileId === compoundId))
+            ) {
+              activeRunOutputId = runInstanceId;
+            }
+
             return {
               runCompounds: { ...state.runCompounds, [compoundId]: newRun },
               compoundIdByRunInstance: index,
+              latestRunInstanceIdByProfile: {
+                ...state.latestRunInstanceIdByProfile,
+                [compoundId]: runInstanceId,
+              },
               runHistory,
+              activeRunOutputId,
             };
           },
           false,
@@ -1397,11 +2342,7 @@ export const useIDEStore = create<IDEStore>()(
       clearCompoundRunOutput: (compoundId) => {
         const existing = useIDEStore.getState().runCompounds[compoundId];
         if (existing) {
-          for (const step of existing.steps) {
-            const key = compoundStepAssemblerKey(compoundId, step.idx);
-            lineAssemblers.delete(key);
-            assemblerCallbacks.delete(key);
-          }
+          clearCompoundStepAssemblers(compoundId, existing.steps);
         }
         set(
           (state) => {
@@ -1419,7 +2360,20 @@ export const useIDEStore = create<IDEStore>()(
         );
       },
 
-      setActiveRunOutput: (id) => set({ activeRunOutputId: id }, false, 'setActiveRunOutput'),
+      setActiveRunOutput: (id) =>
+        set(
+          (state) => ({
+            activeRunOutputId: id,
+            runOutputViewMode:
+              id === ALL_PROFILES_ID
+                ? 'timeline'
+                : state.runOutputViewMode === 'timeline'
+                  ? 'merged'
+                  : state.runOutputViewMode,
+          }),
+          false,
+          'setActiveRunOutput'
+        ),
 
       setRunOutputViewMode: (mode) =>
         set({ runOutputViewMode: mode }, false, 'setRunOutputViewMode'),
@@ -1490,6 +2444,68 @@ export const useIDEStore = create<IDEStore>()(
           'clearProfileRestarting'
         ),
 
+      setRunStopping: (runInstanceId) =>
+        set(
+          (state) => ({
+            stoppingRunInstanceIds: state.stoppingRunInstanceIds.includes(runInstanceId)
+              ? state.stoppingRunInstanceIds
+              : [...state.stoppingRunInstanceIds, runInstanceId],
+            stopRequestTimestamps:
+              state.stopRequestTimestamps[runInstanceId] != null
+                ? state.stopRequestTimestamps
+                : { ...state.stopRequestTimestamps, [runInstanceId]: Date.now() },
+          }),
+          false,
+          'setRunStopping'
+        ),
+
+      clearRunStopping: (runInstanceId) =>
+        set(
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [runInstanceId]: _removed, ...restTimestamps } = state.stopRequestTimestamps;
+            return {
+              stoppingRunInstanceIds: state.stoppingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+              stopRequestTimestamps: restTimestamps,
+            };
+          },
+          false,
+          'clearRunStopping'
+        ),
+
+      setRunRestarting: (runInstanceId) =>
+        set(
+          (state) => ({
+            restartingRunInstanceIds: state.restartingRunInstanceIds.includes(runInstanceId)
+              ? state.restartingRunInstanceIds
+              : [...state.restartingRunInstanceIds, runInstanceId],
+            stopRequestTimestamps:
+              state.stopRequestTimestamps[runInstanceId] != null
+                ? state.stopRequestTimestamps
+                : { ...state.stopRequestTimestamps, [runInstanceId]: Date.now() },
+          }),
+          false,
+          'setRunRestarting'
+        ),
+
+      clearRunRestarting: (runInstanceId) =>
+        set(
+          (state) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { [runInstanceId]: _removed, ...restTimestamps } = state.stopRequestTimestamps;
+            return {
+              restartingRunInstanceIds: state.restartingRunInstanceIds.filter(
+                (id) => id !== runInstanceId
+              ),
+              stopRequestTimestamps: restTimestamps,
+            };
+          },
+          false,
+          'clearRunRestarting'
+        ),
+
       appendRunHistory: (profileId, entry) =>
         set(
           (state) => {
@@ -1535,55 +2551,43 @@ export const useIDEStore = create<IDEStore>()(
 
       focusProfileOutput: (profileId) =>
         set(
-          () => ({
-            activeRunOutputId: profileId,
-            activeTerminalTab: 'output' as TerminalTab,
-            isBottomPanelCollapsed: false,
-          }),
+          (state) => {
+            const latestRunInstanceId = state.latestRunInstanceIdByProfile[profileId];
+            const compoundRunInstanceId = state.compoundIdByRunInstance[latestRunInstanceId]
+              ? latestRunInstanceId
+              : undefined;
+            return {
+              activeRunOutputId:
+                representativeRunInstanceId(state, profileId) ?? compoundRunInstanceId ?? null,
+              activeTerminalTab: 'output' as TerminalTab,
+              isBottomPanelCollapsed: false,
+              // The output dock is inside the Files column (#271 §6.3), so
+              // un-collapsing the bottom panel is only half the job: the column
+              // itself may be a rail, by preference or by window pressure. Set
+              // in the same object so a repeat click on the same run repeats it.
+              ...revealCenterPatch(state, 'files'),
+            };
+          },
           false,
           'focusProfileOutput'
         ),
 
+      pauseRunEvents: () => set({ runEventsPaused: true }, false, 'pauseRunEvents'),
+
+      // Clears transient run state for the workspace being left. Deliberately
+      // leaves hiddenProfileIds alone: this runs before the workspace-switch
+      // flush captures the outgoing state, so clearing it here would persist an
+      // empty list under the old workspace. resetWorkspaceSession clears it
+      // later, once the outgoing snapshot has been taken.
       resetWorkspaceRunState: () => {
-        // Clear line assemblers (same as clearAllRunOutputs does)
         lineAssemblers.clear();
         assemblerCallbacks.clear();
-        // Atomic single set: clear output entries + lifecycle state together
         set(
-          (state) => {
-            // Preserve RunOutput records for still-running profiles (same logic as clearAllRunOutputs)
-            const preserved: Record<string, RunOutput> = {};
-            for (const [id, output] of Object.entries(state.runOutputs)) {
-              if (output.state === 'running') {
-                preserved[id] = {
-                  ...output,
-                  entries: [],
-                  previousEntries: [],
-                  previousWorkingDir: undefined,
-                };
-              }
-            }
-            const firstId = Object.keys(preserved)[0] ?? null;
-            // Unlike clearAllRunOutputs (which preserves still-running compounds
-            // and rebuilds compoundIdByRunInstance for them), a workspace switch
-            // discards all compound UI state: the backend LoadRunProfiles path
-            // runs StopAll right after this, terminating every run. Clearing the
-            // index here is deliberate — there is nothing live left to route to.
-            return {
-              runOutputs: preserved,
-              runCompounds: {},
-              compoundIdByRunInstance: {},
-              activeRunOutputId: firstId,
-              stoppingProfileIds: [],
-              restartingProfileIds: [],
-              runHistory: {},
-              waveformData: {},
-              hiddenProfileIds: [],
-              runProfileForm: null,
-              runStartTimestamps: {},
-              stopRequestTimestamps: {},
-              runProfileState: {},
-            };
+          {
+            ...emptyWorkspaceRunState(),
+            runProfiles: [],
+            runProfileState: {},
+            runProfileForm: null,
           },
           false,
           'resetWorkspaceRunState'
@@ -1614,7 +2618,15 @@ export const useIDEStore = create<IDEStore>()(
         set({ isRestoringWorkspace }, false, 'setRestoringWorkspace'),
 
       resetWorkspaceSession: () =>
-        set(createDefaultWorkspaceSessionState(), false, 'resetWorkspaceSession'),
+        set(
+          (state) => ({
+            ...createDefaultWorkspaceSessionState(),
+            // A reset is the first step of a restore, never a gesture: keep the marker moving.
+            centerLayoutRevision: state.centerLayoutRevision + 1,
+          }),
+          false,
+          'resetWorkspaceSession'
+        ),
 
       // Recent workspaces actions
       setRecentWorkspaces: (recentWorkspaces) =>
@@ -1733,6 +2745,10 @@ export const useSidebarView = () => useIDEStore((state) => state.activeSidebarVi
 export const useIsLeftPanelCollapsed = () => useIDEStore((state) => state.isLeftPanelCollapsed);
 export const useIsRightPanelCollapsed = () => useIDEStore((state) => state.isRightPanelCollapsed);
 export const useIsBottomPanelCollapsed = () => useIDEStore((state) => state.isBottomPanelCollapsed);
+export const useCenterOrder = () => useIDEStore((state) => state.centerOrder);
+export const useIsGolemPanelCollapsed = () => useIDEStore((state) => state.isGolemPanelCollapsed);
+export const useIsFilesPanelCollapsed = () => useIDEStore((state) => state.isFilesPanelCollapsed);
+export const useCenterReveal = () => useIDEStore((state) => state.centerReveal);
 export const useOpenFiles = () => useIDEStore((state) => state.openFiles);
 export const useActiveFileId = () => useIDEStore((state) => state.activeFileId);
 export const useActiveFile = () =>
@@ -1781,7 +2797,8 @@ export const useActiveRunOutput = () =>
 export const useActiveCompoundRun = () =>
   useIDEStore((state) => {
     const id = state.activeRunOutputId;
-    return id ? (state.runCompounds[id] ?? null) : null;
+    const compoundId = id ? state.compoundIdByRunInstance[id] : undefined;
+    return compoundId ? (state.runCompounds[compoundId] ?? null) : null;
   });
 export const useRunOutputViewMode = () => useIDEStore((state) => state.runOutputViewMode);
 export const useRunOutputAutoScroll = () => useIDEStore((state) => state.runOutputAutoScroll);

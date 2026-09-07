@@ -1,4 +1,4 @@
-import type { search } from '../../wailsjs/go/models';
+import type { search } from '../wails/bindings';
 
 export type MatchRange = Pick<search.MatchRange, 'start' | 'end'>;
 

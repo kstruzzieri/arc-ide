@@ -3,7 +3,7 @@
 
 import { joinRepoPath } from '../utils/paths';
 
-/** Mirrors git.FileChange from the Go backend (wailsjs model shape). */
+/** Mirrors git.FileChange from the Go backend (generated bindings model shape). */
 export interface GitFileChange {
   path: string;
   origPath?: string;

@@ -30,7 +30,6 @@ export {
 export {
   createEditorExtensions,
   applyEditorTheme,
-  getLanguageExtension,
   getLanguageName,
   languageCompartment,
   themeCompartment,
@@ -46,6 +45,7 @@ export {
   readOnly,
   tabSize,
 } from './extensions';
+export { loadLanguageSupport } from './languages';
 
 // Diagnostics
 export { updateEditorDiagnostics, lspToCMDiagnostics, diagnosticsCompartment } from './diagnostics';
@@ -61,6 +61,24 @@ export { definitionExtensions } from './definition';
 
 // Document reconciliation (non-undoable external content sync)
 export { reconcileDoc } from './reconcileDoc';
+
+// Merge resolution Result-spine editor
+export {
+  changedRegionIndexes,
+  createMergeResolutionEditor,
+  markerBlockRange,
+  markerBlockRanges,
+  nextUnresolved,
+  resolutionLines,
+  type MarkerBlockRange,
+  type MappedMergeRegion,
+  type MergeChoice,
+  type MergeDirection,
+  type MergeOrder,
+  type MergeResolutionEditor,
+  type MergeResolutionState,
+  type ResolutionRefusalHandler,
+} from './mergeResolution';
 
 // Re-export commonly used CodeMirror types
 export { EditorView } from '@codemirror/view';

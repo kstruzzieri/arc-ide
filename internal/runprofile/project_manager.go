@@ -491,8 +491,9 @@ func (m *ProjectRunProfileManager) HandleFileChange(path string) bool {
 // profile ID. It is the single hydration contract for initial load and the
 // runprofiles:changed event.
 type RunProfilesSnapshot struct {
-	Profiles     []RunProfile              `json:"profiles"`
-	ProfileState map[string]ProfileUIState `json:"profileState"`
+	Profiles       []RunProfile              `json:"profiles"`
+	ProfileState   map[string]ProfileUIState `json:"profileState"`
+	WorkspaceEpoch uint64                    `json:"workspaceEpoch"`
 }
 
 // Snapshot returns the merged profile list and the union of every unit's

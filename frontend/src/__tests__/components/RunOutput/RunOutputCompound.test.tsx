@@ -9,7 +9,7 @@ import type { CompoundRun, RunOutput } from '../../../types/runOutput';
 
 const mockStop = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestart = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   StopRunProfile: (id: string) => mockStop(id),
   RestartRunProfile: (id: string) => mockRestart(id),
 }));
@@ -55,9 +55,7 @@ function makeRunOutput(overrides: Partial<RunOutput> = {}): RunOutput {
     profileId: 'p1',
     state: 'running',
     exitCode: 0,
-    runCount: 1,
     entries: [],
-    previousEntries: [],
     ...overrides,
   };
 }
@@ -75,7 +73,8 @@ describe('RunOutputPanel compound rendering', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound() },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputPanel />);
@@ -87,7 +86,8 @@ describe('RunOutputPanel compound rendering', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound() },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
       runOutputViewMode: 'timeline',
     });
 
@@ -99,9 +99,11 @@ describe('RunOutputPanel compound rendering', () => {
 
   it('renders ordinary views (not compound) for a plain run output', () => {
     useIDEStore.setState({
-      runOutputs: { p1: makeRunOutput() },
+      runOutputs: { r1: makeRunOutput() },
+      runInstanceIdsByProfile: { p1: ['r1'] },
+      latestRunInstanceIdByProfile: { p1: 'r1' },
       runCompounds: {},
-      activeRunOutputId: 'p1',
+      activeRunOutputId: 'r1',
       runOutputViewMode: 'merged',
     });
 
@@ -120,7 +122,8 @@ describe('RunOutputToolbar compound controls', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound() },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
       clearCompoundRunOutput,
     });
 
@@ -135,7 +138,8 @@ describe('RunOutputToolbar compound controls', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound({ state: 'running' }) },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputToolbar />);
@@ -149,7 +153,8 @@ describe('RunOutputToolbar compound controls', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound({ state: 'failed' }) },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputToolbar />);
@@ -163,7 +168,8 @@ describe('RunOutputToolbar compound controls', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound() },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputToolbar />);
@@ -176,9 +182,11 @@ describe('RunOutputToolbar compound controls', () => {
 
   it('shows the view-mode group for an ordinary active output', () => {
     useIDEStore.setState({
-      runOutputs: { p1: makeRunOutput() },
+      runOutputs: { r1: makeRunOutput() },
+      runInstanceIdsByProfile: { p1: ['r1'] },
+      latestRunInstanceIdByProfile: { p1: 'r1' },
       runCompounds: {},
-      activeRunOutputId: 'p1',
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputToolbar />);
@@ -186,16 +194,16 @@ describe('RunOutputToolbar compound controls', () => {
     expect(screen.getByRole('button', { name: 'Merged' })).toBeInTheDocument();
   });
 
-  it('disables Timeline when the only second output is a compound aggregate', () => {
-    // One ordinary profile + one compound aggregate (in runOutputs) is a single
-    // true ordinary output, so the multi-profile Timeline must stay disabled.
+  it('disables Timeline with one ordinary output alongside a compound', () => {
     useIDEStore.setState({
-      runOutputs: {
-        p1: makeRunOutput({ profileId: 'p1' }),
-        ci: makeRunOutput({ profileId: 'ci' }),
+      runOutputs: { r1: makeRunOutput({ runInstanceId: 'r1', profileId: 'p1' }) },
+      runInstanceIdsByProfile: { p1: ['r1'] },
+      latestRunInstanceIdByProfile: { p1: 'r1' },
+      runCompounds: {
+        ci: makeCompound({ runInstanceId: 'agg-r1', compoundId: 'ci', name: 'CI' }),
       },
-      runCompounds: { ci: makeCompound({ compoundId: 'ci', name: 'CI' }) },
-      activeRunOutputId: 'p1',
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputToolbar />);
@@ -211,7 +219,8 @@ describe('RunOutputTabs compound tabs', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: { ci: makeCompound({ name: 'CI' }) },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputTabs />);
@@ -223,10 +232,11 @@ describe('RunOutputTabs compound tabs', () => {
     useIDEStore.setState({
       runOutputs: {},
       runCompounds: {
-        ci: makeCompound({ compoundId: 'ci', name: 'CI' }),
-        deploy: makeCompound({ compoundId: 'deploy', name: 'Deploy' }),
+        ci: makeCompound({ runInstanceId: 'r1', compoundId: 'ci', name: 'CI' }),
+        deploy: makeCompound({ runInstanceId: 'r2', compoundId: 'deploy', name: 'Deploy' }),
       },
-      activeRunOutputId: 'ci',
+      compoundIdByRunInstance: { r1: 'ci', r2: 'deploy' },
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputTabs />);
@@ -237,11 +247,13 @@ describe('RunOutputTabs compound tabs', () => {
   it('renders the All timeline tab when 2+ ordinary outputs exist', () => {
     useIDEStore.setState({
       runOutputs: {
-        p1: makeRunOutput({ profileId: 'p1' }),
-        p2: makeRunOutput({ profileId: 'p2' }),
+        r1: makeRunOutput({ runInstanceId: 'r1', profileId: 'p1' }),
+        r2: makeRunOutput({ runInstanceId: 'r2', profileId: 'p2' }),
       },
+      runInstanceIdsByProfile: { p1: ['r1'], p2: ['r2'] },
+      latestRunInstanceIdByProfile: { p1: 'r1', p2: 'r2' },
       runCompounds: {},
-      activeRunOutputId: 'p1',
+      activeRunOutputId: 'r1',
     });
 
     render(<RunOutputTabs />);
@@ -249,18 +261,14 @@ describe('RunOutputTabs compound tabs', () => {
     expect(screen.getByText('All')).toBeInTheDocument();
   });
 
-  it('excludes the compound aggregate (in runOutputs) from the ordinary timeline count', () => {
-    // A compound emits an aggregate run:status, so its id also lives in
-    // runOutputs. With one ordinary profile + one compound aggregate the
-    // ordinary count is 1 (not 2), so the All timeline tab must not appear and
-    // the compound must render exactly one tab.
+  it('keeps compound storage separate from the ordinary timeline count', () => {
     useIDEStore.setState({
-      runOutputs: {
-        p1: makeRunOutput({ profileId: 'p1' }),
-        ci: makeRunOutput({ profileId: 'ci' }),
-      },
+      runOutputs: { ordinary: makeRunOutput({ runInstanceId: 'ordinary', profileId: 'p1' }) },
+      runInstanceIdsByProfile: { p1: ['ordinary'] },
+      latestRunInstanceIdByProfile: { p1: 'ordinary' },
       runCompounds: { ci: makeCompound({ compoundId: 'ci', name: 'CI' }) },
-      activeRunOutputId: 'p1',
+      compoundIdByRunInstance: { r1: 'ci' },
+      activeRunOutputId: 'ordinary',
     });
 
     render(<RunOutputTabs />);

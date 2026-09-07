@@ -2,10 +2,9 @@ import { renderHook, act } from '@testing-library/react';
 import {
   useLSPStore,
   useLSPDiagnosticCount,
-  useLSPErrorCount,
-  useLSPInfoCount,
-  useLSPWarningCount,
   useGroupedDiagnostics,
+  computeProblemsProjection,
+  computeProblemsSeverityTotals,
   findServerStatusForFile,
   pathContainsOrEquals,
   type LSPDiagnostic,
@@ -101,61 +100,6 @@ describe('lspStore', () => {
   });
 
   describe('reactive selectors', () => {
-    it('useLSPErrorCount returns error count reactively', () => {
-      const { result } = renderHook(() => useLSPErrorCount());
-      expect(result.current).toBe(0);
-
-      act(() => {
-        useLSPStore.getState().setDiagnostics('file:///test.ts', [
-          {
-            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
-            severity: 1,
-            message: 'err',
-          },
-        ]);
-      });
-
-      expect(result.current).toBe(1);
-    });
-
-    it('useLSPWarningCount returns warning count reactively', () => {
-      const { result } = renderHook(() => useLSPWarningCount());
-      expect(result.current).toBe(0);
-
-      act(() => {
-        useLSPStore.getState().setDiagnostics('file:///test.ts', [
-          {
-            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
-            severity: 2,
-            message: 'warn',
-          },
-        ]);
-      });
-
-      expect(result.current).toBe(1);
-    });
-
-    it('useLSPInfoCount includes informational and unspecified severities', () => {
-      const { result } = renderHook(() => useLSPInfoCount());
-      expect(result.current).toBe(0);
-
-      act(() => {
-        useLSPStore.getState().setDiagnostics('file:///test.ts', [
-          {
-            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
-            severity: 3,
-            message: 'info',
-          },
-          {
-            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
-            message: 'hint-like without severity',
-          },
-        ]);
-      });
-
-      expect(result.current).toBe(2);
-    });
-
     it('useLSPDiagnosticCount matches every Problems panel entry', () => {
       const { result } = renderHook(() => useLSPDiagnosticCount());
       expect(result.current).toBe(0);
@@ -222,8 +166,219 @@ describe('lspStore', () => {
       expect(result.current[0].filePath).toContain('b.ts');
     });
 
+    it('projects one conflict row while counting unresolved regions and clean diagnostics', () => {
+      const conflicted = [
+        {
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 7 } },
+          severity: 1,
+          code: 1185,
+          source: 'ts',
+          message: 'Merge conflict marker encountered.',
+        },
+        {
+          range: { start: { line: 3, character: 0 }, end: { line: 3, character: 7 } },
+          severity: 1,
+          code: 1185,
+          source: 'ts',
+          message: 'Merge conflict marker encountered.',
+        },
+      ];
+      const clean = [
+        {
+          range: { start: { line: 4, character: 2 }, end: { line: 4, character: 6 } },
+          severity: 2,
+          source: 'gopls',
+          message: 'unused variable',
+        },
+        {
+          range: { start: { line: 8, character: 1 }, end: { line: 8, character: 5 } },
+          severity: 3,
+          source: 'gopls',
+          message: 'consider simplifying',
+        },
+      ];
+      const diagnostics = new Map<string, LSPDiagnostic[]>([
+        ['file:///repo/conflict.ts', conflicted],
+        ['file:///repo/clean.go', clean],
+      ]);
+
+      const projection = computeProblemsProjection(diagnostics, [
+        {
+          filePath: '/repo/conflict.ts',
+          repoRoot: '/repo',
+          repoPath: 'conflict.ts',
+          unresolvedRegionCount: 4,
+          markerLineCount: 12,
+        },
+      ]);
+
+      expect(projection.count).toBe(6);
+      expect(projection.groups).toEqual([
+        {
+          kind: 'conflict',
+          filePath: '/repo/conflict.ts',
+          repoRoot: '/repo',
+          repoPath: 'conflict.ts',
+          unresolvedRegionCount: 4,
+          markerLineCount: 12,
+        },
+        {
+          kind: 'diagnostics',
+          filePath: '/repo/clean.go',
+          uri: 'file:///repo/clean.go',
+          diagnostics: clean,
+        },
+      ]);
+      expect(diagnostics.get('file:///repo/conflict.ts')).toBe(conflicted);
+      expect(diagnostics.get('file:///repo/clean.go')).toBe(clean);
+    });
+
+    it('computeProblemsSeverityTotals counts conflict regions as warnings and suppresses the conflicted file', () => {
+      const diagnostics = new Map<string, LSPDiagnostic[]>([
+        [
+          'file:///repo/conflict.ts',
+          [
+            {
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 7 } },
+              severity: 1,
+              message: 'Merge conflict marker encountered.',
+            },
+            {
+              range: { start: { line: 3, character: 0 }, end: { line: 3, character: 7 } },
+              severity: 1,
+              message: 'Merge conflict marker encountered.',
+            },
+          ],
+        ],
+        [
+          'file:///repo/clean.go',
+          [
+            {
+              range: { start: { line: 1, character: 0 }, end: { line: 1, character: 3 } },
+              severity: 1,
+              message: 'undefined: foo',
+            },
+            {
+              range: { start: { line: 4, character: 2 }, end: { line: 4, character: 6 } },
+              severity: 2,
+              message: 'unused variable',
+            },
+            {
+              range: { start: { line: 8, character: 1 }, end: { line: 8, character: 5 } },
+              severity: 3,
+              message: 'consider simplifying',
+            },
+            {
+              range: { start: { line: 9, character: 0 }, end: { line: 9, character: 1 } },
+              message: 'no severity',
+            },
+          ],
+        ],
+      ]);
+      const projection = computeProblemsProjection(diagnostics, [
+        {
+          filePath: '/repo/conflict.ts',
+          repoRoot: '/repo',
+          repoPath: 'conflict.ts',
+          unresolvedRegionCount: 4,
+          markerLineCount: 12,
+        },
+      ]);
+
+      const totals = computeProblemsSeverityTotals(projection);
+
+      expect(totals).toEqual({ errors: 1, warnings: 5, info: 2 });
+      expect(totals.errors + totals.warnings + totals.info).toBe(projection.count);
+    });
+
+    it('computeProblemsSeverityTotals matches raw severity counts without conflicts', () => {
+      const diagnostics = new Map<string, LSPDiagnostic[]>([
+        [
+          'file:///repo/a.ts',
+          [
+            {
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+              severity: 1,
+              message: 'err',
+            },
+            {
+              range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+              severity: 2,
+              message: 'warn',
+            },
+            {
+              range: { start: { line: 2, character: 0 }, end: { line: 2, character: 1 } },
+              severity: 4,
+              message: 'hint',
+            },
+          ],
+        ],
+      ]);
+
+      const totals = computeProblemsSeverityTotals(computeProblemsProjection(diagnostics, []));
+
+      expect(totals).toEqual({ errors: 1, warnings: 1, info: 1 });
+    });
+
+    it('collapses conflicted diagnostics without depending on language or diagnostic text', () => {
+      const diagnostic: LSPDiagnostic = {
+        range: { start: { line: 2, character: 0 }, end: { line: 2, character: 2 } },
+        severity: 1,
+        code: 'syntax',
+        source: 'gopls',
+        message: 'expected declaration',
+      };
+
+      const projection = computeProblemsProjection(
+        new Map([['file:///repo/main.go', [diagnostic]]]),
+        [
+          {
+            filePath: '/repo/main.go',
+            repoRoot: '/repo',
+            repoPath: 'main.go',
+            unresolvedRegionCount: 1,
+            markerLineCount: 4,
+          },
+        ]
+      );
+
+      expect(projection.count).toBe(1);
+      expect(projection.groups).toEqual([
+        expect.objectContaining({
+          kind: 'conflict',
+          repoPath: 'main.go',
+          unresolvedRegionCount: 1,
+          markerLineCount: 4,
+        }),
+      ]);
+    });
+
+    it('keeps real diagnostics when no exact conflict snapshot is available', () => {
+      const diagnostic: LSPDiagnostic = {
+        range: { start: { line: 1, character: 0 }, end: { line: 1, character: 3 } },
+        severity: 1,
+        source: 'pyright',
+        message: 'Unexpected indentation',
+      };
+
+      const projection = computeProblemsProjection(
+        new Map([['file:///repo/app.py', [diagnostic]]]),
+        []
+      );
+
+      expect(projection.count).toBe(1);
+      expect(projection.groups).toEqual([
+        {
+          kind: 'diagnostics',
+          filePath: '/repo/app.py',
+          uri: 'file:///repo/app.py',
+          diagnostics: [diagnostic],
+        },
+      ]);
+    });
+
     it('counts clear to zero when diagnostics are removed', () => {
-      const { result: errorResult } = renderHook(() => useLSPErrorCount());
+      const { result: errorResult } = renderHook(() => useLSPDiagnosticCount());
 
       act(() => {
         useLSPStore.getState().setDiagnostics('file:///test.ts', [

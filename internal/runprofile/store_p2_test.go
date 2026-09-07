@@ -36,6 +36,40 @@ func TestStoreRecordRunWritesSidecarNotProfiles(t *testing.T) {
 	}
 }
 
+// Same-profile launches can complete their asynchronous recency persistence in
+// the opposite order from admission. LastRunAt is a launch-recency value, so an
+// older completion must never overwrite the timestamp captured for a newer
+// admitted run.
+func TestStoreRecordRunDoesNotRegressLaunchRecencyOnReverseCompletion(t *testing.T) {
+	mockFS, files := newMockFSWithFiles()
+	store := NewStore(mockFS, "/workspace")
+	const (
+		profileID = "parallel"
+		olderTS   = int64(100)
+		newerTS   = int64(200)
+	)
+
+	// Admissions were ordered olderTS then newerTS, but the newer run reaches
+	// RecordRun first and the older run completes second.
+	if err := store.RecordRun(profileID, newerTS); err != nil {
+		t.Fatalf("RecordRun(newer): %v", err)
+	}
+	if err := store.RecordRun(profileID, olderTS); err != nil {
+		t.Fatalf("RecordRun(older): %v", err)
+	}
+	if got := store.GetState()[profileID].LastRunAt; got != newerTS {
+		t.Fatalf("in-memory LastRunAt = %d, want newer admitted timestamp %d", got, newerTS)
+	}
+
+	var persisted RecencyFile
+	if err := json.Unmarshal(files["/workspace/"+recencyFileName], &persisted); err != nil {
+		t.Fatalf("unmarshal recency sidecar: %v", err)
+	}
+	if got := persisted.Recency[profileID]; got != newerTS {
+		t.Fatalf("persisted LastRunAt = %d, want newer admitted timestamp %d", got, newerTS)
+	}
+}
+
 // RecordRun is synchronous: a failed sidecar write surfaces the error to the
 // caller and rolls the in-memory timestamp back.
 func TestStoreRecordRunSurfacesAndRollsBackOnFailure(t *testing.T) {

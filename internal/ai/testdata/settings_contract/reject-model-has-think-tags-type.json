@@ -1,0 +1,67 @@
+{
+  "verdict": "reject",
+  "projection": {
+    "state": "ready",
+    "sourceOrigin": "user_config",
+    "routes": [
+      {
+        "useCase": "agent",
+        "role": "agent-m"
+      }
+    ],
+    "models": [
+      {
+        "role": "agent-m",
+        "modelName": "wire-model",
+        "provider": "hosted",
+        "type": "dense",
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "thinkMode": "",
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "routedUseCases": [
+          "agent"
+        ],
+        "hasThinkTags": "true",
+        "hasSlots": false,
+        "removable": false
+      }
+    ],
+    "providers": [
+      {
+        "name": "hosted",
+        "endpoint": "http://localhost:11434",
+        "classification": "local",
+        "apiFormat": "ollama",
+        "credentialState": "none"
+      }
+    ],
+    "diagnostics": [],
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "readOnly": false,
+    "editable": true
+  }
+}

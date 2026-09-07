@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useIDEStore } from '../stores/ideStore';
-import { ListRecentWorkspaces } from '../../wailsjs/go/main/App';
+import { ListRecentWorkspaces } from '../wails/bindings';
 
 const MAX_RECENT = 10;
 

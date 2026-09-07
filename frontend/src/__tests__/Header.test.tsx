@@ -7,19 +7,23 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Header } from '../components/Header';
 import { useIDEStore } from '../stores/ideStore';
+import { formatShortcut } from '../utils/platform';
 
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
 
-jest.mock('../../wailsjs/runtime/runtime', () => ({
+jest.mock('../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: jest.fn(() => jest.fn()),
 }));
 
-import { OpenFolderDialog } from '../../wailsjs/go/main/App';
-import { WindowSetTitle } from '../../wailsjs/runtime/runtime';
+import { OpenFolderDialog } from '../wails/bindings';
+import { WindowSetTitle } from '../wails/runtime';
+
+const renderHeader = (onOpenCommandPalette = jest.fn()) =>
+  render(<Header onOpenCommandPalette={onOpenCommandPalette} />);
 
 describe('Header Component', () => {
   beforeEach(() => {
@@ -31,23 +35,29 @@ describe('Header Component', () => {
   });
 
   it('should render the app name', () => {
-    render(<Header />);
+    renderHeader();
     expect(screen.getByText('Firn')).toBeInTheDocument();
   });
 
   it('should render navigation buttons', () => {
-    render(<Header />);
+    renderHeader();
     const buttons = screen.getAllByRole('button');
     expect(buttons.length).toBeGreaterThan(0);
   });
 
-  it('should render search button with keyboard shortcut', () => {
-    render(<Header />);
-    expect(screen.getByText(/search/i)).toBeInTheDocument();
+  it('should open the command palette from Search Everywhere without showing its shortcut', () => {
+    const onOpenCommandPalette = jest.fn();
+    renderHeader(onOpenCommandPalette);
+    const searchButton = screen.getByRole('button', { name: 'Search everywhere' });
+    fireEvent.click(searchButton);
+
+    expect(searchButton).toHaveTextContent('Search Everywhere');
+    expect(searchButton).not.toHaveTextContent(formatShortcut('⇧⌘P'));
+    expect(onOpenCommandPalette).toHaveBeenCalledTimes(1);
   });
 
   it('should show "No workspace" when no workspace is set', () => {
-    render(<Header />);
+    renderHeader();
     expect(screen.getByText('No workspace')).toBeInTheDocument();
   });
 
@@ -55,14 +65,14 @@ describe('Header Component', () => {
     useIDEStore.setState({
       workspace: { name: 'my-project', path: '/Users/test/my-project' },
     });
-    render(<Header />);
+    renderHeader();
     expect(screen.getByText('my-project')).toBeInTheDocument();
   });
 
   it('should call OpenFolderDialog when Open Folder menu item is clicked', async () => {
     (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
 
-    render(<Header />);
+    renderHeader();
 
     // Open the repository dropdown menu
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
@@ -78,7 +88,7 @@ describe('Header Component', () => {
   it('should update workspace and window title after folder selection', async () => {
     (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/my-app');
 
-    render(<Header />);
+    renderHeader();
 
     // Open the repository dropdown menu
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
@@ -109,7 +119,7 @@ describe('Header Component', () => {
       ],
     });
 
-    render(<Header />);
+    renderHeader();
 
     // Open the repository dropdown menu
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
@@ -141,7 +151,7 @@ describe('Header Component', () => {
       ],
     });
 
-    render(<Header />);
+    renderHeader();
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
 
     // The dropdown menu items should include only non-current workspaces.
@@ -169,7 +179,7 @@ describe('Header Component', () => {
       ],
     });
 
-    render(<Header />);
+    renderHeader();
     fireEvent.click(screen.getByRole('button', { name: /repository menu/i }));
     fireEvent.click(screen.getByText('target-project'));
 
@@ -190,7 +200,7 @@ describe('Header Component', () => {
       ] as never,
       activeWorkspaceId: 'project',
     });
-    render(<Header />);
+    renderHeader();
     expect(screen.getByRole('button', { name: /workspace selector/i })).toBeInTheDocument();
   });
 });

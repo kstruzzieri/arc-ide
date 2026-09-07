@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import styles from './StructureView.module.css';
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon, CollapseIcon } from '../icons';
 import { useDocumentSymbols } from '../../hooks/useDocumentSymbols';
@@ -50,35 +50,82 @@ interface SymbolRowProps {
   node: DocumentSymbolNode;
   depth: number;
   nodeId: string;
+  tabStopId: string | undefined;
   collapsed: Set<string>;
   onToggle: (key: string) => void;
+  onFocusNode: (key: string) => void;
   onSelect: (node: DocumentSymbolNode) => void;
 }
 
-function SymbolRow({ node, depth, nodeId, collapsed, onToggle, onSelect }: SymbolRowProps) {
+function SymbolRow({
+  node,
+  depth,
+  nodeId,
+  tabStopId,
+  collapsed,
+  onToggle,
+  onFocusNode,
+  onSelect,
+}: SymbolRowProps) {
   const meta = symbolKindMeta(node.kind);
   const hasChildren = !!node.children && node.children.length > 0;
   const isCollapsed = collapsed.has(nodeId);
+  const groupId = useId();
 
   return (
     <>
       <div
         className={styles.row}
         role="treeitem"
+        aria-level={depth + 1}
         aria-expanded={hasChildren ? !isCollapsed : undefined}
-        tabIndex={0}
+        aria-owns={hasChildren && !isCollapsed ? groupId : undefined}
+        tabIndex={nodeId === tabStopId ? 0 : -1}
         style={{ paddingLeft: 8 + depth * 14 }}
         onClick={() => onSelect(node)}
+        onFocus={() => onFocusNode(nodeId)}
         onKeyDown={(e) => {
+          const treeItems = Array.from(
+            e.currentTarget
+              .closest('[role="tree"]')
+              ?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []
+          );
+          const index = treeItems.indexOf(e.currentTarget);
+          const focusAt = (nextIndex: number) => {
+            treeItems[Math.max(0, Math.min(nextIndex, treeItems.length - 1))]?.focus();
+          };
+
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             onSelect(node);
-          } else if (e.key === 'ArrowRight' && hasChildren && isCollapsed) {
+          } else if (e.key === 'ArrowDown') {
             e.preventDefault();
-            onToggle(nodeId);
-          } else if (e.key === 'ArrowLeft' && hasChildren && !isCollapsed) {
+            focusAt(index + 1);
+          } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            onToggle(nodeId);
+            focusAt(index - 1);
+          } else if (e.key === 'Home') {
+            e.preventDefault();
+            focusAt(0);
+          } else if (e.key === 'End') {
+            e.preventDefault();
+            focusAt(treeItems.length - 1);
+          } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            if (hasChildren && isCollapsed) onToggle(nodeId);
+            else if (hasChildren) focusAt(index + 1);
+          } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            if (hasChildren && !isCollapsed) {
+              onToggle(nodeId);
+            } else {
+              for (let i = index - 1; i >= 0; i -= 1) {
+                if (treeItems[i].getAttribute('aria-level') === String(depth)) {
+                  treeItems[i].focus();
+                  break;
+                }
+              }
+            }
           }
         }}
         title={`${meta.label}: ${node.name}`}
@@ -104,7 +151,7 @@ function SymbolRow({ node, depth, nodeId, collapsed, onToggle, onSelect }: Symbo
         {node.detail && <span className={styles.detail}>{node.detail}</span>}
       </div>
       {hasChildren && !isCollapsed && (
-        <div role="group">
+        <div id={groupId} role="group">
           {node.children!.map((child, i) => {
             const childId = nodeKey(nodeId, i, child);
             return (
@@ -113,8 +160,10 @@ function SymbolRow({ node, depth, nodeId, collapsed, onToggle, onSelect }: Symbo
                 node={child}
                 depth={depth + 1}
                 nodeId={childId}
+                tabStopId={tabStopId}
                 collapsed={collapsed}
                 onToggle={onToggle}
+                onFocusNode={onFocusNode}
                 onSelect={onSelect}
               />
             );
@@ -179,6 +228,7 @@ export function StructureView() {
   const { status, symbols, filePath, refresh } = useDocumentSymbols();
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
 
   // Reset collapse state when the file changes — position-based keys would
   // otherwise bleed across files and the Set would grow unbounded over a
@@ -191,6 +241,21 @@ export function StructureView() {
   }
 
   const filtered = useMemo(() => filterSymbolTree(symbols, query), [symbols, query]);
+
+  const visibleNodeIds = useMemo(() => {
+    const ids: string[] = [];
+    const collect = (nodes: DocumentSymbolNode[], parentKey: string) => {
+      nodes.forEach((node, i) => {
+        const id = nodeKey(parentKey, i, node);
+        ids.push(id);
+        if (node.children?.length && !collapsed.has(id)) collect(node.children, id);
+      });
+    };
+    collect(filtered, 'root');
+    return ids;
+  }, [collapsed, filtered]);
+  const tabStopId =
+    activeNodeId && visibleNodeIds.includes(activeNodeId) ? activeNodeId : visibleNodeIds[0];
 
   const handleToggle = useCallback((key: string) => {
     setCollapsed((prev) => {
@@ -333,8 +398,10 @@ export function StructureView() {
                   node={node}
                   depth={0}
                   nodeId={id}
+                  tabStopId={tabStopId}
                   collapsed={collapsed}
                   onToggle={handleToggle}
+                  onFocusNode={setActiveNodeId}
                   onSelect={handleSelect}
                 />
               );

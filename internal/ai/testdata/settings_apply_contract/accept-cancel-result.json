@@ -1,0 +1,7 @@
+{
+  "verdict": "accept",
+  "document": "cancel_result",
+  "value": {
+    "status": "cancelled"
+  }
+}

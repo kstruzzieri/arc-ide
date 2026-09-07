@@ -1,18 +1,29 @@
 import {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  RefObject,
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import type { LanguageSupport } from '@codemirror/language';
 import { ChevronDownIcon, ChevronRightIcon } from '../icons';
 import { useIDEStore } from '../../stores/ideStore';
 import { useSearchStore } from '../../stores/searchStore';
 import type { FileResult, LineMatch, SearchUIState } from '../../types/search';
-import { byteColumnToCharColumn, splitLineByByteRanges } from '../../utils/searchRanges';
+import { byteColumnToCharColumn } from '../../utils/searchRanges';
+import {
+  buildLineRenderModel,
+  MAX_SEARCH_HIGHLIGHTED_ROWS,
+  parseLineTokens,
+  syntaxPaletteVars,
+  type LineRenderPart,
+} from '../../utils/searchTokens';
 import { navigateToEditorLocation } from '../../utils/editorNavigation';
+import { useSearchSyntaxSupports } from '../../hooks/useSearchSyntaxSupports';
 import styles from './SearchPanel.module.css';
 
 // Search durations span microseconds (cached) to multi-second (cold ripgrep
@@ -38,18 +49,27 @@ interface MatchItem {
   index: number;
   file: FileResult;
   match: LineMatch;
+  syntaxEligible: boolean;
 }
 
 type FlatItem = FileItem | MatchItem;
 
 function buildFlatItems(files: FileResult[], expandedFiles: Set<string>): FlatItem[] {
   const items: FlatItem[] = [];
+  let syntaxMatchCount = 0;
   for (const file of files) {
     const expanded = expandedFiles.has(file.path);
     items.push({ kind: 'file', index: items.length, file, expanded });
     if (expanded) {
       for (const match of file.matches) {
-        items.push({ kind: 'match', index: items.length, file, match });
+        items.push({
+          kind: 'match',
+          index: items.length,
+          file,
+          match,
+          syntaxEligible: syntaxMatchCount < MAX_SEARCH_HIGHLIGHTED_ROWS,
+        });
+        syntaxMatchCount++;
       }
     }
   }
@@ -69,27 +89,66 @@ function splitFilePath(relativePath: string): { name: string; dir: string } {
 
 interface MatchLineProps {
   match: LineMatch;
+  support: LanguageSupport | null;
 }
 
-function MatchLine({ match }: MatchLineProps) {
-  const segments = useMemo(
-    () => splitLineByByteRanges(match.text, match.submatches),
-    [match.text, match.submatches]
-  );
+// U+200E (left-to-right mark). The leading-context span is laid out with
+// direction: rtl so it ellipsizes on the LEFT (keeping the text nearest the
+// match visible — same trick as .fileDir). A trailing space would otherwise
+// "hang" outside the rtl line box and vanish; terminating the run with an LRM
+// keeps it inside. Appended only when the lead ends in preserved whitespace,
+// so DOM text otherwise matches the source line exactly (post-trim).
+// See .contextLead in SearchPanel.module.css.
+const LRM = '‎';
+
+// Token pieces render as inner spans carrying only the raw tok-<role> class
+// (colored by the scoped :global CSS in the module stylesheet); plain gaps render
+// as bare text nodes so uncolored runs add no extra elements.
+const MatchLine = memo(function MatchLine({ match, support }: MatchLineProps) {
+  const parts = useMemo<LineRenderPart[]>(() => {
+    const tokens = support ? parseLineTokens(match.text, support) : null;
+    return buildLineRenderModel(match.text, match.submatches, tokens ?? []);
+  }, [match.text, match.submatches, support]);
+
   return (
     <span className={styles.lineText}>
-      {segments.map((seg, i) =>
-        seg.isMatch ? (
-          <mark key={i} className={styles.match}>
-            {seg.text}
-          </mark>
-        ) : (
-          <span key={i}>{seg.text}</span>
-        )
-      )}
+      {parts.map((part, i) => {
+        if (part.kind === 'match') {
+          return (
+            <mark key={i} className={styles.match}>
+              {part.text}
+            </mark>
+          );
+        }
+        const children = part.pieces.map((piece, j) =>
+          piece.className ? (
+            <span key={j} className={piece.className}>
+              {piece.text}
+            </span>
+          ) : (
+            piece.text
+          )
+        );
+        if (part.isLead) {
+          const leadText = part.pieces.map((p) => p.text).join('');
+          return (
+            <span key={i} className={`${styles.context} ${styles.contextLead}`}>
+              <bdi dir="ltr">
+                {children}
+                {/[ \t]$/.test(leadText) ? LRM : null}
+              </bdi>
+            </span>
+          );
+        }
+        return (
+          <span key={i} className={styles.context}>
+            {children}
+          </span>
+        );
+      })}
     </span>
   );
-}
+});
 
 interface FileGroupProps {
   item: FileItem;
@@ -127,11 +186,15 @@ function FileGroupHeader({ item, focused, tabbable, itemRef, onToggle, onFocus }
             right-anchored (so we ellipsize the start, keeping the deepest
             segment visible), but the slashes are bidi-neutral and could
             otherwise re-order on systems with mixed scripts. <bdi> +
-            unicode-bidi: isolate keeps slash order stable. */}
+            unicode-bidi: isolate keeps slash order stable. The dir="ltr"
+            attribute must live on a CHILD of the rtl-styled element, not the
+            element itself: author CSS `direction` overrides the attribute's
+            presentational hint, so pinning both on one node lets the CSS win
+            and re-orders mixed-script segments anyway. */}
         {dir && (
-          <bdi className={styles.fileDir} dir="ltr">
-            {dir}
-          </bdi>
+          <span className={styles.fileDir}>
+            <bdi dir="ltr">{dir}</bdi>
+          </span>
         )}
       </span>
       <span className={styles.matchCount} aria-hidden="true">
@@ -148,9 +211,26 @@ interface ResultRowProps {
   itemRef: (el: HTMLButtonElement | null) => void;
   onActivate: () => void;
   onFocus: () => void;
+  support: LanguageSupport | null;
 }
 
-function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: ResultRowProps) {
+// ripgrep runs without --max-columns (parser.go buffers up to 16MB/line), so a
+// match in a minified file can be megabytes long. The tooltip and accessible
+// name carry no value past a few hundred characters — cap them so we don't
+// attach multi-MB strings to every row (the visual row already ellipsizes).
+const ROW_LABEL_MAX = 300;
+
+function ResultRow({
+  item,
+  focused,
+  tabbable,
+  itemRef,
+  onActivate,
+  onFocus,
+  support,
+}: ResultRowProps) {
+  const trimmed = item.match.text.trim();
+  const lineText = trimmed.length > ROW_LABEL_MAX ? `${trimmed.slice(0, ROW_LABEL_MAX)}…` : trimmed;
   return (
     <button
       ref={itemRef}
@@ -159,12 +239,13 @@ function ResultRow({ item, focused, tabbable, itemRef, onActivate, onFocus }: Re
       onClick={onActivate}
       onFocus={onFocus}
       tabIndex={tabbable ? 0 : -1}
-      aria-label={`Line ${item.match.line} in ${item.file.relativePath}`}
+      aria-label={`Line ${item.match.line} in ${item.file.relativePath}: ${lineText}`}
+      title={lineText}
     >
       <span className={styles.lineNumber} aria-hidden="true">
         {item.match.line}
       </span>
-      <MatchLine match={item.match} />
+      <MatchLine match={item.match} support={support} />
     </button>
   );
 }
@@ -186,6 +267,7 @@ export function SearchPanel() {
   const toggleFileExpanded = useSearchStore((s) => s.toggleFileExpanded);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const [focusedItemIndex, setFocusedItemIndex] = useState<number | null>(null);
 
@@ -205,6 +287,24 @@ export function SearchPanel() {
     if (uiState.kind !== 'results') return [];
     return buildFlatItems(uiState.files, expandedFiles);
   }, [uiState, expandedFiles]);
+
+  const editorSyntaxTheme = useIDEStore((s) => s.editorSyntaxTheme);
+  const paletteVars = useMemo(() => syntaxPaletteVars(editorSyntaxTheme), [editorSyntaxTheme]);
+
+  // Distinct relativePaths of currently visible (expanded) match rows.
+  const visibleFilenames = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of flatItems) {
+      if (item.kind === 'match' && item.syntaxEligible && !seen.has(item.file.relativePath)) {
+        seen.add(item.file.relativePath);
+        out.push(item.file.relativePath);
+      }
+    }
+    return out;
+  }, [flatItems]);
+
+  const supports = useSearchSyntaxSupports(visibleFilenames);
 
   // Restore keyboard focus when results refresh.
   //
@@ -237,6 +337,7 @@ export function SearchPanel() {
   }, [flatItems, focusedItemIndex]);
 
   const focusItem = useCallback((index: number) => {
+    if (index === 0 && resultsScrollRef.current) resultsScrollRef.current.scrollTop = 0;
     setFocusedItemIndex(index);
     const el = itemRefs.current.get(index);
     el?.focus();
@@ -378,7 +479,12 @@ export function SearchPanel() {
   const isInvalidRegex = uiState.kind === 'invalid-regex';
 
   return (
-    <div className={styles.container} role="region" aria-label="Workspace search">
+    <div
+      className={styles.container}
+      role="region"
+      aria-label="Workspace search"
+      style={paletteVars}
+    >
       <div className={styles.controls}>
         <div className={styles.inputWrapper}>
           <input
@@ -445,6 +551,7 @@ export function SearchPanel() {
       <PanelBody
         uiState={uiState}
         flatItems={flatItems}
+        resultsScrollRef={resultsScrollRef}
         focusedItemIndex={focusedItemIndex}
         // Default the keyboard-tabbable position to item 0 when no row is
         // focused, so a Tab-only user can reach the result list via Tab
@@ -457,6 +564,7 @@ export function SearchPanel() {
         onToggleFile={toggleFileExpanded}
         onActivateMatch={activateMatch}
         onItemFocus={setFocusedItemIndex}
+        supports={supports}
       />
     </div>
   );
@@ -465,6 +573,7 @@ export function SearchPanel() {
 interface PanelBodyProps {
   uiState: SearchUIState;
   flatItems: FlatItem[];
+  resultsScrollRef: RefObject<HTMLDivElement | null>;
   focusedItemIndex: number | null;
   tabbableIndex: number;
   setItemRef: (index: number) => (el: HTMLButtonElement | null) => void;
@@ -472,11 +581,13 @@ interface PanelBodyProps {
   onToggleFile: (path: string) => void;
   onActivateMatch: (file: FileResult, match: LineMatch) => void;
   onItemFocus: (index: number) => void;
+  supports: ReadonlyMap<string, LanguageSupport>;
 }
 
-function PanelBody({
+const PanelBody = memo(function PanelBody({
   uiState,
   flatItems,
+  resultsScrollRef,
   focusedItemIndex,
   tabbableIndex,
   setItemRef,
@@ -484,6 +595,7 @@ function PanelBody({
   onToggleFile,
   onActivateMatch,
   onItemFocus,
+  supports,
 }: PanelBodyProps) {
   switch (uiState.kind) {
     case 'no-workspace':
@@ -569,6 +681,7 @@ function PanelBody({
             )}
           </div>
           <div
+            ref={resultsScrollRef}
             className={styles.resultsScroll}
             aria-label="Search results"
             onKeyDown={onListKeyDown}
@@ -594,6 +707,9 @@ function PanelBody({
                     itemRef={setItemRef(item.index)}
                     onActivate={() => onActivateMatch(item.file, item.match)}
                     onFocus={() => onItemFocus(item.index)}
+                    support={
+                      item.syntaxEligible ? (supports.get(item.file.relativePath) ?? null) : null
+                    }
                   />
                 )
               )}
@@ -603,4 +719,4 @@ function PanelBody({
       );
     }
   }
-}
+});

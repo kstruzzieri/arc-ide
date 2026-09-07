@@ -61,6 +61,11 @@
   overflow: auto;
 }
 
+.workspaceTree {
+  box-sizing: border-box;
+  border-left: 3px solid var(--tree-accent);
+}
+
 /* Empty state */
 .empty {
   display: flex;

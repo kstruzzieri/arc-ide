@@ -16,8 +16,11 @@ export function preserveLoadedChildren(
   const byPath = new Map(oldLevel.map((n) => [n.path, n]));
   return newLevel.map((n) => {
     const prev = byPath.get(n.path);
-    return prev && n.isDir && prev.children !== undefined
-      ? ({ ...n, children: prev.children } as FileEntry)
-      : n;
+    if (!prev || !n.isDir || (prev.children === undefined && !prev.unreadable)) return n;
+    return {
+      ...n,
+      ...(prev.children === undefined ? {} : { children: prev.children }),
+      ...(prev.unreadable ? { unreadable: true } : {}),
+    } as FileEntry;
   });
 }

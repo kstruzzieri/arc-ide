@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 	"testing"
 )
@@ -79,5 +80,26 @@ func TestMockRenameNoHookIsNoop(t *testing.T) {
 	m := &Mock{}
 	if err := m.Rename("/x", "/y"); err != nil {
 		t.Errorf("expected nil from unconfigured Rename, got %v", err)
+	}
+}
+
+// An unset StatFunc must not report success with a nil FileInfo: fs.Stat's
+// contract is that a nil error means the info is usable, and filesystem.Lstat
+// falls back to Stat, so callers dereference whatever comes back.
+func TestMockStatWithoutAStubReportsNotExistRatherThanANilInfo(t *testing.T) {
+	info, err := (&Mock{}).Stat("/anywhere")
+	if err == nil {
+		t.Fatal("Stat without a stub returned success")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Stat error = %v, want fs.ErrNotExist", err)
+	}
+	if info != nil {
+		t.Fatalf("Stat returned info %v alongside an error", info)
+	}
+	// Lstat routes through Stat for a filesystem with no Lstat seam, so the same
+	// guarantee has to hold there.
+	if _, err := Lstat(&Mock{}, "/anywhere"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Lstat fallback error = %v, want fs.ErrNotExist", err)
 	}
 }

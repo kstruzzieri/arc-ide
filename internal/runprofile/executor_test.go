@@ -23,10 +23,14 @@ type emitEvent struct {
 	data  []any
 }
 
-func (s *emitSpy) emit(event string, data ...any) {
+func (s *emitSpy) emit(event string, data any) {
+	var args []any
+	if data != nil {
+		args = []any{data}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.events = append(s.events, emitEvent{event: event, data: data})
+	s.events = append(s.events, emitEvent{event: event, data: args})
 }
 
 func (s *emitSpy) statuses() []RunStatus {
@@ -266,7 +270,7 @@ func TestExecutor_StopSetsStoppedFlag(t *testing.T) {
 	}
 }
 
-func TestExecutor_DuplicateStart(t *testing.T) {
+func TestExecutor_SameProfileCapacityIsTwo(t *testing.T) {
 	exec := NewExecutor(nil, nil)
 	dir := t.TempDir()
 
@@ -274,11 +278,14 @@ func TestExecutor_DuplicateStart(t *testing.T) {
 	if err := exec.Start(dir, profile); err != nil {
 		t.Fatal(err)
 	}
-	defer exec.Stop("test-dup") //nolint:errcheck
+	if err := exec.Start(dir, profile); err != nil {
+		t.Fatalf("second same-profile start: %v", err)
+	}
+	defer exec.StopAll(2 * time.Second) //nolint:errcheck
 
 	err := exec.Start(dir, profile)
 	if err == nil {
-		t.Fatal("expected error for duplicate start")
+		t.Fatal("expected third same-profile start to be rejected")
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("error = %q, want 'already running'", err.Error())
@@ -823,8 +830,8 @@ func TestExecutor_OutputCallback(t *testing.T) {
 
 func TestExecutor_SingleRunHasInstanceIDAndActiveLookup(t *testing.T) {
 	var statuses []RunStatus
-	e := NewExecutor(func(_ string, data ...any) {
-		if s, ok := data[0].(RunStatus); ok {
+	e := NewExecutor(func(_ string, data any) {
+		if s, ok := data.(RunStatus); ok {
 			statuses = append(statuses, s)
 		}
 	}, nil)
@@ -843,17 +850,20 @@ func TestExecutor_SingleRunHasInstanceIDAndActiveLookup(t *testing.T) {
 	}
 }
 
-func TestExecutor_DuplicateStartRejected(t *testing.T) {
+func TestExecutor_ThirdSameProfileStartRejected(t *testing.T) {
 	e := NewExecutor(nil, nil)
 	p := newTestProfile("slow", "sleep 2")
 	root := t.TempDir()
 	if err := e.Start(root, p); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	if err := e.Start(root, p); err == nil {
-		t.Fatalf("expected duplicate start to be rejected")
+	if err := e.Start(root, p); err != nil {
+		t.Fatalf("second Start: %v", err)
 	}
-	_ = e.Stop("slow")
+	if err := e.Start(root, p); err == nil {
+		t.Fatalf("expected third start to be rejected")
+	}
+	e.StopAll(2 * time.Second) //nolint:errcheck
 }
 
 func TestExecutor_RerunGetsNewInstanceID(t *testing.T) {

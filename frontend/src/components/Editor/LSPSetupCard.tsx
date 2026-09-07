@@ -7,7 +7,7 @@ import {
   LSPSetInterpreter,
   LSPClearInterpreter,
   LSPDoctor,
-} from '../../../wailsjs/go/main/App';
+} from '../../wails/bindings';
 import styles from './LSPSetupCard.module.css';
 
 function showActionError(action: string, error: unknown) {

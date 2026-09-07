@@ -18,7 +18,7 @@
 }
 
 .info {
-  border-left: 3px solid var(--accent-blue);
+  border-left: 3px solid var(--palette-blue);
 }
 
 .actions {

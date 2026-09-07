@@ -5,10 +5,17 @@ import (
 	"errors"
 	"firn/internal/filesystem"
 	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
+var testWorkspaceBaseDir = filepath.FromSlash("/home/user/.firn/workspaces")
+
+// Keys are compared byte-for-byte, exactly as a real filesystem would. Do not
+// normalize the paths production hands this mock: separator mistakes on Windows
+// are the whole reason the scoped Windows job exists, and canonicalizing them
+// here would launder them away. Fixtures must be built with filepath.Join.
 func newMockFS() *filesystem.Mock {
 	files := map[string][]byte{}
 	dirs := map[string]bool{}
@@ -25,16 +32,31 @@ func newMockFS() *filesystem.Mock {
 			files[path] = data
 			return nil
 		},
+		RemoveFunc: func(path string) error {
+			delete(files, path)
+			return nil
+		},
+		RenameFunc: func(oldPath, newPath string) error {
+			data, ok := files[oldPath]
+			if !ok {
+				return fs.ErrNotExist
+			}
+			files[newPath] = data
+			delete(files, oldPath)
+			return nil
+		},
 		MkdirAllFunc: func(path string, perm fs.FileMode) error {
 			dirs[path] = true
 			return nil
 		},
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			if !dirs[path] {
-				// Check if any files exist under this path
+				// Any descendant, not just an immediate child: an unrecorded
+				// directory still exists if something lives anywhere below it.
 				hasFiles := false
+				prefix := path + string(filepath.Separator)
 				for k := range files {
-					if strings.HasPrefix(k, path+"/") {
+					if strings.HasPrefix(k, prefix) {
 						hasFiles = true
 						break
 					}
@@ -45,13 +67,9 @@ func newMockFS() *filesystem.Mock {
 			}
 
 			var entries []fs.DirEntry
-			prefix := path + "/"
 			for k := range files {
-				if strings.HasPrefix(k, prefix) {
-					name := k[len(prefix):]
-					if !strings.Contains(name, "/") {
-						entries = append(entries, &mockDirEntry{name: name, isDir: false})
-					}
+				if filepath.Dir(k) == path {
+					entries = append(entries, &mockDirEntry{name: filepath.Base(k), isDir: false})
 				}
 			}
 			return entries, nil
@@ -111,7 +129,7 @@ func testState(path, name string) State {
 
 func TestStoreLoadNoFile(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	state, err := store.Load("/some/workspace")
 	if err != nil {
@@ -130,9 +148,9 @@ func TestStoreLoadUnsupportedVersion(t *testing.T) {
 	}
 	data, _ := json.Marshal(sf)
 	id := pathToID("/project")
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+id+".json", data, 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, id+".json"), data, 0o644)
 
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 	_, err := store.Load("/project")
 	if err == nil {
 		t.Fatal("expected error for unsupported version")
@@ -145,9 +163,9 @@ func TestStoreLoadUnsupportedVersion(t *testing.T) {
 func TestStoreLoadMalformedJSON(t *testing.T) {
 	mockFS := newMockFS()
 	id := pathToID("/project")
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+id+".json", []byte("{invalid"), 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, id+".json"), []byte("{invalid"), 0o644)
 
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 	_, err := store.Load("/project")
 	if err == nil {
 		t.Fatal("expected error for malformed JSON")
@@ -164,9 +182,9 @@ func TestStoreLoadValidFile(t *testing.T) {
 	sf := StateFile{Version: 1, State: original}
 	data, _ := json.Marshal(sf)
 	id := pathToID("/project")
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+id+".json", data, 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, id+".json"), data, 0o644)
 
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 	state, err := store.Load("/project")
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
@@ -199,7 +217,7 @@ func TestStoreLoadValidFile(t *testing.T) {
 
 func TestStoreSaveCreatesFile(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	state := testState("/project", "project")
 	if err := store.Save(state); err != nil {
@@ -208,7 +226,7 @@ func TestStoreSaveCreatesFile(t *testing.T) {
 
 	// Verify file was written
 	id := pathToID("/project")
-	data, err := mockFS.ReadFile("/home/user/.firn/workspaces/" + id + ".json")
+	data, err := mockFS.ReadFile(filepath.Join(testWorkspaceBaseDir, id+".json"))
 	if err != nil {
 		t.Fatalf("state file not found: %v", err)
 	}
@@ -230,7 +248,7 @@ func TestStoreSaveCreatesFile(t *testing.T) {
 
 func TestStoreSaveOverwrites(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	state := testState("/project", "project")
 	_ = store.Save(state)
@@ -249,7 +267,7 @@ func TestStoreSaveOverwrites(t *testing.T) {
 
 func TestStoreSaveEmptyPathError(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	err := store.Save(State{})
 	if err == nil {
@@ -262,7 +280,7 @@ func TestStoreSaveEmptyPathError(t *testing.T) {
 
 func TestStoreSaveNilSlicesBecomeEmpty(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	state := State{
 		WorkspacePath: "/project",
@@ -273,7 +291,7 @@ func TestStoreSaveNilSlicesBecomeEmpty(t *testing.T) {
 	_ = store.Save(state)
 
 	id := pathToID("/project")
-	data, _ := mockFS.ReadFile("/home/user/.firn/workspaces/" + id + ".json")
+	data, _ := mockFS.ReadFile(filepath.Join(testWorkspaceBaseDir, id+".json"))
 
 	// Verify [] not null in JSON
 	if strings.Contains(string(data), `"openFiles": null`) {
@@ -289,7 +307,7 @@ func TestStoreSaveNilSlicesBecomeEmpty(t *testing.T) {
 
 func TestStoreRoundTrip(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	original := testState("/project", "project")
 	if err := store.Save(original); err != nil {
@@ -348,7 +366,7 @@ func TestPathToIDNormalizesTrailingSlash(t *testing.T) {
 
 func TestListRecentEmpty(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	summaries, err := store.ListRecent(10)
 	if err != nil {
@@ -361,27 +379,27 @@ func TestListRecentEmpty(t *testing.T) {
 
 func TestListRecentMultiple(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	// Save three workspaces with different timestamps
 	s1 := testState("/project/a", "project-a")
 	s1.LastOpened = "2026-03-01T12:00:00Z"
 	sf1 := StateFile{Version: 1, State: s1}
 	data1, _ := json.Marshal(sf1)
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+pathToID("/project/a")+".json", data1, 0o644)
-	_ = mockFS.MkdirAll("/home/user/.firn/workspaces", 0o755)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, pathToID("/project/a")+".json"), data1, 0o644)
+	_ = mockFS.MkdirAll(testWorkspaceBaseDir, 0o755)
 
 	s2 := testState("/project/b", "project-b")
 	s2.LastOpened = "2026-03-08T12:00:00Z"
 	sf2 := StateFile{Version: 1, State: s2}
 	data2, _ := json.Marshal(sf2)
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+pathToID("/project/b")+".json", data2, 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, pathToID("/project/b")+".json"), data2, 0o644)
 
 	s3 := testState("/project/c", "project-c")
 	s3.LastOpened = "2026-03-05T12:00:00Z"
 	sf3 := StateFile{Version: 1, State: s3}
 	data3, _ := json.Marshal(sf3)
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+pathToID("/project/c")+".json", data3, 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, pathToID("/project/c")+".json"), data3, 0o644)
 
 	summaries, err := store.ListRecent(10)
 	if err != nil {
@@ -405,15 +423,15 @@ func TestListRecentMultiple(t *testing.T) {
 
 func TestListRecentWithLimit(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	for _, name := range []string{"a", "b", "c"} {
 		s := testState("/project/"+name, "project-"+name)
 		sf := StateFile{Version: 1, State: s}
 		data, _ := json.Marshal(sf)
-		_ = mockFS.WriteFile("/home/user/.firn/workspaces/"+pathToID("/project/"+name)+".json", data, 0o644)
+		_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, pathToID("/project/"+name)+".json"), data, 0o644)
 	}
-	_ = mockFS.MkdirAll("/home/user/.firn/workspaces", 0o755)
+	_ = mockFS.MkdirAll(testWorkspaceBaseDir, 0o755)
 
 	summaries, err := store.ListRecent(2)
 	if err != nil {
@@ -426,19 +444,19 @@ func TestListRecentWithLimit(t *testing.T) {
 
 func TestListRecentSkipsCorruptFiles(t *testing.T) {
 	mockFS := newMockFS()
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	// Write a valid file
 	s := testState("/project", "project")
 	s.LastOpened = "2026-03-08T12:00:00Z"
 	sf := StateFile{Version: 1, State: s}
 	data, _ := json.Marshal(sf)
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/valid.json", data, 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, "valid.json"), data, 0o644)
 
 	// Write a corrupt file
-	_ = mockFS.WriteFile("/home/user/.firn/workspaces/corrupt.json", []byte("{bad}"), 0o644)
+	_ = mockFS.WriteFile(filepath.Join(testWorkspaceBaseDir, "corrupt.json"), []byte("{bad}"), 0o644)
 
-	_ = mockFS.MkdirAll("/home/user/.firn/workspaces", 0o755)
+	_ = mockFS.MkdirAll(testWorkspaceBaseDir, 0o755)
 
 	summaries, err := store.ListRecent(10)
 	if err != nil {
@@ -455,7 +473,7 @@ func TestStoreSaveMkdirFails(t *testing.T) {
 			return errors.New("permission denied")
 		},
 	}
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	err := store.Save(testState("/project", "project"))
 	if err == nil {
@@ -475,7 +493,7 @@ func TestStoreSaveWriteFails(t *testing.T) {
 			return errors.New("disk full")
 		},
 	}
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	err := store.Save(testState("/project", "project"))
 	if err == nil {
@@ -492,7 +510,7 @@ func TestStoreLoadReadFails(t *testing.T) {
 			return nil, errors.New("I/O error")
 		},
 	}
-	store := NewStore(mockFS, "/home/user/.firn/workspaces")
+	store := NewStore(mockFS, testWorkspaceBaseDir)
 
 	_, err := store.Load("/project")
 	if err == nil {
@@ -504,7 +522,7 @@ func TestStoreLoadReadFails(t *testing.T) {
 }
 
 func TestSaveLoad_ActiveWorkspaceID(t *testing.T) {
-	store := NewStore(newMockFS(), "/home/.firn/workspaces")
+	store := NewStore(newMockFS(), testWorkspaceBaseDir)
 	state := testState("/project", "project")
 	state.ActiveWorkspaceID = "frontend"
 
@@ -521,7 +539,7 @@ func TestSaveLoad_ActiveWorkspaceID(t *testing.T) {
 }
 
 func TestState_LSPOverride_roundTrip(t *testing.T) {
-	store := NewStore(newMockFS(), "/home/.firn/workspaces")
+	store := NewStore(newMockFS(), testWorkspaceBaseDir)
 	state := State{
 		WorkspacePath: "/ws",
 		WorkspaceName: "ws",

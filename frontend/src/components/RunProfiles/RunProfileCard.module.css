@@ -90,6 +90,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Wrap the trailing cluster (badge, "just ran", duration, adopt) onto a second
+     line when the panel is narrow, rather than letting the card's overflow:hidden
+     clip the adopt button. */
+  flex-wrap: wrap;
+  row-gap: 4px;
   position: relative;
   z-index: 1;
 }
@@ -500,6 +505,22 @@
   border-left: 2px solid var(--card-accent);
   /* Compensate left padding so inner content stays aligned */
   padding-left: 14px;
+}
+
+/* Concurrency chip in row 1: shown only when a profile has more than one live
+   execution, since the status badge and the card's Stop both track the newest
+   run alone. */
+.runCountChip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 9px;
+  /* Matches .running above, which is the card's own live-state colour. */
+  background: color-mix(in srgb, var(--status-success) 16%, transparent);
+  color: var(--status-success);
+  white-space: nowrap;
 }
 
 /* Small accent "just ran" chip in row 1, alongside the status badge. */

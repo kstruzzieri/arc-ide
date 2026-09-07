@@ -1,4 +1,4 @@
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 

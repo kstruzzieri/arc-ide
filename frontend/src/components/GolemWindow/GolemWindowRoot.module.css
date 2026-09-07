@@ -1,0 +1,168 @@
+/* #271 — the undocked Golem window's own chrome.
+   Only what the docked panel cannot supply: a native title bar with room for
+   the traffic lights, the explicit re-dock control, the connection error strip
+   and the pre-projection loading state. Chips, badges and the chat body all
+   reuse GolemPanel.module.css, and the icon buttons reuse the panel bar's
+   .control, so the two windows cannot drift apart. */
+
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+/* Same grammar as PanelCommandBar's GOLEM bar: the pinned project accent at
+   12% over the elevated surface, with a 25% key-glow rule beneath. */
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--panel-bar-height);
+  padding: 0 8px 0 10px;
+  flex: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-project) 12%, transparent) 0%,
+    var(--surface-elevated) 100%
+  );
+  background-color: var(--surface-elevated);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-project) 25%, transparent);
+  /* The whole bar drags the native window; the controls below opt out. */
+  --wails-draggable: drag;
+}
+
+/* macOS overlays its traffic lights on the top-left of a frameless window. */
+.titlebar[data-traffic-lights='true'] {
+  padding-left: 78px;
+}
+
+.titlebar button,
+.titlebar a,
+.titlebar [role='button'],
+.chips,
+.error {
+  --wails-draggable: no-drag;
+}
+
+/* Shrinks to nothing before the controls give up a pixel: Go's floor for this
+   window is 380px wide (golemWindowMinWidth), and at that width the identity is
+   the only thing that can yield. Without `overflow: hidden` a flex item that has
+   run out of room draws over its neighbours instead of being clipped. */
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.wordmark img {
+  width: 16px;
+  height: 16px;
+}
+
+/* Wider than the 24px icon buttons because it carries words: re-docking is the
+   one action a user must be able to find without knowing the chord. */
+.dock {
+  display: flex;
+  align-items: center;
+  flex: none;
+  white-space: nowrap;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+}
+
+.dock:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.dock:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 6px 10px;
+  flex: none;
+  background: color-mix(in srgb, var(--palette-red) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--palette-red) 30%, transparent);
+  color: var(--text-primary);
+}
+
+.reason {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint {
+  display: block;
+  margin-top: 4px;
+}
+
+.retry {
+  flex: none;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.retry:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.retry:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+}
+
+.loading {
+  margin: auto;
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock {
+    transition: none;
+  }
+}

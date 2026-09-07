@@ -1,0 +1,16 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "config_save_failed",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": false
+      }
+    ],
+    "consentOutcome": "unchanged"
+  }
+}

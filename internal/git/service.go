@@ -13,6 +13,44 @@ import (
 // their existing credential helpers, SSH agents, and hooks keep working.
 type Service struct{}
 
+// scrubGitEnv drops the repository-local GIT_* variables Git exports to hooks
+// (and that hooks re-export to their children). Left in place, an inherited
+// GIT_DIR/GIT_INDEX_FILE/GIT_OBJECT_DIRECTORY/etc. overrides cmd.Dir and
+// redirects the operation into whatever repository the parent was pointed at.
+// The set mirrors Git's own repository-local env (`git rev-parse
+// --local-env-vars`): these are exactly the variables Git treats as
+// repository-scoped and refuses to leak into submodules, so scrubbing the same
+// set is the root-cause fix rather than patching the one variable that happened
+// to bite us. Returns a fresh slice; the input is never mutated.
+func scrubGitEnv(env []string) []string {
+	clean := make([]string, 0, len(env))
+	for _, variable := range env {
+		name, _, _ := strings.Cut(variable, "=")
+		switch name {
+		case "GIT_DIR",
+			"GIT_WORK_TREE",
+			"GIT_IMPLICIT_WORK_TREE",
+			"GIT_INDEX_FILE",
+			"GIT_COMMON_DIR",
+			"GIT_PREFIX",
+			"GIT_OBJECT_DIRECTORY",
+			"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+			"GIT_GRAFT_FILE",
+			"GIT_SHALLOW_FILE",
+			"GIT_NAMESPACE",
+			"GIT_NO_REPLACE_OBJECTS",
+			"GIT_REPLACE_REF_BASE",
+			"GIT_CONFIG",
+			"GIT_CONFIG_PARAMETERS",
+			"GIT_CONFIG_COUNT",
+			"GIT_INTERNAL_SUPER_PREFIX":
+			continue
+		}
+		clean = append(clean, variable)
+	}
+	return clean
+}
+
 // NewService returns a Service. It does not verify git is installed; Status
 // reports IsRepo=false when git is missing, and operations surface the error.
 func NewService() *Service {
@@ -25,7 +63,7 @@ func NewService() *Service {
 func (s *Service) run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(scrubGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -75,7 +113,7 @@ func (s *Service) Stage(ctx context.Context, dir string, paths []string) error {
 	if err := validateRepoRelPaths(paths); err != nil {
 		return err
 	}
-	_, err := s.runAtRoot(ctx, dir, append([]string{"add", "--"}, paths...)...)
+	_, err := s.runAtRoot(ctx, dir, append([]string{literalPathspecs, "add", "--"}, paths...)...)
 	return err
 }
 
@@ -183,6 +221,7 @@ func (s *Service) FileAtRev(ctx context.Context, dir, rev, path string) (FileCon
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") ||
 			strings.Contains(err.Error(), "exists on disk, but not in") ||
+			strings.Contains(err.Error(), "but not at stage") ||
 			strings.Contains(err.Error(), "invalid object name 'HEAD'") {
 			return FileContent{}, nil
 		}

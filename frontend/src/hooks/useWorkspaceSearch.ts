@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { CancelSearch, SearchWorkspace } from '../../wailsjs/go/main/App';
-import { search } from '../../wailsjs/go/models';
+import { CancelSearch, SearchWorkspace } from '../wails/bindings';
+import { search } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import type { SearchResponse, SearchStatus } from '../types/search';

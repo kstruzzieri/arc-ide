@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -26,7 +27,7 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(scrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
@@ -75,6 +76,66 @@ func writeFile(t *testing.T, dir, name, content string) {
 }
 
 func ctx() context.Context { return context.Background() }
+
+func TestGitCmd_ScrubsRepositoryEnvironment(t *testing.T) {
+	requireGit(t)
+	sentinel := initRepo(t)
+	intended := initRepo(t)
+	for _, repo := range []struct {
+		dir, content string
+	}{
+		{sentinel, "sentinel target\n"},
+		{intended, "intended target\n"},
+	} {
+		gitCmd(t, repo.dir, "checkout", "-b", "target")
+		writeFile(t, repo.dir, "README.md", repo.content)
+		gitCmd(t, repo.dir, "commit", "-am", "target")
+		gitCmd(t, repo.dir, "checkout", "main")
+	}
+
+	read := func(path string) []byte {
+		t.Helper()
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return contents
+	}
+	headPath := filepath.Join(sentinel, ".git", "HEAD")
+	indexPath := filepath.Join(sentinel, ".git", "index")
+	readmePath := filepath.Join(sentinel, "README.md")
+	headBefore := read(headPath)
+	refsBefore := gitCmd(t, sentinel, "show-ref")
+	indexBefore := read(indexPath)
+	worktreeBefore := gitCmd(t, sentinel, "status", "--porcelain=v2", "--untracked-files=all")
+	filesBefore := read(readmePath)
+
+	t.Setenv("GIT_DIR", filepath.Join(sentinel, ".git"))
+	t.Setenv("GIT_WORK_TREE", sentinel)
+	t.Setenv("GIT_INDEX_FILE", indexPath)
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(sentinel, ".git"))
+	t.Setenv("GIT_PREFIX", filepath.Base(sentinel)+"/")
+	gitCmd(t, intended, "checkout", "-b", "checked", "target")
+
+	if got := read(headPath); !bytes.Equal(got, headBefore) {
+		t.Errorf("sentinel HEAD changed from %q to %q", headBefore, got)
+	}
+	if got := gitCmd(t, sentinel, "show-ref"); got != refsBefore {
+		t.Errorf("sentinel refs changed from %q to %q", refsBefore, got)
+	}
+	if got := read(indexPath); !bytes.Equal(got, indexBefore) {
+		t.Error("sentinel index changed")
+	}
+	if got := gitCmd(t, sentinel, "status", "--porcelain=v2", "--untracked-files=all"); got != worktreeBefore {
+		t.Errorf("sentinel worktree status changed from %q to %q", worktreeBefore, got)
+	}
+	if got := read(readmePath); !bytes.Equal(got, filesBefore) {
+		t.Errorf("sentinel README.md changed from %q to %q", filesBefore, got)
+	}
+	if got := string(read(filepath.Join(intended, ".git", "HEAD"))); got != "ref: refs/heads/checked\n" {
+		t.Errorf("intended HEAD = %q, want checked branch", got)
+	}
+}
 
 func TestService_Status_NotARepo(t *testing.T) {
 	requireGit(t)

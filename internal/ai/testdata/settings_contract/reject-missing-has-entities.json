@@ -1,0 +1,28 @@
+{
+  "verdict": "reject",
+  "projection": {
+    "state": "missing",
+    "sourceOrigin": "none",
+    "readOnly": false,
+    "editable": false,
+    "routes": [],
+    "models": [],
+    "providers": [
+      {
+        "name": "hosted",
+        "endpoint": "https://api.example.com/v1",
+        "classification": "remote",
+        "apiFormat": "openai-compat",
+        "credentialState": "none"
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "config_missing",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      }
+    ]
+  }
+}

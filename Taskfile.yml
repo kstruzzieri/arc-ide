@@ -1,0 +1,41 @@
+version: '3'
+
+vars:
+  # Binary contract: the executable is always `firn` (bin/firn, bin/firn.exe,
+  # Firn.app/Contents/MacOS/firn). Release archives and install.sh depend on it.
+  APP_NAME: "firn"
+  # Bundle contract: the macOS bundle is always `Firn.app`, which is the frozen
+  # archive root of the macOS release artifact. Kept separate from APP_NAME so
+  # the bundle keeps its display capitalisation while the binary stays lowercase.
+  BUNDLE_NAME: "Firn"
+  BIN_DIR: "bin"
+  # Single source of truth for the Vite dev-server port: `dev` below passes it
+  # to wails3 and build/Taskfile.yml's dev:frontend passes it to Vite, so
+  # frontend/vite.config.ts hard-codes no default of its own.
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Target OS for build/run. Defaults to the host OS, and is overridden by
+  # `wails3 build GOOS=...` (or the GOOS env var). The tasks below dispatch to
+  # the matching platform Taskfile via this variable.
+  GOOS: '{{.GOOS | default OS}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds the application
+    cmds:
+      - task: "{{.GOOS}}:build"
+
+  run:
+    summary: Runs the application
+    cmds:
+      - task: "{{.GOOS}}:run"
+
+  dev:
+    summary: Runs the application in development mode
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}

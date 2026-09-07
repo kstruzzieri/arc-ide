@@ -4,7 +4,7 @@ import { act } from 'react';
 import { FileExplorer } from '../../../components/FileExplorer/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
 import { installVirtualLayout } from '../../helpers/virtualTree';
-import type { filesystem, workspace } from '../../../../wailsjs/go/models';
+import type { filesystem, workspace } from '../../../wails/bindings';
 
 // FileExplorer mounts useDirectoryTree, which auto-fetches through Wails when a
 // workspace exists. This test seeds the store directly, so prevent the fetch.
@@ -13,13 +13,13 @@ jest.mock('../../../components/FileExplorer/useDirectoryTree', () => ({
   useDirectoryTree: () => ({ refetch: mockRefetch }),
 }));
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   ReadDirectory: jest.fn(),
   ReadFile: jest.fn(),
   OpenFolderDialog: jest.fn(),
 }));
 
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 
@@ -59,6 +59,7 @@ describe('FileExplorer virtualization', () => {
 
   it('mounts only a bounded window of rows for a large tree', () => {
     const tree = makeFlatTree(5000);
+    tree[0].unreadable = true;
     act(() => {
       useIDEStore.setState({
         // workspace is WorkspaceInfo: { name, path }
@@ -77,6 +78,8 @@ describe('FileExplorer virtualization', () => {
     render(<FileExplorer />);
 
     const rendered = screen.getAllByRole('treeitem');
+    expect(screen.getByRole('treeitem', { name: 'file-0.ts, unreadable' })).toBeInTheDocument();
+    expect(screen.getByTestId('unreadable-indicator')).toHaveAttribute('aria-hidden', 'true');
     // 400px / 28px ≈ 15 visible + overscan + root, nowhere near 5000.
     expect(rendered.length).toBeGreaterThan(0);
     expect(rendered.length).toBeLessThan(100);

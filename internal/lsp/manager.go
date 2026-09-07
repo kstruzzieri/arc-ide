@@ -53,7 +53,7 @@ type ServerStatus struct {
 }
 
 // EventEmitter is the callback signature for emitting events to the frontend.
-type EventEmitter func(event string, data ...any)
+type EventEmitter func(event string, data any)
 
 // Manager owns workspace-scoped language server instances.
 type Manager struct {

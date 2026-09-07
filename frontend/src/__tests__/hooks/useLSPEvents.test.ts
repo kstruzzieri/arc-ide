@@ -2,7 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useLSPEvents } from '../../hooks/useLSPEvents';
 import { useLSPStore } from '../../stores/lspStore';
 import { useIDEStore } from '../../stores/ideStore';
-import { EventsOn } from '../../../wailsjs/runtime/runtime';
+import { EventsOn } from '../../wails/runtime';
 
 const mockEventsOn = EventsOn as jest.MockedFunction<typeof EventsOn>;
 

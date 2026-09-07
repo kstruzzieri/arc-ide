@@ -1,0 +1,144 @@
+[
+  {
+    "input": "config_not_found",
+    "output": "config_missing",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "config_discovery_invalid",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  { "input": "io", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  { "input": "parse_error", "output": "json_invalid", "keepSubject": false, "blocking": true },
+  { "input": "render_error", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  { "input": "duplicate_keys", "output": "duplicate_keys", "keepSubject": true, "blocking": false },
+  {
+    "input": "provider_required",
+    "output": "provider_required",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "provider_name_invalid",
+    "output": "provider_name_invalid",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "provider_endpoint_invalid",
+    "output": "provider_endpoint_invalid",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "provider_format_invalid",
+    "output": "provider_format_invalid",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "slot_policy_invalid",
+    "output": "slot_policy_invalid",
+    "keepSubject": true,
+    "blocking": true
+  },
+  { "input": "model_invalid", "output": "model_invalid", "keepSubject": true, "blocking": true },
+  { "input": "think_invalid", "output": "think_invalid", "keepSubject": true, "blocking": true },
+  {
+    "input": "provider_not_found",
+    "output": "provider_not_found",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "defaults_invalid",
+    "output": "defaults_invalid",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "key_reference_malformed",
+    "output": "key_reference_malformed",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "key_reference_unavailable",
+    "output": "key_reference_unavailable",
+    "keepSubject": true,
+    "blocking": true
+  },
+  {
+    "input": "invalid_argument",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  { "input": "role_not_found", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  {
+    "input": "provider_exists",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "provider_in_use",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "eligibility_ineligible",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "eligibility_unknown",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "selector_conflict",
+    "output": "selector_conflict",
+    "keepSubject": true,
+    "blocking": true
+  },
+  { "input": "target_exists", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  {
+    "input": "revision_conflict",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "durability_uncertain",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  { "input": "role_exists", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  { "input": "role_in_use", "output": "config_invalid", "keepSubject": false, "blocking": true },
+  {
+    "input": "use_case_not_found",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "drop_confirmation_required",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  },
+  {
+    "input": "certified_future_code",
+    "output": "config_invalid",
+    "keepSubject": false,
+    "blocking": true
+  }
+]

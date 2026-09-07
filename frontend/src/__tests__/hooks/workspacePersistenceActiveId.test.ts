@@ -1,14 +1,14 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useWorkspacePersistence } from '../../hooks/useWorkspacePersistence';
 import { useIDEStore } from '../../stores/ideStore';
-import { LoadWorkspaceState, SaveWorkspaceState } from '../../../wailsjs/go/main/App';
+import { LoadWorkspaceState, SaveWorkspaceState } from '../../wails/bindings';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   SaveWorkspaceState: jest.fn(() => Promise.resolve()),
   LoadWorkspaceState: jest.fn(),
   DetectWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: jest.fn(() => jest.fn()),
 }));
@@ -16,7 +16,7 @@ jest.mock('../../../wailsjs/runtime/runtime', () => ({
 const mockLoad = LoadWorkspaceState as jest.Mock;
 const defs = [
   { id: 'project', name: 'Project', relDir: '', type: 'project', accent: 'project' },
-  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'blue' },
+  { id: 'frontend', name: 'Frontend', relDir: 'frontend', type: 'frontend', accent: 'frontend' },
 ];
 
 function savedState(activeWorkspaceId?: string) {

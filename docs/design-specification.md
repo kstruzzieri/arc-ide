@@ -79,14 +79,35 @@ Each workspace type has a distinct accent color that appears in:
 - Status bar workspace label
 - Run profile indicators when running
 
-| Workspace Type | Accent Color | Hex | Rationale |
-|----------------|--------------|-----|-----------|
-| Frontend / TypeScript | Blue | `#2563EB` | WebStorm association |
-| Python | Green | `#22C55E` | PyCharm association |
-| Go | Cyan | `#06B6D4` | GoLand association |
-| Rust | Orange | `#F97316` | Rust community color |
-| Docker / Infrastructure | Purple | `#A855F7` | "Meta" / orchestration feel |
-| General / Untyped | Neutral | `#6B7280` | No specific personality |
+Accents are named for the workspace type, not the color, because the mapping is
+1:1 — renaming a hue must never silently repoint a workspace.
+
+| Workspace Type | Token | Hex | Rationale |
+|----------------|-------|-----|-----------|
+| Frontend | `--accent-frontend` | `#F0389D` | Magenta; keeps clear of Terraform purple |
+| Node | `--accent-node` | `#8FC606` | nodejs green, deepened to clear `--git-added` |
+| Python | `--accent-python` | `#BFAD00` | Python yellow, deepened for the selected-row tint |
+| Go | `--accent-go` | `#12B5CD` | Gopher cyan |
+| Rust | `--accent-rust` | `#E2703A` | Rust oxide orange |
+| Docker | `--accent-docker` | `#0573D7` | Docker blue |
+| Terraform | `--accent-terraform` | `#A855F7` | Terraform purple |
+| General / Untyped | `--accent-general` | `#6B7280` | No specific personality |
+
+Two constraints bind this palette, both enforced by `__tests__/styles/tokens.test.ts`:
+
+- **CIEDE2000 ΔE >= 10 from every `--git-*` and `--status-*` color.** The previous
+  palette failed this twice — `--accent-green` was byte-identical to `--git-added`
+  and `--accent-amber` to `--status-warning`.
+- **`--text-muted` stays at 4.5:1 over the selected-row tint** (20% accent over
+  `--surface-panel`). This is what caps accent brightness, and why Node and Python
+  are deeper than their brand colors.
+
+The uneven lightness across accents is deliberate; normalizing it measurably
+worsens the weakest pair.
+
+A separate `--palette-*` ramp (`blue`, `green`, `cyan`, `orange`, `purple`, `amber`)
+exists for UI needing several distinguishable colors with no workspace meaning —
+Structure view symbol kinds, the LSP setup card. Do not use it for workspace identity.
 
 ### Workspace Accent System (Implemented)
 
@@ -101,28 +122,30 @@ The entire IDE accent cascades from a single CSS custom property, making workspa
 - Activity bar active indicator
 - Scrollbar thumbs
 - Editor current line highlight
-- Terminal prompt color (note: the bottom tool panel currently uses a fixed orange accent via scoped `data-accent="orange"`, independent of workspace accent)
+- Terminal prompt color (note: the bottom tool panel currently uses a fixed glacier accent via scoped `data-accent="project"`, independent of workspace accent)
 - Status bar workspace label
 
 **CSS Implementation:**
 ```css
-/* Accent variant classes — apply to .ide element */
-.ide--accent-blue {
-  --accent: #2563EB;
-  --accent-dim: rgba(37, 99, 235, 0.12);
-  --accent-glow: rgba(37, 99, 235, 0.25);
+/* Accent variants — applied via [data-accent] on the .ide element */
+[data-accent='frontend'] {
+  --accent: var(--accent-frontend);
+  --accent-dark: #ad2871;
+  --accent-dim: rgba(240, 56, 157, 0.12);
+  --accent-glow: rgba(240, 56, 157, 0.25);
 }
 
-.ide--accent-green {
-  --accent: #22C55E;
-  --accent-dim: rgba(34, 197, 94, 0.12);
-  --accent-glow: rgba(34, 197, 94, 0.25);
+[data-accent='rust'] {
+  --accent: var(--accent-rust);
+  --accent-dark: #a3512a;
+  --accent-dim: rgba(226, 112, 58, 0.12);
+  --accent-glow: rgba(226, 112, 58, 0.25);
 }
 
-/* etc. for cyan, orange, purple, amber */
+/* etc. for node, python, go, docker, terraform, general, project */
 ```
 
-**Available Accents:** `blue`, `green`, `cyan`, `orange`, `purple`, `amber`
+**Available Accents:** `frontend`, `node`, `python`, `go`, `rust`, `docker`, `terraform`, `general`, `project`
 
 **Note:** The Firn logo maintains consistent branding (blue→purple gradient) regardless of workspace accent.
 
@@ -357,21 +380,21 @@ Shows the entire repository with **color-coded workspace regions**. Each workspa
 ┌─ PROJECT ▾ ─────────────────────────────────────────────────────────┐
 │ README.md            ← no tint (root level, no workspace)           │
 │ .gitignore           ← no tint                                      │
-│ docker-compose.yml   ← purple tint (Infrastructure by file type)    │
+│ docker-compose.yml   ← docker tint (Infrastructure by file type)    │
 │ ▼ frontend/          ┐                                              │
-│   ▼ src/             │ blue tint (#2563EB at ~4% opacity)           │
+│   ▼ src/             │ frontend tint (#F0389D at 6% opacity)        │
 │     Button.tsx       │                                              │
 │     App.tsx          ┘                                              │
 │ ▼ backend/           ← no tint (parent folder, not a workspace)     │
 │   ▼ go/              ┐                                              │
-│     handler.go       │ cyan tint (#06B6D4 at ~4% opacity)           │
+│     handler.go       │ go tint (#12B5CD at 6% opacity)              │
 │     main.go          ┘                                              │
 │   ▼ python/          ┐                                              │
-│     train.py         │ green tint (#22C55E at ~4% opacity)          │
+│     train.py         │ python tint (#BFAD00 at 6% opacity)          │
 │     model.py         ┘                                              │
 │ ▼ infra/             ┐                                              │
-│   Dockerfile         │ purple tint (#A855F7 at ~4% opacity)         │
-│   terraform/         ┘                                              │
+│   Dockerfile         │ docker tint (#0573D7 at 6% opacity)          │
+│   terraform/         ┘ terraform tint (#A855F7)                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -845,7 +868,7 @@ Contents adapt to workspace type (Python workspace shows Python files first, etc
 - Min height: 100px
 - Background: `var(--surface-panel)` (`#060A0E`)
 - **Unified tab bar**: Single row with panel tabs (Output, Problems, Terminal) on the left and session tabs on the right, separated by a vertical divider. Session tabs only appear when the Terminal panel is active.
-- **Fixed orange accent** (`#F97316`): The bottom panel uses `data-accent="orange"` to scope its own accent independently of the workspace accent. This gives the terminal a consistent identity across all workspaces. The CSS uses `color-mix(in srgb, var(--accent) N%, transparent)` for all opacity variants, so if this decision changes later, removing the scoped `data-accent` will make it follow the workspace accent automatically.
+- **Fixed glacier accent** (`--accent-project`, `#38BDF8`): The bottom panel uses `data-accent="project"` to scope its own accent independently of the workspace accent. This gives the terminal a consistent identity across all workspaces. The CSS uses `color-mix(in srgb, var(--accent) N%, transparent)` for all opacity variants, so if this decision changes later, removing the scoped `data-accent` will make it follow the workspace accent automatically.
 - **Terminal session features**: Multi-session tabs with drag-and-drop reorder, double-click rename, right-click context menu (Rename, Close Terminal), inline rename input, and a "+" button for new sessions.
 - **xterm.js theme**: Near-black background (`#0A0A0C`), warm parchment foreground (`#D4C4B0`), orange cursor and selection highlight. ANSI colors are neutral and do not change with accent.
 
@@ -878,12 +901,16 @@ For implementation, extract these as CSS custom properties or design tokens:
   --text-muted: #6E7681;
   --text-disabled: #484F58;
 
-  /* Accents */
-  --accent-frontend: #3B82F6;
-  --accent-python: #22C55E;
-  --accent-go: #06B6D4;
-  --accent-rust: #F97316;
-  --accent-docker: #A855F7;
+  /* Workspace accents — see the Accent Colors table above for the constraints
+     these values satisfy. Keep in sync with frontend/src/styles/tokens.css. */
+  --accent-frontend: #F0389D;
+  --accent-node: #8FC606;
+  --accent-python: #BFAD00;
+  --accent-go: #12B5CD;
+  --accent-rust: #E2703A;
+  --accent-docker: #0573D7;
+  --accent-terraform: #A855F7;
+  --accent-project: #38BDF8;
   --accent-general: #6B7280;
 
   /* Semantic */

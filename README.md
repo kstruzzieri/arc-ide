@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Wails-2-DF0000?logo=wails&logoColor=white" alt="Wails">
+  <img src="https://img.shields.io/badge/Wails-3-DF0000?logo=wails&logoColor=white" alt="Wails">
 </p>
 
 ---
@@ -33,17 +33,17 @@ Each workspace has independent layout state, scoped language servers (only the a
 **Quick install** (macOS and Linux) — downloads the latest release and installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | sh
 ```
 
 Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
 
 ```bash
 # preview the resolved download URL and target dir without installing
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | FIRN_DRY_RUN=1 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | FIRN_DRY_RUN=1 sh
 
 # pin a specific release instead of the latest
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | FIRN_VERSION=v0.11.0 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | FIRN_VERSION=v0.12.0 sh
 ```
 
 Windows users: use the manual zip below.
@@ -52,7 +52,7 @@ Prefer to do it by hand? Download the latest build for your platform from the [R
 
 > **Preview builds are unsigned**, so macOS and Windows warn on first launch. The per-platform steps below get you past it.
 
-### macOS (11 Big Sur or later)
+### macOS (12 Monterey or later)
 
 1. Download `Firn-macos-arm64.zip` (Apple Silicon) or `Firn-macos-amd64.zip` (Intel).
 2. Unzip and move `Firn.app` to `/Applications`.
@@ -113,30 +113,50 @@ The roadmap includes a built-in AI assistant panel with:
 │                        Wails Runtime                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  ┌─────────────────┐              ┌─────────────────────────┐  │
-│  │   Go Backend    │◄────────────►│    React Frontend       │  │
-│  │                 │   bindings   │                         │  │
-│  │  • File System  │              │  • CodeMirror 6 Editor  │  │
-│  │  • FS Watcher   │              │  • Zustand State        │  │
-│  │  • Run Profiles │              │  • Run Profile Cards    │  │
-│  │  • PTY Terminal │              │  • Panel System         │  │
-│  │  • Workspace    │              │  • Run Output Views     │  │
-│  │  • LSP Client   │              │  • LSP Editor UX        │  │
-│  │  • ripgrep      │              │  • Search UI            │  │
-│  └─────────────────┘              └─────────────────────────┘  │
+│  ┌─────────────────┐              ┌─────────────────────────┐   │
+│  │   Go Backend    │◄────────────►│    React Frontend       │   │
+│  │                 │   bindings   │                         │   │
+│  │  • File System  │              │  • CodeMirror 6 Editor  │   │
+│  │  • FS Watcher   │              │  • Zustand State        │   │
+│  │  • Run Profiles │              │  • Run Profile Cards    │   │
+│  │  • PTY Terminal │              │  • Panel System         │   │
+│  │  • Workspace    │              │  • Run Output Views     │   │
+│  │  • LSP Client   │              │  • LSP Editor UX        │   │
+│  │  • ripgrep      │              │  • Search UI            │   │
+│  └─────────────────┘              └─────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Go 1.23+ (layered package structure) |
+| Backend | Go 1.25+ (layered package structure) |
 | Frontend | React 19 + Vite + TypeScript |
 | State | Zustand |
 | Editor | CodeMirror 6 |
 | File Watching | fsnotify with debounce |
 | Language Intelligence | LSP per active workspace |
 | Search | ripgrep workspace search + CodeMirror in-file search |
+| Golem chat | Center island in the main window, or a second native window |
+
+### The Golem chat window
+
+The Golem chat lives in the center of the main window beside the Files column,
+and can be undocked into a second native window: **Undock into a window** on the
+GOLEM command bar, or `Golem: Undock into a Window` in the command palette. It
+comes back with **Dock in main window** on that window's title bar, `Cmd/Ctrl+W`
+there, or **Dock Golem panel** on the Golem rail the main window shows while the
+chat is away. Both windows render the same chat surface, but only the main
+window ever executes: it owns the conversation store and the `go-llm` runtime,
+and the undocked window is a passive view that posts actions across the window
+relay and waits for the main window to admit or refuse each one. During a
+handoff neither window accepts input, and composer text is carried over with the
+transfer rather than re-derived.
+
+Whether the chat is docked, and where the undocked window last sat, are the only
+machine-scoped preferences Firn keeps: they live in `~/.firn/app.json` as a mode
+and a bounds rectangle. No transcript, draft or consent decision is written
+there — those stay with the repository-scoped Golem state.
 
 ### Performance Targets
 
@@ -185,7 +205,10 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] JetBrains-style autosave (debounced idle + focus loss)
 - [x] Per-file undo/redo history preserved across tab switches
 - [x] File explorer with tree navigation — virtualized rows with lazy per-directory loading on expand
+- [x] Hybrid workspace tree rails — active-scope and per-file ownership shown as two distinct rails in Workspace view
+- [x] Unreadable directories stay visible, labeled, and retryable in place
 - [x] Workspace accent color system (7 theme variants)
+- [x] Command palette (`Cmd/Ctrl+Shift+P`) over a shared late-bound command registry with deterministic fuzzy matching
 - [x] Panel layout system with drag-to-resize and collapse/expand
 - [x] Icon system with currentColor SVGs
 - [x] Status bar (cursor position, language, git branch)
@@ -197,12 +220,15 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Diagnostics underlines, gutter markers, Problems panel, and status-bar counts
 - [x] Completion source with trigger characters, detail/docs, and snippet support
 - [x] Hover tooltips and go-to-definition (`F12`, Cmd/Ctrl-click)
+- [x] Current-file Structure view built from document symbols
 - [x] Shared registry entries for Go (`gopls`) and Python (`pyright-langserver`)
 - [x] Managed server provisioning — pinned `basedpyright`, `gopls`, `typescript-language-server`, and `rust-analyzer` installed under `~/.firn`, with interpreter wiring and offline/retry setup guidance (active workspace only; never mutates global env/PATH)
 
 **Search**
 - [x] Workspace-wide ripgrep search with regex, case, and whole-word options
 - [x] Results grouped by file with highlighted matches and keyboard navigation
+- [x] Match-anchored result rows with file/directory hierarchy that stays readable in a narrow panel
+- [x] Dimmed syntax-token highlighting in match context, so the match itself stays the brightest element
 - [x] Cmd+Shift+F opens workspace search
 - [x] Click result to open the file at the match location
 - [x] In-file find/replace through CodeMirror search (`Cmd+F`)
@@ -222,6 +248,10 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Output folding for repeated patterns
 - [x] Compound run profiles — sequential multi-step execution with per-step output and aggregate status
 - [x] First-class run execution identity — output, lifecycle, and status routed by execution-instance id
+- [x] Retained run history — same-profile parallel runs plus persisted terminal ordinary/compound summaries and lazy ordinary output from `internal/runhistory`
+- [x] Bounded history retention — 50 summaries and 5 rich ordinary records per profile, 10 MiB per record, and a 20 MiB workspace target
+- [x] Explicit durability boundary — terminal events enqueue history; close drains appends for up to 300 ms, waits for explicit redactions, and still withholds acknowledgement when editor flush fails
+- [x] Owned compound execution plans (#146 Phase 2D) — an `executionNode` tree deep-copied at admission, with a recursive reflection guard against self-referencing plans
 
 **Version Control (Git)**
 - [x] Working-tree status in the file tree (modified/added/deleted/untracked colors) and current branch in the status bar
@@ -230,12 +260,22 @@ The roadmap includes a built-in AI assistant panel with:
 - [x] Commit panel — per-file and section include checkboxes, stage/commit, pull/push (Publish when there is no upstream), workspace-scoped
 - [x] Gutter change bars with a peek popup — unified word-level inline diff and one-click revert-to-HEAD
 - [x] Hunk-level stage/unstage from editor and diff gutters, including intent-to-add support for untracked files
+- [x] Merge conflict resolution editor — Current / Incoming / Both / Manual decisions on a live Result spine, with a conflict rail, keyboard navigation, undo-safe region mapping, and no write or stage until every region is resolved
+- [x] Merge confidence layer — hover and focus preview of the exact lines a choice produces, word-level marks between the two sides, provenance stripes showing where each resolution landed, exact targeted reopen of any decision, the common ancestor per region or as a lazy stage-`:1` strip, line numbers with per-card line ranges, and polite screen-reader announcements
+
+**AI (Golem)**
+- [x] Workspace chat panel (#226 phase 1) — read-only assistant on the embedded `go-llm` runtime, scoped to the bound repository with a sensitive-path floor, consent-gated remote egress with durable per-destination approval, streamed conversations that survive workspace switches, and a persistent status-bar segment (`Cmd/Ctrl+Shift+I`)
+- [x] Git commit messages on the embedded `go-llm` runtime (#165) — the CLI shell-out is gone
+
+If the Golem consent store becomes unavailable — a banner appears, and remote egress is blocked — remove or hand-repair `~/.firn/golem-consent.json`, restart Firn, then re-consent through the chat panel, the settings surface, or the "Approve missing destinations" flow to write a fresh record. The store is opened only at startup, so refreshing configuration or approving again cannot recover it until Firn restarts with the repaired or removed file.
 
 ### Planned
 
-- [ ] Git — richer branch menu (#166) and 3-way merge UI (#164)
-- [ ] Run execution identity Phase 2 — per-run retained tabs, same-profile parallelism, persisted history
-- [ ] AI Chat Panel
+- [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
+- [ ] Git — richer branch/VCS menu (#166)
+- [ ] Context menus (#45) and breadcrumb navigation (#46)
+- [ ] Golem center panel and undocked window (#271) — the center island and the second-window chat are implemented on `feature/issue-271-golem-center-panel`; pending review and the supported-platform smoke pass
+- [ ] Golem follow-ups — settings UI for models, roles, and keys (#263, phase 1 merged and the write phases in review), durable multi-conversation history (#264), token and context usage (#265)
 
 ## Project Structure
 
@@ -245,8 +285,10 @@ firn-ide/
 ├── app.go                      # Wails bindings
 ├── internal/
 │   ├── filesystem/             # File read/write/watch
-│   ├── lsp/                    # LSP client, registry, transports, URI handling
+│   ├── git/                    # Status, diff, hunk staging, merge conflict data
+│   ├── lsp/                    # LSP client, registry, transports, managed provisioning
 │   ├── runprofile/             # Run profile detection, execution, management
+│   ├── runhistory/             # Bounded persisted terminal run history
 │   ├── search/                 # ripgrep search runner and parser
 │   ├── terminal/               # PTY session management
 │   ├── watcher/                # FS event watcher
@@ -255,18 +297,22 @@ firn-ide/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/         # React components
-│   │   │   ├── Editor/         # CodeMirror 6 editor
+│   │   │   ├── CommandPalette/ # Command palette over the shared registry
+│   │   │   ├── Editor/         # CodeMirror 6 editor + merge resolution view
 │   │   │   ├── FileExplorer/   # File tree navigation
+│   │   │   ├── GitPanel/       # Commit/stage panel and diff surfaces
 │   │   │   ├── RunProfiles/    # Run profile cards and panels
 │   │   │   ├── RunOutput/      # Output display (merged, lanes, diff, timeline)
 │   │   │   ├── Search/         # Workspace-wide search
+│   │   │   ├── Structure/      # Current-file symbol outline
 │   │   │   ├── Terminal/       # xterm.js terminal
 │   │   │   └── layout/         # Panel system, sidebar, header
-│   │   ├── stores/             # Zustand state management
+│   │   ├── stores/             # Zustand state (ide, git, lsp, search)
 │   │   ├── hooks/              # Custom React hooks
 │   │   ├── utils/              # Shared utilities
-│   │   └── types/              # TypeScript type definitions
-│   └── wailsjs/                # Generated Go bindings
+│   │   ├── types/              # TypeScript type definitions
+│   │   └── wails/              # Adapter — single import surface for generated bindings
+│   └── bindings/               # Generated Go bindings
 └── docs/
     ├── roadmap.md              # Consolidated roadmap with all issues
     ├── design-specification.md # Full UI/UX specification
@@ -277,33 +323,38 @@ firn-ide/
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.25+
 - Node.js 18+
-- Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0`
+- Wails CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16` (on Linux, install `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` first, then add `-tags gtk3` to that install command, matching CI)
+- Linux only: `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` (the Linux build compiles with the `gtk3` tag against WebKit2GTK 4.1)
 
 ### Commands
 
 ```bash
 # Live development with hot reload
-wails dev
+wails3 task dev
 
-# Production build
-wails build
+# Production build for the host platform -> bin/
+wails3 task build
 
 # Run frontend tests
 cd frontend && npm test
 
 # Run Go tests
-go test ./...
+go test -tags gtk3 ./...
 ```
+
+See [build/README.md](build/README.md) for the per-platform tasks (`darwin:build`, `darwin:package`, `linux:build`, `windows:build`) and build-asset regeneration.
 
 ### Generated Wails Bindings
 
-`frontend/wailsjs/**` is generated by Wails and is tracked because the frontend imports it directly. Commit those files only when a Go-facing API or exported model JSON shape changes, preferably after running `wails generate module`.
+`frontend/bindings/**` is generated by `wails3`. The frontend no longer imports it directly — every import routes through the `frontend/src/wails/` adapter, enforced by a guard test (`frontend/src/__tests__/wails/no-direct-wailsjs.test.ts`) — but the generated output stays tracked as the checked-in input that adapter wraps. `wails3 task <os>:build` is the portable way to regenerate them (it passes each platform's `BUILD_FLAGS`, including Linux's `-tags gtk3` — the generator's package load resolves the GTK4 path without it). To regenerate by hand on macOS or Windows:
 
-Do not commit mode-only churn in generated bindings. If `git diff --summary frontend/wailsjs` shows only `100644 => 100755`, clear it with `chmod 644 frontend/wailsjs/go/main/App.d.ts frontend/wailsjs/go/main/App.js frontend/wailsjs/go/models.ts frontend/wailsjs/runtime/*`. If your local filesystem keeps flipping executable bits, use `git config core.filemode false` locally.
+```bash
+wails3 generate bindings -ts -time-type=string -clean=true -d frontend/bindings
+```
 
-`wails generate` / `wails build` also re-emits trailing whitespace on blank lines inside `models.ts` (and the exec-bit above) every run, so a regen with no real API change shows a spurious whitespace diff. The committed copies are the prettier-cleaned versions — the `lint-staged` pre-commit hook strips that whitespace automatically. If you regenerated without any Go-facing API/model change, discard the noise with `git restore frontend/wailsjs` rather than committing it.
+On Linux, add `-f '-tags gtk3'` to that command or the generator loads the wrong package. `-clean=true` removes bindings for Go methods that no longer exist. Any `wails3 task <os>:build` regenerates bindings first (`-clean=true`), so a routine build keeps them current. The generated output is canonical and is never run through Prettier (`frontend/bindings` is excluded via `.prettierignore` and sits outside lint-staged's `frontend/src/**` glob). Commit changes only when a Go-facing API or exported model shape changes.
 
 ## Design Documentation
 
@@ -319,10 +370,16 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-1. Finalize the v0.11.0 stabilization release: merge the verified preparation work to `develop`, open a `develop` → `main` release PR, tag the resulting `main` commit as `v0.11.0-rc.1`, validate every packaged platform and install behavior, then tag final `v0.11.0` only after owner approval.
-2. Quality and accessibility: add explicit button types (#34), then audit and re-scope the remaining WCAG AA work (#43).
-3. Product hardening: workspace-owned editor-tab accents (#142), infrastructure file accents (#143), dynamic CodeMirror language loading (#39), and nested `.gitignore` support (#149).
-4. State architecture (#41), followed by the command palette (#44), run execution identity Phase 2 (#146), and three-way Git conflict resolution (#164).
+`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
+
+Active tracks:
+
+1. **Golem:** the configuration UI epic (#263) stays open for the write phases still gated on upstream `go-llm`. Next are durable multi-conversation history (#264) and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Readability and contrast follow-ups (#291, #293), the route-editor close affordance (#284), and the panel/undock follow-ups (#289) are queued behind them.
+2. **Platform:** Linux must move to GTK4 and WebKitGTK 6.0 (#281) before Wails v3.1 can be adopted, since v3.1 drops the GTK3 path this release still targets. Migration hygiene follow-ups are tracked in #282.
+3. **Git merge:** #164 is closed; the remaining backlog is auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), bulk take-Current/Incoming (#223), and the phase 3 diagnostics follow-ups (#240, #241). Destructive VCS operations (#166) come after.
+4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
+
+Watcher and ignore-rule caching (#148/#196) stay benchmark-gated. Store extraction (#41) happens only when one of the tracks above needs it, not as a standalone rewrite.
 
 ## Contributing
 

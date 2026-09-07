@@ -4,11 +4,11 @@ import { undo, redo } from '@codemirror/commands';
 import { Editor } from '../../../components/Editor';
 import { useIDEStore, type EditorFile } from '../../../stores/ideStore';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({ WindowSetTitle: jest.fn() }));
+jest.mock('../../../wails/runtime', () => ({ WindowSetTitle: jest.fn() }));
 
 const applyEditorThemeSpy = jest.fn();
 jest.mock('../../../components/Editor/codemirror', () => {

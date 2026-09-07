@@ -4,5 +4,13 @@
 # no leniency exclusions — unchecked errors and staticcheck findings are real.
 version: "2"
 
+# The v3 Linux path is CGO-gated per build tag: only -tags gtk3 compiles
+# against the pinned WebKit2GTK 4.1/GTK3 ABI Firn ships (see build/linux).
+# Without this, golangci-lint's own compile of package main falls through to
+# the default GTK4 path and never lints the code Firn actually builds.
+run:
+  build-tags:
+    - gtk3
+
 linters:
   default: standard

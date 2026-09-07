@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { fileURIToPath } from '../utils/lspUri';
+import { fileURIToPath, pathsReferToSameFile } from '../utils/lspUri';
 import { getPlatform } from '../utils/platform';
 
 const pathSep = getPlatform() === 'windows' ? '\\' : '/';
@@ -87,12 +87,19 @@ interface LSPState {
   diagnostics: Map<string, LSPDiagnostic[]>;
   /** "workspace::family" -> server status. Updated by lsp:status events. */
   serverStatuses: Map<string, LSPServerStatus>;
+  /**
+   * Last completed conflict-state read, written by useConflictProjectionSync
+   * (mounted once at App level so it survives the bottom panel collapsing).
+   * Consumers filter it against the current git status before use.
+   */
+  conflictRead: ConflictProjectionRead | null;
 }
 
 interface LSPActions {
   setDiagnostics: (uri: string, diagnostics: LSPDiagnostic[]) => void;
   removeDiagnostics: (uri: string) => void;
   clearAllDiagnostics: () => void;
+  setConflictRead: (read: ConflictProjectionRead | null) => void;
 
   setServerStatus: (status: LSPServerStatus) => void;
   removeServerStatus: (workspace: string, family: string) => void;
@@ -116,6 +123,7 @@ export const useLSPStore = create<LSPStore>()(
     (set, get) => ({
       diagnostics: new Map(),
       serverStatuses: new Map(),
+      conflictRead: null,
 
       setDiagnostics: (uri, diagnostics) =>
         set(
@@ -140,6 +148,8 @@ export const useLSPStore = create<LSPStore>()(
         ),
 
       clearAllDiagnostics: () => set({ diagnostics: new Map() }, false, 'clearAllDiagnostics'),
+
+      setConflictRead: (read) => set({ conflictRead: read }, false, 'setConflictRead'),
 
       setServerStatus: (status) =>
         set(
@@ -245,16 +255,6 @@ export function findServerStatusForFile(
 
 // --- Reactive selector hooks ---
 
-function countBySeverity(diagnostics: Map<string, LSPDiagnostic[]>, severity: number): number {
-  let count = 0;
-  for (const diags of diagnostics.values()) {
-    for (const d of diags) {
-      if (d.severity === severity) count++;
-    }
-  }
-  return count;
-}
-
 function countByPredicate(
   diagnostics: Map<string, LSPDiagnostic[]>,
   predicate: (diagnostic: LSPDiagnostic) => boolean
@@ -268,19 +268,6 @@ function countByPredicate(
   return count;
 }
 
-/** Reactive error count — triggers re-render when diagnostics map changes. */
-export const useLSPErrorCount = () => useLSPStore((state) => countBySeverity(state.diagnostics, 1));
-
-/** Reactive warning count — triggers re-render when diagnostics map changes. */
-export const useLSPWarningCount = () =>
-  useLSPStore((state) => countBySeverity(state.diagnostics, 2));
-
-/** Reactive informational count — includes info, hints, and unspecified severities. */
-export const useLSPInfoCount = () =>
-  useLSPStore((state) =>
-    countByPredicate(state.diagnostics, (d) => d.severity !== 1 && d.severity !== 2)
-  );
-
 /** Reactive total count of diagnostics shown in the Problems panel. */
 export const useLSPDiagnosticCount = () =>
   useLSPStore((state) => countByPredicate(state.diagnostics, () => true));
@@ -293,6 +280,60 @@ export interface GroupedDiagnostic {
   filePath: string;
   uri: string;
   diagnostics: LSPDiagnostic[];
+}
+
+export interface ConflictDiagnosticSummary {
+  filePath: string;
+  repoRoot: string;
+  repoPath: string;
+  unresolvedRegionCount: number;
+  markerLineCount: number;
+}
+
+export type ProblemsGroup =
+  | ({ kind: 'diagnostics' } & GroupedDiagnostic)
+  | ({ kind: 'conflict' } & ConflictDiagnosticSummary);
+
+export interface ProblemsProjection {
+  groups: ProblemsGroup[];
+  count: number;
+}
+
+/** A completed conflict-state sweep, tagged with the repo identity it read. */
+export interface ConflictProjectionRead {
+  repoRoot: string;
+  epoch: number;
+  conflicts: ConflictDiagnosticSummary[];
+}
+
+export interface ProblemsSeverityTotals {
+  errors: number;
+  warnings: number;
+  info: number;
+}
+
+/**
+ * Severity breakdown of a Problems projection, for the StatusBar summary.
+ * Conflict regions count as warnings and the conflicted file's raw
+ * diagnostics are already suppressed by the projection, so these totals
+ * always sum to the projection count shown on the Problems tab badge.
+ */
+export function computeProblemsSeverityTotals(
+  projection: ProblemsProjection
+): ProblemsSeverityTotals {
+  const totals: ProblemsSeverityTotals = { errors: 0, warnings: 0, info: 0 };
+  for (const group of projection.groups) {
+    if (group.kind === 'conflict') {
+      totals.warnings += group.unresolvedRegionCount;
+      continue;
+    }
+    for (const d of group.diagnostics) {
+      if (d.severity === 1) totals.errors++;
+      else if (d.severity === 2) totals.warnings++;
+      else totals.info++;
+    }
+  }
+  return totals;
 }
 
 /** Compute grouped diagnostics from a diagnostics Map. Pure function for use in selectors. */
@@ -324,6 +365,41 @@ export function computeGroupedDiagnostics(
   }
 
   return groups;
+}
+
+/** Derive the ordinary Problems view without altering published LSP diagnostics. */
+export function computeProblemsProjection(
+  diagnostics: Map<string, LSPDiagnostic[]>,
+  conflicts: ConflictDiagnosticSummary[]
+): ProblemsProjection {
+  const groups: ProblemsGroup[] = [];
+  const emittedConflicts = new Set<number>();
+  let count = 0;
+
+  for (const group of computeGroupedDiagnostics(diagnostics)) {
+    const conflictIndex = conflicts.findIndex((conflict) =>
+      pathsReferToSameFile(conflict.filePath, group.filePath)
+    );
+    if (conflictIndex < 0) {
+      groups.push({ kind: 'diagnostics', ...group });
+      count += group.diagnostics.length;
+      continue;
+    }
+    if (emittedConflicts.has(conflictIndex)) continue;
+
+    const conflict = conflicts[conflictIndex];
+    groups.push({ kind: 'conflict', ...conflict });
+    count += conflict.unresolvedRegionCount;
+    emittedConflicts.add(conflictIndex);
+  }
+
+  conflicts.forEach((conflict, index) => {
+    if (emittedConflicts.has(index)) return;
+    groups.push({ kind: 'conflict', ...conflict });
+    count += conflict.unresolvedRegionCount;
+  });
+
+  return { groups, count };
 }
 
 /** Reactive hook: all diagnostics grouped by file. Uses the diagnostics map reference for subscription. */

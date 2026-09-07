@@ -1,4 +1,4 @@
-import type { filesystem } from '../../wailsjs/go/models';
+import type { filesystem } from '../wails/bindings';
 
 const MAX_CACHED_WORKSPACE_TREES = 12;
 

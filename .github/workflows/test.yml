@@ -8,18 +8,19 @@ on:
       - 'docs/**'
       - '.Codex/**'
       - '.claude/**'
+  # No `branches:` filter: that filter matches the PR's BASE branch, so scoping
+  # it to [main, develop] gave stacked PRs (base = another feature branch) zero
+  # checks and a mergeable "no checks reported" state. The narrow `push` filter
+  # above is what keeps this from double-running on feature-branch pushes.
+  # No `paths-ignore` either: branch protection requires these checks, and a
+  # filtered-out PR never reports them -- it would sit "Expected" forever and
+  # be unmergeable. Docs-only PRs pay one short CI run instead.
   pull_request:
-    branches: [main, develop]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.Codex/**'
-      - '.claude/**'
 
 jobs:
   frontend-tests:
     name: Frontend Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     defaults:
       run:
@@ -52,7 +53,9 @@ jobs:
 
   backend-tests:
     name: Backend Tests
-    runs-on: ubuntu-latest
+    # Pinned to 22.04: the image IS the WebKit2GTK 4.1 compatibility floor
+    # that the -tags gtk3 Linux build below targets.
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -67,8 +70,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: 'go.mod'
           cache-dependency-path: go.sum
+
+      - name: Install Linux dependencies for Wails
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Build frontend (required for go:embed)
         run: |
@@ -77,13 +85,37 @@ jobs:
           npm run build
 
       - name: Run tests
-        run: go test ./... -v
+        run: go test -tags gtk3 ./... -v
 
       - name: Run tests with coverage
-        run: go test ./... -coverprofile=coverage.out
+        run: go test -tags gtk3 ./... -coverprofile=coverage.out
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out
           fail_ci_if_error: false
+
+  # No "Build frontend" step here, unlike backend-tests: these three packages are
+  # leaves and none of them reaches main's `go:embed all:frontend/dist`. If that
+  # ever changes this job fails with an embed error that reads like a bad
+  # checkout — add the frontend build step rather than chasing the symptom.
+  windows-filesystem-tests:
+    name: Windows Filesystem Tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      # -v is load-bearing: several security tests skip when Windows withholds
+      # SeCreateSymbolicLinkPrivilege, and without -v a fully skipped suite is
+      # indistinguishable from a passing one.
+      - name: Run filesystem, run history and workspace tests
+        run: go test -v ./internal/filesystem ./internal/runhistory ./internal/workspace

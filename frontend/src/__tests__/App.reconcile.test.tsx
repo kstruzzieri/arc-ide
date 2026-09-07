@@ -16,9 +16,9 @@ import { useIDEStore } from '../stores/ideStore';
 import type { FileEntry } from '../stores/ideStore';
 import { useSearchStore } from '../stores/searchStore';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from '../stores/gitStore';
-import { GitStatus } from '../../wailsjs/go/main/App';
+import { GitStatus } from '../wails/bindings';
 import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
-import { ReadDirectoryShallow } from '../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../wails/bindings';
 import { __resetEnsurePathLoaded } from '../hooks/useEnsurePathLoaded';
 import type { FileEvent } from '../types/watcher';
 
@@ -48,55 +48,76 @@ const unloadedDir = (path: string): FileEntry =>
 // ── mocks ─────────────────────────────────────────────────────────────────────
 const mockUseFileWatcher = jest.fn();
 
-jest.mock('../../wailsjs/go/main/App', () => ({
-  ReadDirectory: jest.fn(),
-  ReadDirectoryShallow: jest.fn(),
-  ReadFile: jest.fn(),
-  WriteFile: jest.fn(),
-  OpenFolderDialog: jest.fn(),
-  GetWatchedPath: jest.fn(),
-  SetWatchedPath: jest.fn(),
-  CreateTerminal: jest.fn(() => Promise.resolve('term-1')),
-  WriteTerminal: jest.fn(),
-  CloseTerminal: jest.fn(),
-  ResizeTerminal: jest.fn(),
-  ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
-  SaveWorkspaceState: jest.fn(() => Promise.resolve()),
-  LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
-  ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
-  LoadRunProfiles: jest.fn(() => Promise.resolve()),
-  GetRunProfilesSnapshot: jest.fn(() => Promise.resolve({ profiles: [], profileState: {} })),
-  SetActiveVariant: jest.fn(() => Promise.resolve()),
-  LSPDidOpen: jest.fn().mockResolvedValue(undefined),
-  LSPDidChange: jest.fn().mockResolvedValue(undefined),
-  LSPDidSave: jest.fn().mockResolvedValue(undefined),
-  LSPDidClose: jest.fn().mockResolvedValue(undefined),
-  SearchWorkspace: jest.fn().mockResolvedValue({}),
-  CancelSearch: jest.fn().mockResolvedValue(undefined),
-  DetectWorkspaces: jest.fn(() => Promise.resolve([])),
-  GitStatus: jest.fn(() =>
-    Promise.resolve({
-      isRepo: false,
-      repoRoot: '',
-      branch: '',
-      upstream: '',
-      ahead: 0,
-      behind: 0,
-      files: [],
-    })
-  ),
-  GitBranches: jest.fn(() => Promise.resolve([])),
-  GitCommitMessageAvailable: jest.fn(() => Promise.resolve(false)),
-  GitStage: jest.fn(),
-  GitUnstage: jest.fn(),
-  GitCommit: jest.fn(),
-  GitPull: jest.fn(),
-  GitPush: jest.fn(),
-  GitCheckout: jest.fn(),
-  GitGenerateCommitMessage: jest.fn(),
-}));
+jest.mock('../wails/bindings', () => {
+  const actual = jest.requireActual('../wails/bindings');
+  return {
+    ...actual,
+    ReadDirectory: jest.fn(),
+    ReadDirectoryShallow: jest.fn(),
+    ReadFile: jest.fn(),
+    WriteFile: jest.fn(),
+    OpenFolderDialog: jest.fn(),
+    GetWatchedPath: jest.fn(),
+    SetWatchedPath: jest.fn(),
+    CreateTerminal: jest.fn(() => Promise.resolve('term-1')),
+    WriteTerminal: jest.fn(),
+    CloseTerminal: jest.fn(),
+    ResizeTerminal: jest.fn(),
+    ConfirmBeforeCloseReady: jest.fn(() => Promise.resolve()),
+    CancelBeforeClose: jest.fn(() => Promise.resolve()),
+    SaveWorkspaceState: jest.fn(() => Promise.resolve()),
+    LoadWorkspaceState: jest.fn(() => Promise.resolve(null)),
+    ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
+    LoadRunProfiles: jest.fn(() => Promise.resolve()),
+    GetRunProfilesSnapshot: jest.fn(() => Promise.resolve({ profiles: [], profileState: {} })),
+    SetActiveVariant: jest.fn(() => Promise.resolve()),
+    LSPDidOpen: jest.fn().mockResolvedValue(undefined),
+    LSPDidChange: jest.fn().mockResolvedValue(undefined),
+    LSPDidSave: jest.fn().mockResolvedValue(undefined),
+    LSPDidClose: jest.fn().mockResolvedValue(undefined),
+    SearchWorkspace: jest.fn().mockResolvedValue({}),
+    CancelSearch: jest.fn().mockResolvedValue(undefined),
+    DetectWorkspaces: jest.fn(() => Promise.resolve([])),
+    GitStatus: jest.fn(() =>
+      Promise.resolve({
+        isRepo: false,
+        repoRoot: '',
+        branch: '',
+        upstream: '',
+        ahead: 0,
+        behind: 0,
+        files: [],
+      })
+    ),
+    GitBranches: jest.fn(() => Promise.resolve([])),
+    GitCommitMessageAvailable: jest.fn(() => Promise.resolve(false)),
+    GitStage: jest.fn(),
+    GitUnstage: jest.fn(),
+    GitCommit: jest.fn(),
+    GitPull: jest.fn(),
+    GitPush: jest.fn(),
+    GitCheckout: jest.fn(),
+    GitGenerateCommitMessage: jest.fn(),
+    GitConflictState: jest.fn(),
+    // App now mounts useGolemBridge; an unbound repository is the quiet default.
+    GetWorkspaceInfo: jest.fn((path: string) =>
+      Promise.resolve({ name: '', path, repoKey: '', repoEpoch: 0 })
+    ),
+    GetGolemStatus: jest.fn(() =>
+      Promise.resolve({
+        available: false,
+        workspaceLabel: '',
+        identity: { repoEpoch: 0, workspaceId: '', conversationId: '' },
+        needsConsent: false,
+        activeRuns: [],
+      })
+    ),
+    RunGolemTurn: jest.fn(() => Promise.resolve(null)),
+    CancelGolemRun: jest.fn(() => Promise.resolve(false)),
+  };
+});
 
-jest.mock('../../wailsjs/runtime/runtime', () => ({
+jest.mock('../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
   EventsOn: jest.fn(() => jest.fn()),
 }));
@@ -380,6 +401,7 @@ describe('App — surgical watcher reconcile', () => {
             size: 0,
             modTime: '',
             children: [existingChild],
+            unreadable: true,
           } as FileEntry,
         ],
         expandedPaths: new Set(['/r/a']),
@@ -412,5 +434,164 @@ describe('App — surgical watcher reconcile', () => {
     expect(newNode).toBeTruthy();
     // /r/a must retain its previously-loaded children (not revert to undefined)
     expect(aNode?.children).toEqual([existingChild]);
+    // Reading only /r does not prove that /r/a's contents became readable.
+    expect(aNode?.unreadable).toBe(true);
+  });
+
+  it('a successful watcher retry of the unreadable dir clears its marker', async () => {
+    const realChild = {
+      name: 'new.ts',
+      path: '/r/a/new.ts',
+      isDir: false,
+      size: 0,
+      modTime: '',
+    } as FileEntry;
+    (ReadDirectoryShallow as jest.Mock).mockResolvedValue([realChild]);
+
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [{ ...loadedDir('/r/a'), unreadable: true } as FileEntry],
+        expandedPaths: new Set(['/r/a']),
+        isRootExpanded: true,
+      });
+    });
+
+    const fire = getWatcherCallback();
+    act(() => {
+      fire({
+        type: 'created',
+        path: '/r/a/new.ts',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
+    const aNode = useIDEStore.getState().directoryTree[0];
+    expect(aNode.children).toEqual([realChild]);
+    expect(aNode.unreadable).toBe(false);
+  });
+});
+
+describe('App — merge session revalidation signals', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.clearAllMocks();
+    __resetEnsurePathLoaded();
+    resetLSPDocumentSyncState();
+    (ReadDirectoryShallow as jest.Mock).mockResolvedValue([]);
+    useIDEStore.setState({
+      workspace: { name: 'r', path: '/r' },
+      openFiles: [],
+      activeFileId: null,
+      directoryTree: [],
+      treeError: null,
+      activeSidebarView: 'explorer',
+      isLeftPanelCollapsed: false,
+      expandedPaths: new Set<string>(),
+      loadingPaths: new Set<string>(),
+      dirtyPaths: new Set<string>(),
+      isRootExpanded: true,
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function watcherCallback(): (event: FileEvent) => void {
+    const cb = mockUseFileWatcher.mock.calls[0]?.[1] as ((event: FileEvent) => void) | undefined;
+    expect(cb).toBeDefined();
+    return cb!;
+  }
+
+  /**
+   * Renders inside act and settles the mount: the always-mounted Golem bridge
+   * resolves GetWorkspaceInfo a microtask after render, which would otherwise
+   * land after the test body returns and count as an update outside act (#226).
+   */
+  async function renderApp() {
+    await act(async () => {
+      render(<App />);
+    });
+  }
+
+  /** Replaces the store action so the test observes the signal, not the policy
+   * (which gitStore.merge.test.ts owns). */
+  function captureMergeSignal() {
+    const notifyMergeFileChanged = jest.fn(() => Promise.resolve());
+    useGitStore.setState({ notifyMergeFileChanged });
+    return notifyMergeFileChanged;
+  }
+
+  it('hands a changed path to the merge session revalidator', async () => {
+    const notify = captureMergeSignal();
+    await renderApp();
+
+    act(() => {
+      watcherCallback()({
+        type: 'modified',
+        path: '/r/conflict.ts',
+        isDir: false,
+        time: '',
+      });
+    });
+
+    // A merge session is not an open editor buffer, so the reload path in
+    // handleFileChange never sees it — the store has to be told directly.
+    expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
+  });
+
+  it('hands both sides of a rename to the revalidator', async () => {
+    const notify = captureMergeSignal();
+    await renderApp();
+
+    act(() => {
+      watcherCallback()({
+        type: 'renamed',
+        path: '/r/renamed.ts',
+        oldPath: '/r/conflict.ts',
+        isDir: false,
+        time: '',
+      });
+    });
+
+    // The session's file may be either end of the rename.
+    expect(notify).toHaveBeenCalledWith('/r/renamed.ts');
+    expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
+  });
+
+  it('signals a deletion of the session file too', async () => {
+    const notify = captureMergeSignal();
+    await renderApp();
+
+    act(() => {
+      watcherCallback()({
+        type: 'deleted',
+        path: '/r/conflict.ts',
+        isDir: false,
+        time: '',
+      });
+    });
+
+    expect(notify).toHaveBeenCalledWith('/r/conflict.ts');
+  });
+
+  it('does not signal for directory events', async () => {
+    const notify = captureMergeSignal();
+    await renderApp();
+
+    act(() => {
+      watcherCallback()({ type: 'created', path: '/r/sub', isDir: true, time: '' });
+    });
+
+    expect(notify).not.toHaveBeenCalled();
   });
 });

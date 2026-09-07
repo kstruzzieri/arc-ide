@@ -1,0 +1,16 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "target_exists",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      }
+    ],
+    "consentOutcome": "unchanged"
+  }
+}

@@ -30,7 +30,6 @@ import {
   foldKeymap,
   defaultHighlightStyle,
   indentUnit,
-  LanguageSupport,
 } from '@codemirror/language';
 import {
   acceptCompletion,
@@ -42,18 +41,6 @@ import { lintKeymap } from '@codemirror/lint';
 import { inFileSearchExtensions, inFileSearchKeymap } from './search';
 import { gitGutterExtension } from './gitGutter';
 export { inFileSearchKeymap } from './search';
-
-// Language imports
-import { javascript } from '@codemirror/lang-javascript';
-import { python } from '@codemirror/lang-python';
-import { go } from '@codemirror/lang-go';
-import { css } from '@codemirror/lang-css';
-import { html } from '@codemirror/lang-html';
-import { json } from '@codemirror/lang-json';
-import { markdown } from '@codemirror/lang-markdown';
-import { xml } from '@codemirror/lang-xml';
-import { yaml } from '@codemirror/lang-yaml';
-import { rust } from '@codemirror/lang-rust';
 
 import { buildTheme } from './theme';
 import { type SyntaxThemeId, DEFAULT_SYNTAX_THEME_ID } from './palettes';
@@ -72,78 +59,6 @@ export const languageCompartment = new Compartment();
 export const themeCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const tabSizeCompartment = new Compartment();
-
-/**
- * Language detection from file extension.
- */
-export function getLanguageExtension(filename: string): LanguageSupport | null {
-  const ext = filename.split('.').pop()?.toLowerCase();
-
-  switch (ext) {
-    // JavaScript/TypeScript
-    case 'js':
-    case 'mjs':
-    case 'cjs':
-      return javascript();
-    case 'jsx':
-      return javascript({ jsx: true });
-    case 'ts':
-    case 'mts':
-    case 'cts':
-      return javascript({ typescript: true });
-    case 'tsx':
-      return javascript({ jsx: true, typescript: true });
-
-    // Python
-    case 'py':
-    case 'pyw':
-    case 'pyi':
-      return python();
-
-    // Go
-    case 'go':
-      return go();
-
-    // Web
-    case 'css':
-    case 'scss':
-    case 'less':
-      return css();
-    case 'html':
-    case 'htm':
-      return html();
-
-    // Data formats
-    case 'json':
-    case 'jsonc':
-      return json();
-
-    // Documentation
-    case 'md':
-    case 'markdown':
-      return markdown();
-
-    // XML
-    case 'xml':
-    case 'xsl':
-    case 'xslt':
-    case 'svg':
-    case 'plist':
-      return xml();
-
-    // YAML
-    case 'yml':
-    case 'yaml':
-      return yaml();
-
-    // Rust
-    case 'rs':
-      return rust();
-
-    default:
-      return null;
-  }
-}
 
 /**
  * Core editing extensions - essential functionality.
@@ -313,7 +228,6 @@ export function createEditorExtensions(options: {
     onCursorChange,
   } = options;
 
-  const language = getLanguageExtension(filename);
   const fileExt = filename.split('.').pop()?.toLowerCase();
   const isPython = fileExt === 'py' || fileExt === 'pyw' || fileExt === 'pyi';
 
@@ -346,7 +260,7 @@ export function createEditorExtensions(options: {
     readOnlyCompartment.of(readOnly(isReadOnly)),
 
     // Language (in compartment for dynamic switching)
-    languageCompartment.of(language || []),
+    languageCompartment.of([]),
 
     // Python-only semantic overlay (self/cls, builtins, decorator names)
     ...(isPython ? [pythonHighlightExtensions()] : []),

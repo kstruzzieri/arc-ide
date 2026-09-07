@@ -8,18 +8,19 @@ on:
       - 'docs/**'
       - '.Codex/**'
       - '.claude/**'
+  # No `branches:` filter: that filter matches the PR's BASE branch, so scoping
+  # it to [main, develop] gave stacked PRs (base = another feature branch) zero
+  # checks and a mergeable "no checks reported" state. The narrow `push` filter
+  # above is what keeps this from double-running on feature-branch pushes.
+  # No `paths-ignore` either: branch protection requires these checks, and a
+  # filtered-out PR never reports them -- it would sit "Expected" forever and
+  # be unmergeable. Docs-only PRs pay one short CI run instead.
   pull_request:
-    branches: [main, develop]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.Codex/**'
-      - '.claude/**'
 
 jobs:
   eslint:
     name: ESLint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     defaults:
       run:
@@ -43,7 +44,9 @@ jobs:
 
   golangci-lint:
     name: golangci-lint
-    runs-on: ubuntu-latest
+    # Pinned to 22.04: the image IS the WebKit2GTK 4.1 compatibility floor
+    # that the gtk3 build-tags below target.
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +54,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: 'go.mod'
           cache-dependency-path: go.sum
 
       - name: Setup Node.js (for frontend build)
@@ -60,6 +63,11 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Linux dependencies for Wails
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install frontend dependencies
         run: |
@@ -82,3 +90,6 @@ jobs:
           # fails otherwise-green runs. golangci-lint still errors on a genuinely
           # broken config at runtime.
           verify: false
+          # Cached Staticcheck facts produced different SA5011 results for the
+          # same source tree across otherwise-identical Actions runs.
+          skip-cache: true

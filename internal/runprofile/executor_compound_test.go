@@ -4,6 +4,7 @@ package runprofile
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -104,7 +105,32 @@ func waitForCompoundState(exec *Executor, id string, want RunState, timeout time
 	}
 }
 
-func noopStatus(string, ...any) {}
+// waitForCompoundSnapshot polls the spy until a run:compound snapshot with the
+// wanted aggregate state has been recorded, returning all snapshots seen at
+// that point. finishCompound flips GetStatus/run:status terminal BEFORE it
+// emits the final snapshot (which is what carries the pending→skipped marks),
+// so tests that assert on snapshot contents must gate on the snapshot stream
+// itself rather than waitForCompoundState/waitForState.
+func waitForCompoundSnapshot(t *testing.T, spy *emitSpy, want RunState, timeout time.Duration) []compoundStatus {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		snaps := compoundSnapshots(spy)
+		if len(snaps) > 0 && snaps[len(snaps)-1].State == want {
+			return snaps
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	snaps := compoundSnapshots(spy)
+	latest := RunState("<no snapshots>")
+	if len(snaps) > 0 {
+		latest = snaps[len(snaps)-1].State
+	}
+	t.Fatalf("timed out waiting for compound snapshot with aggregate state %q (%d snapshots recorded, latest state %q)", want, len(snaps), latest)
+	return nil
+}
+
+func noopStatus(string, any) {}
 
 func compoundProfile(id string, steps ...string) RunProfile {
 	return RunProfile{
@@ -143,8 +169,8 @@ func waitForStepRunning(t *testing.T, e *Executor, compoundProfileID string, ste
 		rid := e.activeByProfile[compoundProfileID]
 		cr := e.compounds[rid]
 		running := false
-		if cr != nil && stepIdx >= 0 && stepIdx < len(cr.steps) && cr.steps[stepIdx].State == CompoundStepRunning {
-			leafRID := cr.steps[stepIdx].RunInstanceID
+		if cr != nil && stepIdx >= 0 && stepIdx < len(cr.plan) && cr.plan[stepIdx].step.State == CompoundStepRunning {
+			leafRID := cr.plan[stepIdx].step.RunInstanceID
 			_, leafRunning := e.processes[leafRID]
 			running = leafRunning
 		}
@@ -155,6 +181,95 @@ func waitForStepRunning(t *testing.T, e *Executor, compoundProfileID string, ste
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("compound %q step %d did not reach running state", compoundProfileID, stepIdx)
+}
+
+func TestExecutorCompoundCapturesResolvedStepSnapshotAtAdmission(t *testing.T) {
+	type preparedStep struct {
+		command string
+		env     string
+	}
+
+	executor := NewExecutor(nil, nil)
+	firstPrepared := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondPrepared := make(chan preparedStep, 1)
+	var (
+		starts      int
+		releaseOnce sync.Once
+	)
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseFirst)
+		})
+	}
+
+	executor.setCommandStartHook(func(cmd *exec.Cmd) error {
+		starts++
+		switch starts {
+		case 1:
+			close(firstPrepared)
+			<-releaseFirst
+		case 2:
+			const prefix = "FIRN_PHASE2D_SNAPSHOT="
+			value := ""
+			for _, item := range cmd.Env {
+				if strings.HasPrefix(item, prefix) {
+					value = strings.TrimPrefix(item, prefix)
+					break
+				}
+			}
+			secondPrepared <- preparedStep{
+				command: cmd.Args[len(cmd.Args)-1],
+				env:     value,
+			}
+		}
+		return cmd.Start()
+	})
+	t.Cleanup(func() {
+		release()
+		executor.StopAll(5 * time.Second)
+	})
+
+	steps := []RunProfile{
+		newTestProfile("first", "go version"),
+		{
+			ID:      "second",
+			Name:    "second",
+			Type:    ProfileTypeSingle,
+			Command: "go env GOOS",
+			Env: map[string]string{
+				"FIRN_PHASE2D_SNAPSHOT": "planned",
+			},
+		},
+	}
+	compound := compoundProfile("ci", "first", "second")
+
+	if err := executor.StartCompound(t.TempDir(), compound, steps); err != nil {
+		t.Fatalf("StartCompound: %v", err)
+	}
+	select {
+	case <-firstPrepared:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first step never reached process start")
+	}
+
+	// Keep this barrier: the same test runs under -race to verify the
+	// coordinator consumes an owned snapshot, not caller memory.
+	steps[1].Command = "go env GOARCH"
+	steps[1].Env["FIRN_PHASE2D_SNAPSHOT"] = "mutated"
+	release()
+
+	var got preparedStep
+	select {
+	case got = <-secondPrepared:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second step never reached process start")
+	}
+	waitForTerminalStatus(t, executor, compound.ID)
+
+	if got.command != "go env GOOS" || got.env != "planned" {
+		t.Fatalf("second step used caller mutation: command=%q env=%q", got.command, got.env)
+	}
 }
 
 func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {
@@ -176,10 +291,7 @@ func TestExecutor_StartCompoundStopOnFailure(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate failed state")
 	}
 
-	snaps := compoundSnapshots(spy)
-	if !hasCompoundState(snaps, RunStateFailed) {
-		t.Error("expected a snapshot with aggregate failed state")
-	}
+	snaps := waitForCompoundSnapshot(t, spy, RunStateFailed, 5*time.Second)
 
 	boomStep, ok := finalStep(snaps, 1)
 	if !ok {
@@ -274,7 +386,7 @@ func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate failed state")
 	}
 
-	snaps := compoundSnapshots(spy)
+	snaps := waitForCompoundSnapshot(t, spy, RunStateFailed, 5*time.Second)
 	badStep, ok := finalStep(snaps, 1)
 	if !ok {
 		t.Fatal("expected step index 1 in final snapshot")
@@ -311,6 +423,154 @@ func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 	}
 }
 
+func assertPhase2EAdministrativeCompoundStop(
+	t *testing.T,
+	terminal RunStatus,
+	snaps []compoundStatus,
+	out *outputSpy,
+	reason string,
+) {
+	t.Helper()
+	if terminal.State != RunStateStopped {
+		t.Errorf("aggregate state = %q, want %q", terminal.State, RunStateStopped)
+	}
+	if terminal.ExitCode != -1 {
+		t.Errorf("aggregate exit code = %d, want -1", terminal.ExitCode)
+	}
+	if terminal.Reason != reason {
+		t.Errorf("aggregate reason = %q, want %q", terminal.Reason, reason)
+	}
+
+	first, ok := finalStep(snaps, 0)
+	if !ok {
+		t.Fatal("expected active step index 0 in final snapshot")
+	}
+	if first.State != CompoundStepStopped {
+		t.Errorf("active step state = %q, want %q", first.State, CompoundStepStopped)
+	}
+	if first.ExitCode != -1 {
+		t.Errorf("active step exit code = %d, want -1", first.ExitCode)
+	}
+	if first.ErrorMessage != "" {
+		t.Errorf("active step error message = %q, want empty", first.ErrorMessage)
+	}
+
+	later, ok := finalStep(snaps, 1)
+	if !ok {
+		t.Fatal("expected later step index 1 in final snapshot")
+	}
+	if later.State != CompoundStepSkipped {
+		t.Errorf("later step state = %q, want %q", later.State, CompoundStepSkipped)
+	}
+
+	final := snaps[len(snaps)-1]
+	if final.State != RunStateStopped {
+		t.Errorf("final snapshot state = %q, want %q", final.State, RunStateStopped)
+	}
+	if final.Reason != reason {
+		t.Errorf("final snapshot reason = %q, want %q", final.Reason, reason)
+	}
+	if got := outputByIdentity(out, first.ParentRunInstanceID, first.Idx); got != "" {
+		t.Errorf("administrative invalidation emitted synthetic step output %q", got)
+	}
+}
+
+func TestExecutorPhase2E_CompoundPreReservationInvalidationStops(t *testing.T) {
+	const reason = "workspace-switch"
+	spy := &emitSpy{}
+	out := &outputSpy{}
+	gateEntered := make(chan struct{})
+	releaseGate := make(chan struct{})
+	var gateOnce sync.Once
+	var releaseOnce sync.Once
+
+	exec := NewExecutor(func(event string, data any) {
+		spy.emit(event, data)
+		if event != "run:compound" {
+			return
+		}
+		snap, ok := data.(compoundStatus)
+		if !ok || len(snap.Steps) == 0 || snap.Steps[0].State != CompoundStepRunning {
+			return
+		}
+		gateOnce.Do(func() {
+			close(gateEntered)
+			<-releaseGate
+		})
+	}, out.receive)
+	release := func() {
+		releaseOnce.Do(func() { close(releaseGate) })
+	}
+	t.Cleanup(func() {
+		release()
+		exec.StopAllWithReason(2*time.Second, reason) //nolint:errcheck
+	})
+
+	first := newTestProfile("first", "sleep 30")
+	later := newTestProfile("later", "echo never")
+	compound := compoundProfile("ci", first.ID, later.ID)
+	if err := exec.StartCompound(t.TempDir(), compound, []RunProfile{first, later}); err != nil {
+		t.Fatalf("StartCompound: %v", err)
+	}
+	select {
+	case <-gateEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("compound did not reach the pre-reservation gate")
+	}
+
+	exec.BeginDrainWithReason(reason)
+	release()
+
+	terminal := waitForTerminalStatus(t, exec, compound.ID)
+	snaps := waitForCompoundSnapshot(t, spy, terminal.State, 2*time.Second)
+	assertPhase2EAdministrativeCompoundStop(t, terminal, snaps, out, reason)
+}
+
+func TestExecutorPhase2E_CompoundReservedStartInvalidationStops(t *testing.T) {
+	const reason = "shutdown"
+	spy := &emitSpy{}
+	out := &outputSpy{}
+	startEntered := make(chan struct{})
+	releaseStart := make(chan struct{})
+	var releaseOnce sync.Once
+
+	executor := NewExecutor(spy.emit, out.receive)
+	executor.setCommandStartHook(func(cmd *exec.Cmd) error {
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		close(startEntered)
+		<-releaseStart
+		return nil
+	})
+	release := func() {
+		releaseOnce.Do(func() { close(releaseStart) })
+	}
+	t.Cleanup(func() {
+		release()
+		executor.StopAllWithReason(2*time.Second, reason) //nolint:errcheck
+	})
+
+	first := newTestProfile("first", "sleep 30")
+	later := newTestProfile("later", "echo never")
+	compound := compoundProfile("ci", first.ID, later.ID)
+	if err := executor.StartCompound(t.TempDir(), compound, []RunProfile{first, later}); err != nil {
+		t.Fatalf("StartCompound: %v", err)
+	}
+	select {
+	case <-startEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("compound did not reach the reserved-start gate")
+	}
+
+	executor.BeginDrainWithReason(reason)
+	release()
+
+	terminal := waitForTerminalStatus(t, executor, compound.ID)
+	snaps := waitForCompoundSnapshot(t, spy, terminal.State, stopGracePeriod+2*time.Second)
+	assertPhase2EAdministrativeCompoundStop(t, terminal, snaps, out, reason)
+}
+
 func TestExecutor_StopCompoundMidStep(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
@@ -344,7 +604,7 @@ func TestExecutor_StopCompoundMidStep(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate stopped state")
 	}
 
-	snaps := compoundSnapshots(spy)
+	snaps := waitForCompoundSnapshot(t, spy, RunStateStopped, 5*time.Second)
 	slowStep, ok := finalStep(snaps, 0)
 	if !ok {
 		t.Fatal("expected step index 0 in final snapshot")
@@ -419,7 +679,7 @@ func TestExecutor_StopSingleIDStopsCompoundStep(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate stopped state")
 	}
 
-	states := finalStepStates(compoundSnapshots(spy))
+	states := finalStepStates(waitForCompoundSnapshot(t, spy, RunStateStopped, 5*time.Second))
 	if len(states) != 2 {
 		t.Fatalf("expected 2 step states, got %d", len(states))
 	}
@@ -466,7 +726,7 @@ func TestExecutor_StopCompoundBetweenSteps(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate stopped state")
 	}
 
-	states := finalStepStates(compoundSnapshots(spy))
+	states := finalStepStates(waitForCompoundSnapshot(t, spy, RunStateStopped, 5*time.Second))
 	if len(states) != 2 {
 		t.Fatalf("expected 2 step states, got %d", len(states))
 	}
@@ -561,7 +821,7 @@ func TestExecutor_StartCompoundAllSuccess(t *testing.T) {
 		t.Fatal("timed out waiting for aggregate success state")
 	}
 
-	snaps := compoundSnapshots(spy)
+	snaps := waitForCompoundSnapshot(t, spy, RunStateSuccess, 5*time.Second)
 	if !hasStepState(snaps, CompoundStepPending) {
 		t.Error("expected a snapshot with a pending step")
 	}

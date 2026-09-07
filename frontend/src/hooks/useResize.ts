@@ -13,12 +13,45 @@ export interface UseResizeOptions {
   inverted?: boolean;
   /** Callback fired when resize completes (mouseup or keyboard pause) with the final size */
   onResizeEnd?: (size: number) => void;
+  /**
+   * #271: a gesture (mouse or keyboard) began, with the size currently
+   * rendered for this panel. The shell captures ownership of `cssVar` here.
+   */
+  onResizeStart?: (size: number) => void;
+  /**
+   * #271: live clamped size during the gesture, at most once per animation
+   * frame. The shell recomputes its effective budget so peer panels give way
+   * before paint instead of at mouseup.
+   */
+  onResizePreview?: (size: number) => void;
+  /**
+   * #271: the gesture ended without committing — unmount, an external layout
+   * change (`invalidationKey`), or a release that did not move the panel.
+   * Every `onResizeStart` is terminated by exactly one `onResizeEnd` *or*
+   * `onResizeCancel`, so the shell can release ownership unconditionally and
+   * reapply the current effective layout.
+   */
+  onResizeCancel?: () => void;
+  /**
+   * #271: external layout identity (repository/restore generation, viewport,
+   * explicit collapse/order, host mode). A change cancels — never commits —
+   * an in-flight gesture, so no drag from the old layout is saved into the new
+   * one. It must exclude this gesture's own preview/effective-rail values.
+   */
+  invalidationKey?: string;
 }
 
 /** Step size in px for keyboard-based resize */
 const KEYBOARD_STEP = 20;
 /** Delay before firing onResizeEnd for keyboard resize (ms) */
 const KEYBOARD_RESIZE_END_DELAY = 300;
+
+/**
+ * Both halves must exist: a frame we can schedule but not cancel would outlive
+ * its gesture. One check gates scheduling and cancelling alike.
+ */
+const supportsAnimationFrame = (): boolean =>
+  typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
 
 /** Read current pixel size from a CSS custom property */
 export function readCssVarSize(cssVar: string): number {
@@ -34,52 +67,105 @@ export function useResize({
   max,
   inverted = false,
   onResizeEnd,
+  onResizeStart,
+  onResizePreview,
+  onResizeCancel,
+  invalidationKey,
 }: UseResizeOptions) {
   const isDragging = useRef(false);
   const startPos = useRef(0);
   const startSize = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const onResizeEndRef = useRef(onResizeEnd);
   const keyboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Size the pending keyboard burst started from; null when no burst is open. */
+  const keyboardStartSize = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const pendingPreview = useRef<number | null>(null);
 
-  // Keep onResizeEnd ref in sync with latest callback
+  const callbacks = useRef({ onResizeEnd, onResizeStart, onResizePreview, onResizeCancel });
   useEffect(() => {
-    onResizeEndRef.current = onResizeEnd;
-  }, [onResizeEnd]);
+    callbacks.current = { onResizeEnd, onResizeStart, onResizePreview, onResizeCancel };
+  }, [onResizeEnd, onResizeStart, onResizePreview, onResizeCancel]);
 
-  // Clean up any active drag listeners and keyboard timer on unmount
+  /** Drop any scheduled frame callback; returns the preview it would have sent. */
+  const takePendingPreview = useCallback((): number | null => {
+    // frameRef is only ever set while supportsAnimationFrame(), so cancelling
+    // it needs no second capability check.
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    const pending = pendingPreview.current;
+    pendingPreview.current = null;
+    return pending;
+  }, []);
+
+  const schedulePreview = useCallback((size: number) => {
+    if (!supportsAnimationFrame()) {
+      callbacks.current.onResizePreview?.(size);
+      return;
+    }
+    pendingPreview.current = size;
+    if (frameRef.current !== null) return; // already coalescing into this frame
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      const latest = pendingPreview.current;
+      pendingPreview.current = null;
+      if (latest !== null) callbacks.current.onResizePreview?.(latest);
+    });
+  }, []);
+
+  /**
+   * Revoke whatever gesture is open (mouse listeners and/or a pending keyboard
+   * commit) without committing anything. A no-op when nothing is in flight, so
+   * a normal completion is never reported as a cancellation.
+   */
+  const cancelGesture = useCallback(() => {
+    const hadGesture = cleanupRef.current !== null || keyboardTimerRef.current !== null;
+    takePendingPreview();
+    if (keyboardTimerRef.current) {
+      clearTimeout(keyboardTimerRef.current);
+      keyboardTimerRef.current = null;
+    }
+    keyboardStartSize.current = null;
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+    if (hadGesture) callbacks.current.onResizeCancel?.();
+  }, [takePendingPreview]);
+
+  // Unmount tears the gesture down as a cancellation: a cleanup callback must
+  // never save a drag that outlived its layout.
   useEffect(() => {
     return () => {
-      if (keyboardTimerRef.current) {
-        clearTimeout(keyboardTimerRef.current);
-        keyboardTimerRef.current = null;
-      }
-      if (cleanupRef.current) {
-        // Fire onResizeEnd with current size before cleanup so state is persisted
-        const finalSize = readCssVarSize(cssVar);
-        cleanupRef.current();
-        cleanupRef.current = null;
-        onResizeEndRef.current?.(finalSize);
-      }
+      cancelGesture();
     };
-    // cssVar is stable for the lifetime of a given ResizeHandle instance
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [cancelGesture]);
+
+  // An external layout change (new repository, viewport, explicit collapse or
+  // reorder, host mode) invalidates an in-flight gesture.
+  const previousInvalidationKey = useRef(invalidationKey);
+  useEffect(() => {
+    if (previousInvalidationKey.current === invalidationKey) return;
+    previousInvalidationKey.current = invalidationKey;
+    cancelGesture();
+  }, [invalidationKey, cancelGesture]);
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
 
-      // Guard: tear down any existing drag session before starting a new one
-      if (cleanupRef.current) {
-        cleanupRef.current();
-        cleanupRef.current = null;
-      }
+      // Guard: tear down any existing gesture before starting a new one. This
+      // also discards a pending keyboard commit, so an older debounced value
+      // can never land after this drag.
+      cancelGesture();
 
       isDragging.current = true;
       startPos.current = direction === 'horizontal' ? e.clientX : e.clientY;
 
       startSize.current = readCssVarSize(cssVar);
+      callbacks.current.onResizeStart?.(startSize.current);
 
       const onMouseMove = (moveEvent: MouseEvent) => {
         if (!isDragging.current) return;
@@ -90,6 +176,7 @@ export function useResize({
         const clamped = Math.min(max, Math.max(min, newSize));
 
         document.documentElement.style.setProperty(cssVar, `${clamped}px`);
+        schedulePreview(clamped);
       };
 
       const cleanup = () => {
@@ -102,9 +189,20 @@ export function useResize({
       };
 
       const onMouseUp = () => {
+        // Flush the last preview before releasing ownership so the shell's
+        // effective layout already matches the pixels on screen.
+        const pending = takePendingPreview();
+        if (pending !== null) callbacks.current.onResizePreview?.(pending);
+
         const finalSize = readCssVarSize(cssVar);
+        const changed = finalSize !== startSize.current;
         cleanup();
-        onResizeEndRef.current?.(finalSize);
+        // A click, or a drag back to where it started, is a no-op for
+        // preferences: committing here would save an effective clamp over a
+        // larger preferred size. It still has to terminate the gesture, or the
+        // shell would hold ownership of this CSS var forever.
+        if (changed) callbacks.current.onResizeEnd?.(finalSize);
+        else callbacks.current.onResizeCancel?.();
       };
 
       // Set cursor for the entire document during drag
@@ -117,7 +215,7 @@ export function useResize({
       // Store cleanup for unmount safety
       cleanupRef.current = cleanup;
     },
-    [direction, cssVar, min, max, inverted]
+    [direction, cssVar, min, max, inverted, cancelGesture, schedulePreview, takePendingPreview]
   );
 
   const onKeyDown = useCallback(
@@ -137,19 +235,32 @@ export function useResize({
 
       e.preventDefault();
       const currentSize = readCssVarSize(cssVar);
+      // Only the first step of a burst opens the gesture.
+      if (keyboardStartSize.current === null) {
+        keyboardStartSize.current = currentSize;
+        callbacks.current.onResizeStart?.(currentSize);
+      }
       const clamped = Math.min(max, Math.max(min, currentSize + delta));
       document.documentElement.style.setProperty(cssVar, `${clamped}px`);
+      schedulePreview(clamped);
 
       // Debounce onResizeEnd for keyboard: fires after user stops pressing keys
       if (keyboardTimerRef.current) {
         clearTimeout(keyboardTimerRef.current);
       }
+      const burstStart = keyboardStartSize.current;
       keyboardTimerRef.current = setTimeout(() => {
         keyboardTimerRef.current = null;
-        onResizeEndRef.current?.(clamped);
+        keyboardStartSize.current = null;
+        const pending = takePendingPreview();
+        if (pending !== null) callbacks.current.onResizePreview?.(pending);
+        // A boundary keypress that could not move the panel is a no-op for
+        // preferences, but still terminates the gesture it opened.
+        if (clamped !== burstStart) callbacks.current.onResizeEnd?.(clamped);
+        else callbacks.current.onResizeCancel?.();
       }, KEYBOARD_RESIZE_END_DELAY);
     },
-    [direction, cssVar, min, max, inverted]
+    [direction, cssVar, min, max, inverted, schedulePreview, takePendingPreview]
   );
 
   return { onMouseDown, onKeyDown };

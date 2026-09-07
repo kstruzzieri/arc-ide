@@ -3,6 +3,7 @@ package filesystem
 import (
 	"errors"
 	"io/fs"
+	"path/filepath"
 	"testing"
 )
 
@@ -349,7 +350,8 @@ func TestWriteFile_CreatesParentDirectories(t *testing.T) {
 
 	writer := NewFileWriter(mockFS)
 	opts := &WriteOptions{CreateDirs: true}
-	err := writer.WriteFileWithOptions("/test/nested/dir/file.txt", "content", opts)
+	path := filepath.FromSlash("/test/nested/dir/file.txt")
+	err := writer.WriteFileWithOptions(path, "content", opts)
 
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -357,7 +359,7 @@ func TestWriteFile_CreatesParentDirectories(t *testing.T) {
 	if !mkdirCalled {
 		t.Error("Expected MkdirAll to be called")
 	}
-	if mkdirPath != "/test/nested/dir" {
-		t.Errorf("Expected mkdir path '/test/nested/dir', got %q", mkdirPath)
+	if want := filepath.Dir(path); mkdirPath != want {
+		t.Errorf("Expected mkdir path %q, got %q", want, mkdirPath)
 	}
 }

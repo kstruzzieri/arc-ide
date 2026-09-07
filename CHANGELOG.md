@@ -7,6 +7,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-06
+
+Feature release covering the Wails v3 host migration, the Golem configuration
+and center-panel workspace, the completed 3-way merge resolution editor, run
+execution identity Phase 2, and the Go 1.25 toolchain.
+
+### Platform
+
+- Raised the macOS support floor from 11 (Big Sur) to 12 (Monterey), matching
+  the Wails v3 beta.16 deployment target (#273).
+- The app now runs on the Wails v3 host (v3.0.0-beta.16), with the same
+  features and window behavior as before (#273).
+- Linux continues to target WebKit2GTK 4.1 (GTK3), with the build pinned to
+  that ABI (#273).
+- Host access is confined to an adapter module, and runtime events carry a
+  single payload, so the framework seam is isolated from feature code (#273).
+- The module and every CI job moved from Go 1.23 to Go 1.25, with each workflow
+  reading `go-version-file: 'go.mod'` so the module is the single source of
+  truth for future upgrades (#225).
+
+### Golem
+
+- A consent-gated workspace chat panel is available, running on the embedded
+  `go-llm` runtime; no request leaves the machine before consent is granted
+  (#226).
+- Commit-message generation now uses that embedded runtime instead of shelling
+  out to the Golem CLI (#165).
+- A configuration workspace surfaces models, roles, profiles, and provider
+  destinations as a complete projection with typed diagnostics, and applies
+  edits through transactional writes that never leave settings half-written
+  (#263).
+- The Golem interface is a first-class center panel with a drag-arrangeable
+  split, collapse rails, reordering, per-pane command bars, and layout that
+  persists across restarts (#271).
+- The panel can be undocked into a second native window. Exactly one window
+  owns execution at a time, relayed events are acknowledged, and the mode and
+  window bounds persist in an app-level `~/.firn/app.json` (#271).
+- Phase routing and destination admission are consumed from `go-llm`:
+  consent-derived destination policy, planning floors, and fallback-aware
+  consent, so a fallback destination cannot silently widen the granted scope
+  (#285).
+
+### Git
+
+- The 3-way merge resolution editor is complete: backend conflict data,
+  a merge session store, the resolution MVP, a confidence layer that ranks
+  regions, and a multi-file flow hardened against external changes (#164).
+- Merge sessions preserve each side's trailing-newline state, so resolving a
+  conflict no longer adds or drops a newline at end of file.
+- Refusals during merge resolution now explain why the write was rejected
+  instead of failing silently.
+- Conflicted files collapse to a single Problems entry rather than flooding the
+  panel with per-region diagnostics (#242).
+- The status bar diagnostics summary is projected from the same conflict-aware
+  source as the Problems panel, so the two can no longer disagree.
+- Repository-local Git environment variables inherited from hooks are scrubbed
+  before Firn runs Git, so operations in a linked worktree cannot corrupt the
+  parent repository (#194).
+
+### Run Profiles
+
+- Run output is retained per execution instance, so a completed run keeps its
+  own tab instead of being overwritten by the next one (#146 Phase 2A).
+- A profile can run several instances concurrently, each with its own
+  lifecycle and output (#146 Phase 2B).
+- Run history persists across restarts with a bounded retention policy
+  (#146 Phase 2C).
+- Compound execution plans are owned and deep-copied at admission, so a plan
+  cannot be mutated underneath a run in flight (#146 Phase 2D).
+- A run ended by an administrative stop (quit or workspace switch) is now
+  classified as stopped rather than failed.
+- Run output listeners survive a collapsed bottom panel instead of detaching
+  and losing subsequent output.
+- The run profile card action row wraps, so the adopt button is no longer
+  clipped at narrow widths.
+
+### Search and Editor
+
+- Search results are match-anchored, with a header hierarchy that stays
+  readable in a narrow panel (#207).
+- Match context uses dimmed syntax-token highlighting so the match itself
+  remains the most prominent element (#215).
+- Navigating to a result scrolls to the target line both when the file is
+  freshly opened and when it is already open in a background tab.
+- CodeMirror language support loads on demand instead of being pulled into the
+  initial static JavaScript graph, which a manifest regression gate holds in
+  place (#39).
+- A broken `rust-analyzer` proxy is detected and bypassed rather than leaving
+  language features silently dead.
+
+### Workspace and File Tree
+
+- A command palette opens the command registry with keyboard-first search
+  (#44).
+- Hybrid tree rails show active scope and per-file workspace ownership (#202).
+- Editor tabs are colored by their owning workspace, with accent tokens
+  validated through a shared helper (#142).
+- Nested `.gitignore` rules are applied when walking the tree (#149).
+- Directories that cannot be read are surfaced in the tree instead of appearing
+  empty (#195).
+- The loading skeleton shows during an uncached workspace fetch rather than
+  being suppressed (#204).
+- Docker, Terraform, and Compose-Spec files carry infra accents (#143), and
+  `package.json` workspaces are classified as Frontend or Node (#253).
+- The workspace accent palette was rebuilt to be brand-true (#257 phase 1).
+
+### Accessibility
+
+- WCAG AA conformance work landed across the interface with automated
+  evidence; a human screen-reader pass remains prudent release validation
+  (#43).
+- Every button carries an explicit `type`, guarded by a test that also fails on
+  a vacuous scan (#34).
+
+### Security
+
+- On Windows, the no-follow open behind Firn's bounded reads now refuses
+  symlinks and junctions, matching the link refusal Unix already had. The check
+  rejects name-surrogate reparse points specifically rather than every reparse
+  point. This covers the bounded read paths, including run-history loading;
+  ordinary editor reads and writes are unchanged.
+
+### Build and CI
+
+- Required checks report on stacked pull requests, and PR path filters were
+  dropped so a required check can never be skipped into a permanently pending
+  state (#267).
+- Scoped Go tests are Windows-portable, and the compound run-profile tests were
+  deflaked by gating on the final snapshot.
+
+### Known limitations
+
+- Undocking the Golem panel was smoke-tested on macOS only; the Windows and
+  Linux rows of the #271 verification checklist are untested.
+- On Linux, focus after restoring an undocked window follows the window
+  manager rather than Firn.
+- Golem conversations are held in a bounded in-memory store: 2 MiB per
+  conversation snapshot and 16 MiB across all of them. A conversation that
+  outgrows the per-snapshot bound stops persisting rather than being evicted,
+  and nothing survives process exit. Durable, user-managed multi-conversation
+  storage is tracked in #264.
+
 ## [0.11.0] - 2026-07-12
 
 Stabilization release for the managed language-server, Structure view, Git,
@@ -154,7 +296,8 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kstruzzieri/firn-ide/releases/tag/v0.9.0

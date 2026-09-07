@@ -17,6 +17,8 @@ import {
   EditorState,
   createEditorExtensions,
   applyEditorTheme,
+  languageCompartment,
+  loadLanguageSupport,
   completionCompartment,
   hoverCompartment,
   reconfigureCompletion,
@@ -26,7 +28,8 @@ import {
   updateEditorDiagnostics,
   setGitBaseline,
 } from './codemirror';
-import { useIDEStore, type EditorNavigationRequest } from '../../stores/ideStore';
+import { useIDEStore } from '../../stores/ideStore';
+import { applyNavigation } from './applyNavigation';
 import { useLSPStore, findServerStatusForFile } from '../../stores/lspStore';
 import type { LSPServerStatus } from '../../stores/lspStore';
 import { LSPSetupCard } from './LSPSetupCard';
@@ -231,7 +234,20 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
       // The cached state baked in whatever theme was live when cached; the
       // live-theme subscription only updates the active view, so re-theme now.
       applyEditorTheme(view, useIDEStore.getState().editorSyntaxTheme);
-      view.scrollDOM.scrollTop = cached.scrollTop;
+      // A pending navigation for this file (e.g. clicking a search result for a
+      // file that is already open in a background tab) must own the viewport.
+      // Restoring the tab's remembered scroll here would override the jump — the
+      // file switches but the target line stays off-screen. Skip the scroll
+      // restore in that case and let the navigation effect scroll to the target,
+      // exactly as it does for a freshly-opened file.
+      // navigateToEditorLocation registers a pending navigation before it
+      // activates an already-open tab, so this is set in time to suppress the
+      // restore for a search-result jump.
+      const navPendingForThisFile =
+        useIDEStore.getState().pendingEditorNavigation?.fileId === fileId;
+      if (!navPendingForThisFile) {
+        view.scrollDOM.scrollTop = cached.scrollTop;
+      }
       // Restored state already carries selection/scroll; suppress initial apply.
       hasAppliedInitialCursorRef.current = true;
       hasAppliedInitialScrollRef.current = true;
@@ -263,6 +279,23 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     prevFileIdRef.current = fileId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  // Language chunks load independently of state construction. The same view
+  // serves every tab, so each effect generation must reject late results.
+  useEffect(() => {
+    const view = editorRef.current;
+    if (!view) return;
+
+    let cancelled = false;
+    void loadLanguageSupport(filename).then((language) => {
+      if (cancelled || editorRef.current !== view) return;
+      view.dispatch({ effects: languageCompartment.reconfigure(language ?? []) });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileId, filename]);
 
   // Push the git gutter baseline into the (possibly just-swapped) state.
   // Depends on fileId so a file switch re-applies it after view.setState,
@@ -443,17 +476,3 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 });
 
 CodeMirrorEditor.displayName = 'CodeMirrorEditor';
-
-function applyNavigation(view: EditorView, nav: EditorNavigationRequest): void {
-  const lineNum = Math.min(nav.line, view.state.doc.lines);
-  if (lineNum <= 0) return;
-  const line = view.state.doc.line(lineNum);
-  const col = Math.min((nav.column ?? 1) - 1, line.length);
-  const pos = line.from + col;
-
-  view.dispatch({
-    selection: { anchor: pos },
-    scrollIntoView: true,
-  });
-  view.focus();
-}

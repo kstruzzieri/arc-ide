@@ -7,7 +7,7 @@ import { getDiffRequestRevision, useGitStore, type DiffSession } from '../../sto
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { diffLines } from '../../utils/lineDiff';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
-import { buildTheme, getLanguageExtension, gitGutterExtension, setGitBaseline } from './codemirror';
+import { buildTheme, gitGutterExtension, loadLanguageSupport, setGitBaseline } from './codemirror';
 import { hunkStagingGutter } from './codemirror/hunkStagingGutter';
 import { isWorkingTreeEditable, workingTreeEditListener } from './codemirror/editableWorkingTree';
 import { reconcileDoc } from './codemirror/reconcileDoc';
@@ -171,8 +171,9 @@ export function GitDiffView({
       // JetBrains diff-navigation keys.
       keymap.of([{ key: 'F7', run: goToNextChunk, shift: goToPreviousChunk }]),
       buildTheme(themeId),
-      getLanguageExtension(filename) ?? [],
     ];
+    const leftLanguage = new Compartment();
+    const rightLanguage = new Compartment();
     // Revision snapshots are read-only. Only the working-tree (right) side of an
     // unstaged diff is a live file, so it alone drops these and instead persists
     // edits back through the open buffer or disk (#169).
@@ -190,11 +191,15 @@ export function GitDiffView({
     hunkSigRef.current = hunkSignature(session);
     hunkContentRef.current = session.right.content;
     const view = new MergeView({
-      a: { doc: session.left.content, extensions: [...base, ...readOnly] },
+      a: {
+        doc: session.left.content,
+        extensions: [...base, leftLanguage.of([]), ...readOnly],
+      },
       b: {
         doc: rightContent,
         extensions: [
           ...base,
+          rightLanguage.of([]),
           ...(editableRight
             ? [
                 workingTreeEditListener(
@@ -261,6 +266,11 @@ export function GitDiffView({
     if (editableRight) {
       view.b.dispatch({ effects: setGitBaseline.of(session.left.content) });
     }
+    void loadLanguageSupport(filename).then((language) => {
+      if (mergeRef.current !== view || sessionKeyRef.current !== sessionKey) return;
+      view.a.dispatch({ effects: leftLanguage.reconfigure(language ?? []) });
+      view.b.dispatch({ effects: rightLanguage.reconfigure(language ?? []) });
+    });
   }, [session, themeId]);
 
   useEffect(
@@ -324,11 +334,7 @@ export function GitDiffView({
 
   // The working-tree side edits in place, but Open File still brings up the
   // full editor (LSP, search, its own tab) and yields the diff tab to it.
-  const openFile = async () => {
-    if (await ensureEditorFileOpen(session.absPath)) {
-      useGitStore.getState().setDiffFocused(false);
-    }
-  };
+  const openFile = () => void ensureEditorFileOpen(session.absPath);
 
   if (session.binary) {
     return (

@@ -1,0 +1,58 @@
+# This file contains the configuration for this project.
+# When you update `info`, run `wails3 task common:update:build-assets` to update the assets.
+# Note that this will overwrite any changes you have made to the assets.
+version: '3'
+
+# This information is used to generate the build assets. `info.version` is the
+# single source of truth for the packaged product version; the release workflow
+# checks it against the tag via .github/scripts/extract-changelog.sh.
+info:
+  companyName: "Keith Struzzieri"
+  productName: "Firn"
+  productIdentifier: "com.wails.Firn"
+  description: "A lightweight, workspace-focused IDE for macOS, Linux, and Windows"
+  copyright: "(c) 2026, Keith Struzzieri"
+  comments: "Firn IDE"
+  version: "0.12.0"
+
+# Dev mode configuration
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+      - "*_test.go"
+    watched_extension:
+      - "*.go"
+      - "*.js" # Watch for changes to JS/TS files included using the //wails:include directive.
+      - "*.ts" # The frontend directory will be excluded entirely by the setting above.
+    git_ignore: true
+  executes:
+    # Each `wails3` invocation below is a separate process with its own task
+    # graph, so go-task's `run: once` on install:frontend:deps only dedupes
+    # within one graph -- it does not stop two of these processes from both
+    # depending on it and racing. Install blocking and first, so the `npm ci`
+    # that `wails3 build`'s frontend step and the dev-server step both depend
+    # on runs exactly once (`npm ci` deletes node_modules before installing,
+    # so two concurrent runs corrupt each other). Only after that does the
+    # frontend dev server start in the background, so it is already listening
+    # on {{VITE_PORT}} by the time `run` launches: with the upstream order
+    # (build first) a cold Vite start can outlast the app's dev-server wait
+    # and kill the run with "unable to connect to frontend server".
+    - cmd: wails3 task common:install:frontend:deps
+      type: blocking
+    - cmd: wails3 task common:dev:frontend
+      type: background
+    - cmd: wails3 build DEV=true
+      type: blocking
+    - cmd: wails3 task run
+      type: primary

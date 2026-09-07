@@ -13,11 +13,8 @@ import { EditorView, type ViewUpdate } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import type { DiffSession } from '../../../stores/gitStore';
 import { useIDEStore } from '../../../stores/ideStore';
-import { queueWorkingTreeEdit } from '../../../utils/fileWrites';
+import { queueWorkingTreeEdit, isWritableFormat } from '../../../utils/fileWrites';
 import { externalDocUpdate } from './reconcileDoc';
-
-const WRITABLE_ENCODINGS = new Set(['utf-8', 'utf-8-bom', 'utf-16le', 'utf-16be']);
-const WRITABLE_LINE_ENDINGS = new Set(['lf', 'crlf', 'none']);
 
 /**
  * Whether the working-tree (right) pane of this diff is editable: only an
@@ -29,8 +26,7 @@ export function isWorkingTreeEditable(session: DiffSession): boolean {
     session.context === 'unstaged' &&
     !session.binary &&
     !session.truncated &&
-    WRITABLE_ENCODINGS.has(session.worktreeEncoding ?? '') &&
-    WRITABLE_LINE_ENDINGS.has(session.worktreeLineEndings ?? '')
+    isWritableFormat(session.worktreeEncoding, session.worktreeLineEndings)
   );
 }
 

@@ -65,9 +65,22 @@
   background: var(--surface-hover);
 }
 
-.tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+.tab.workspaceTab {
+  color: color-mix(in srgb, var(--tab-accent) 55%, var(--text-primary));
+  box-shadow: inset 0 2px 0 var(--tab-accent);
+}
+
+.tabTarget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tabTarget:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 .tab.active {
@@ -77,6 +90,12 @@
   border-bottom: 1px solid var(--surface-panel);
   border-radius: 6px 6px 0 0;
   margin-bottom: -1px;
+}
+
+.tab.workspaceTab.active {
+  color: color-mix(in srgb, var(--tab-accent) 55%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--tab-accent) 25%, transparent);
+  border-bottom-color: var(--surface-panel);
 }
 
 .tabIcon {
@@ -130,7 +149,7 @@
 
 .tabClose:focus-visible {
   opacity: 1;
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 0;
 }
 
@@ -321,4 +340,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Visually hidden, still announced: the merge queue hand-off region lives
+   outside the conditional merge view so a late remount cannot swallow it. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

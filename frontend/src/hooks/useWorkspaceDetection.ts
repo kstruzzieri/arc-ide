@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useIDEStore } from '../stores/ideStore';
-import { DetectWorkspaces } from '../../wailsjs/go/main/App';
+import { DetectWorkspaces } from '../wails/bindings';
 
 /**
  * Detects the focused workspaces inside the open repo whenever the repo path

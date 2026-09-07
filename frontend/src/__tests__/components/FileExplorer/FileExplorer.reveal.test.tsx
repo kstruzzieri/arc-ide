@@ -2,19 +2,23 @@
 import { render, waitFor, act } from '@testing-library/react';
 import { FileExplorer } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
-import { ReadDirectoryShallow } from '../../../../wailsjs/go/main/App';
-import { filesystem } from '../../../../wailsjs/go/models';
+import { ReadDirectoryShallow } from '../../../wails/bindings';
+import { filesystem } from '../../../wails/bindings';
 import { installVirtualLayout } from '../../helpers/virtualTree';
 import { __resetEnsurePathLoaded } from '../../../hooks/useEnsurePathLoaded';
 
-jest.mock('../../../../wailsjs/go/main/App', () => ({
-  ReadDirectory: jest.fn(),
-  ReadDirectoryShallow: jest.fn(),
-  ReadFile: jest.fn(),
-  OpenFolderDialog: jest.fn(),
-}));
+jest.mock('../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../wails/bindings');
+  return {
+    ...actual,
+    ReadDirectory: jest.fn(),
+    ReadDirectoryShallow: jest.fn(),
+    ReadFile: jest.fn(),
+    OpenFolderDialog: jest.fn(),
+  };
+});
 
-jest.mock('../../../../wailsjs/runtime/runtime', () => ({
+jest.mock('../../../wails/runtime', () => ({
   WindowSetTitle: jest.fn(),
 }));
 
@@ -23,15 +27,20 @@ jest.mock('../../../components/FileExplorer/useDirectoryTree', () => ({
   useDirectoryTree: () => ({ refetch: mockRefetch }),
 }));
 
+// Children here are already FileEntry instances, so the constructor is the
+// right entry point. createFrom would re-run Create.Array over every child, and
+// useDefineForClassFields gives each instance an own `children` key even when
+// unset — so the conversion would turn the unloaded sentinel (undefined) into
+// an empty array and make the directory look loaded.
 const dir = (path: string, children?: filesystem.FileEntry[]) =>
-  filesystem.FileEntry.createFrom({
+  new filesystem.FileEntry({
     name: path.split('/').pop()!,
     path,
     isDir: true,
     size: 0,
     modTime: new Date().toISOString(),
     children,
-  }) as filesystem.FileEntry;
+  });
 
 describe('FileExplorer active-file reveal with lazy loading', () => {
   let restoreVirtualLayout: () => void;
@@ -112,6 +121,28 @@ describe('FileExplorer active-file reveal with lazy loading', () => {
 
       await waitFor(() => {
         expect(useIDEStore.getState().selectedPath).toBe('/r/a/b/file.ts');
+      });
+    });
+
+    it('stops revealing after the first ancestor load fails', async () => {
+      (ReadDirectoryShallow as jest.Mock).mockRejectedValue(new Error('permission denied'));
+
+      render(<FileExplorer />);
+      act(() => {
+        useIDEStore.setState({ activeFileId: '/r/a/b/c/file.ts' });
+      });
+
+      await waitFor(() => {
+        expect(useIDEStore.getState().dirtyPaths.has('/r/a/b')).toBe(true);
+      });
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a/b', '/r');
+      expect(ReadDirectoryShallow).not.toHaveBeenCalledWith('/r/a/b/c', '/r');
+      expect(useIDEStore.getState().dirtyPaths.has('/r/a/b/c')).toBe(false);
+      expect(useIDEStore.getState().expandedPaths.has('/r/a/b')).toBe(false);
+      expect(useIDEStore.getState().expandedPaths.has('/r/a/b/c')).toBe(false);
+      expect(useIDEStore.getState().toast).toEqual({
+        message: 'Failed to load b',
+        type: 'error',
       });
     });
   });

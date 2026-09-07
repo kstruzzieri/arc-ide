@@ -20,10 +20,3 @@ type Watcher interface {
 	// WatchedPath returns the currently watched path, or empty string if not watching.
 	WatchedPath() string
 }
-
-// EventEmitter defines the interface for emitting events to the frontend.
-// This abstracts the Wails runtime for testing.
-type EventEmitter interface {
-	// Emit sends an event with the given name and data.
-	Emit(eventName string, data ...any)
-}

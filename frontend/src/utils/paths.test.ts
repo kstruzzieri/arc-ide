@@ -30,4 +30,8 @@ describe('joinRepoPath', () => {
   it('tolerates a trailing slash on the root', () => {
     expect(joinRepoPath('/repo/', 'a.ts')).toBe('/repo/a.ts');
   });
+
+  it('joins a repository rooted at the filesystem root', () => {
+    expect(joinRepoPath('/', 'a.ts')).toBe('/a.ts');
+  });
 });

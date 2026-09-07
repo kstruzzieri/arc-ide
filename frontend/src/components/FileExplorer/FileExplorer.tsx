@@ -27,6 +27,7 @@ import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { relativePathFromRoot } from '../../utils/workspaceRegions';
 import { useGitStatusByPath } from '../../stores/gitStore';
 import { normalizeFsPath } from '../../utils/paths';
+import { accentVar } from '../../utils/accent';
 import styles from './FileExplorer.module.css';
 
 export function FileExplorer() {
@@ -39,8 +40,18 @@ export function FileExplorer() {
   const activeFileId = useActiveFileId();
 
   const presentation = useFileTreePresentation();
-  const { mode, rootLabel, rootPath, roots, scopedError, getRegionAccent, treeAccent } =
-    presentation;
+  const {
+    mode,
+    rootLabel,
+    rootPath,
+    roots,
+    scopedError,
+    rootUnreadable,
+    getRegionAccent,
+    getFileAccent,
+    getOwnershipAccent,
+    treeAccent,
+  } = presentation;
   const gitStatusByPath = useGitStatusByPath();
 
   const ensurePathLoaded = useEnsurePathLoaded();
@@ -69,7 +80,7 @@ export function FileExplorer() {
       setSelectedPath(activeFileId);
     }
 
-    const ws = useIDEStore.getState().workspace;
+    const ws = workspace;
     const relPath = ws ? relativePathFromRoot(activeFileId, ws.path) : null;
     if (!ws || !relPath) return;
 
@@ -82,7 +93,9 @@ export function FileExplorer() {
       for (let i = 0; i < rel.length - 1; i++) {
         cursor += sep + rel[i];
         await ensurePathLoaded(cursor);
-        if (revealGenRef.current !== gen) return; // workspace/file changed — abort
+        const afterLoad = useIDEStore.getState();
+        if (revealGenRef.current !== gen || afterLoad.workspace !== ws) return;
+        if (afterLoad.dirtyPaths.has(cursor)) return;
         toExpand.push(cursor);
       }
       const cur = useIDEStore.getState();
@@ -90,7 +103,7 @@ export function FileExplorer() {
       toExpand.forEach((p) => next.add(p));
       useIDEStore.setState({ expandedPaths: next, selectedPath: activeFileId });
     })();
-  }, [activeFileId, ensurePathLoaded, setSelectedPath]);
+  }, [activeFileId, ensurePathLoaded, setSelectedPath, workspace]);
 
   // Workspace-View scoped hydration: when findScopedNode returns null (scopedError),
   // load the relDir chain in the background. If the path exists but was unloaded,
@@ -112,7 +125,7 @@ export function FileExplorer() {
       hydratingForRef.current = null;
       return;
     }
-    const ws = useIDEStore.getState().workspace;
+    const ws = workspace;
     const active = useIDEStore
       .getState()
       .workspaces.find((w) => w.id === useIDEStore.getState().activeWorkspaceId);
@@ -133,18 +146,25 @@ export function FileExplorer() {
       let cursor = ws.path;
       for (const seg of relDir.split('/')) {
         await ensurePathLoaded(cursor);
-        if (cancelled) return;
+        const state = useIDEStore.getState();
+        if (cancelled || state.workspace !== ws) return;
+        if (state.dirtyPaths.has(cursor)) {
+          setScopeHydrating(false);
+          return;
+        }
         cursor += sep + seg;
       }
       await ensurePathLoaded(cursor);
-      if (!cancelled) setScopeHydrating(false);
+      if (cancelled || useIDEStore.getState().workspace !== ws) return;
+      setScopeHydrating(false);
     })();
     return () => {
       cancelled = true;
       hydratingForRef.current = null;
     };
-    // scopedError triggers hydration when scope node is missing; rootPath detects workspace switch
-  }, [mode, scopedError, rootPath, ensurePathLoaded]);
+    // scopedError triggers hydration when scope node is missing; workspace identity
+    // invalidates a same-path close/reopen while rootPath handles ordinary switches.
+  }, [mode, scopedError, rootPath, ensurePathLoaded, workspace]);
 
   const { openFolder } = useOpenFolder();
   const { refetch } = useFetchDirectoryTree();
@@ -156,11 +176,25 @@ export function FileExplorer() {
         expandedPaths,
         selectedPath,
         getRegionAccent,
+        getFileAccent,
+        getOwnershipAccent,
+        rootOwnershipAccent: treeAccent,
         isRootExpanded,
         rootLabel,
         rootPath,
       }),
-    [roots, expandedPaths, selectedPath, getRegionAccent, isRootExpanded, rootLabel, rootPath]
+    [
+      roots,
+      expandedPaths,
+      selectedPath,
+      getRegionAccent,
+      getFileAccent,
+      getOwnershipAccent,
+      treeAccent,
+      isRootExpanded,
+      rootLabel,
+      rootPath,
+    ]
   );
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -246,7 +280,7 @@ export function FileExplorer() {
         </div>
       );
     }
-    if (roots.length === 0) {
+    if (roots.length === 0 && !rootUnreadable) {
       return <FileExplorerEmpty message="No files in workspace" onOpenFolder={openFolder} />;
     }
 
@@ -260,7 +294,7 @@ export function FileExplorer() {
     return (
       <div
         ref={scrollRef}
-        className={styles.scrollArea}
+        className={`${styles.scrollArea}${treeAccent ? ` ${styles.workspaceTree}` : ''}`}
         role="tree"
         aria-label="File explorer"
         aria-activedescendant={activeRowRendered ? activeId : undefined}
@@ -268,13 +302,15 @@ export function FileExplorer() {
         onKeyDown={onKeyDown}
         style={
           treeAccent
-            ? { boxShadow: `inset 3px 0 0 var(--accent-${treeAccent})`, minHeight: '100%' }
+            ? ({ '--tree-accent': accentVar(treeAccent) } as React.CSSProperties)
             : undefined
         }
       >
         <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
           {virtualItems.map((vi) => {
             const row = rows[vi.index];
+            const unreadable =
+              row.kind === 'root' ? rootUnreadable : Boolean(row.entry?.unreadable);
             return (
               <div
                 key={row.key}
@@ -297,12 +333,15 @@ export function FileExplorer() {
                   isExpanded={row.isExpanded}
                   isSelected={row.isSelected}
                   regionAccent={row.regionAccent}
+                  fileAccent={row.fileAccent}
+                  ownershipAccent={row.ownershipAccent}
                   setSize={row.setSize}
                   posInSet={row.posInSet}
                   rootPath={row.rootPath}
                   rowId={rowDomId(row.key)}
                   isActive={row.key === activeKey}
-                  canExpand={row.canExpand}
+                  canExpand={row.canExpand || Boolean(row.entry?.isDir && unreadable)}
+                  unreadable={unreadable}
                   gitStatus={
                     row.entry ? gitStatusByPath[normalizeFsPath(row.entry.path)] : undefined
                   }

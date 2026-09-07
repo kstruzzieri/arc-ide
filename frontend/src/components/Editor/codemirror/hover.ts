@@ -1,9 +1,9 @@
 import { Compartment } from '@codemirror/state';
 import { hoverTooltip, type EditorView, type Tooltip } from '@codemirror/view';
 import { highlightTree, tagHighlighter, tags as t } from '@lezer/highlight';
-import { LSPHover, LSPDefinition } from '../../../../wailsjs/go/main/App';
-import { BrowserOpenURL, ClipboardSetText } from '../../../../wailsjs/runtime/runtime';
-import { getLanguageExtension } from './extensions';
+import { LSPHover, LSPDefinition } from '../../../wails/bindings';
+import { BrowserOpenURL, ClipboardSetText } from '../../../wails/runtime';
+import { getLoadedLanguageSupport } from './languages';
 import { decodeLSPContent } from '../../../utils/lspContent';
 import { fileURIToPath } from '../../../utils/lspUri';
 import { navigateToEditorLocation } from '../../../utils/editorNavigation';
@@ -146,7 +146,7 @@ function createHoverTooltipDOM(
   copyType.href = '#';
   copyType.addEventListener('click', (e) => {
     e.preventDefault();
-    ClipboardSetText(signature || rawContent);
+    void ClipboardSetText(signature || rawContent).catch(() => {});
   });
   actionsDiv.appendChild(copyType);
 
@@ -247,9 +247,9 @@ const hoverHighlighter = tagHighlighter([
 /** Per-character class array via the real Lezer parser for `filename`'s
  * language, or null when the extension has no registered language. */
 function parserCharStyles(text: string, filename: string): string[] | null {
-  const language = getLanguageExtension(filename);
-  if (!language) return null;
-  const tree = language.language.parser.parse(text);
+  const support = getLoadedLanguageSupport(filename);
+  if (!support) return null;
+  const tree = support.language.parser.parse(text);
   const charStyles: string[] = new Array(text.length).fill('');
   highlightTree(tree, hoverHighlighter, (from, to, classes) => {
     for (let i = from; i < to; i++) charStyles[i] = classes;

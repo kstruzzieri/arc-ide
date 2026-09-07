@@ -15,6 +15,8 @@ type RunIdentity struct {
 	ProfileID           string `json:"profileId"`
 	ParentRunInstanceID string `json:"parentRunInstanceId,omitempty"`
 	StepIdx             int    `json:"stepIdx"`
+	WorkspaceEpoch      uint64 `json:"workspaceEpoch"`
+	LaunchSeq           uint64 `json:"launchSeq"`
 }
 
 // nextRunInstanceIDLocked returns a per-executor unique run instance id.

@@ -8,18 +8,20 @@ on:
       - 'docs/**'
       - '.Codex/**'
       - '.claude/**'
+  # No `branches:` filter: that filter matches the PR's BASE branch, so scoping
+  # it to [main, develop] gave stacked PRs (base = another feature branch) zero
+  # checks and a mergeable "no checks reported" state. The narrow `push` filter
+  # above is what keeps this from double-running on feature-branch pushes.
+  # No `paths-ignore` either: branch protection requires these checks, and a
+  # filtered-out PR never reports them -- it would sit "Expected" forever and
+  # be unmergeable. Docs-only PRs pay one short CI run instead.
   pull_request:
-    branches: [main, develop]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.Codex/**'
-      - '.claude/**'
 
 jobs:
   build:
     name: Build Verification
-    runs-on: ubuntu-latest
+    # Pinned to 22.04: the image IS the WebKit2GTK 4.1 compatibility floor.
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -34,25 +36,36 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: 'go.mod'
           cache-dependency-path: go.sum
-
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
 
       - name: Install Linux dependencies for Wails
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # The CLI links WebKit itself on Linux; without -tags gtk3 it wants
+      # GTK4/WebKitGTK 6.0, which the 22.04 floor does not ship.
+      - name: Install Wails
+        run: go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
+
+      # The Taskfile's common:install:frontend:deps step installs frontend
+      # deps exactly once inside wails3 task <os>:build; a second install
+      # here races file locks on Windows (EBUSY deleting node_modules
+      # mid-build).
       - name: Build application
-        run: wails build -platform linux/amd64 -tags webkit2_41
+        run: wails3 task linux:build ARCH=amd64
 
       - name: Verify build output
+        run: test -f bin/firn
+
+      # The build regenerates bindings with -clean=true; anything reported here
+      # means a Go-facing API or exported model shape changed without
+      # regenerating the committed frontend/bindings output. `git status
+      # --porcelain`, not `git diff`: -clean=true deletes and rewrites the whole
+      # tree, so a binding file that was added or removed shows up as untracked
+      # or deleted, which `git diff` against the index would miss.
+      - name: Verify committed bindings are current
         run: |
-          test -f build/bin/Firn || test -f build/bin/firn
+          git status --porcelain -- frontend/bindings
+          test -z "$(git status --porcelain -- frontend/bindings)"

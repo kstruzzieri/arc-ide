@@ -1,7 +1,7 @@
 const mockStart = jest.fn().mockResolvedValue(undefined);
 const mockStop = jest.fn().mockResolvedValue(undefined);
 const mockRestart = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (...a: unknown[]) => mockStart(...a),
   StopRunProfile: (...a: unknown[]) => mockStop(...a),
   RestartRunProfile: (...a: unknown[]) => mockRestart(...a),
@@ -42,4 +42,29 @@ test('stopProfile clears the stopping flag once the binding resolves (idle no-op
   await Promise.resolve();
   await Promise.resolve();
   expect(useIDEStore.getState().stoppingProfileIds).not.toContain('p1');
+});
+
+test('restartProfile clears terminal-run flags once its start-style rerun resolves', async () => {
+  useIDEStore.setState({
+    runOutputs: {
+      r1: {
+        runInstanceId: 'r1',
+        profileId: 'p1',
+        state: 'success',
+        exitCode: 0,
+        entries: [],
+        launchSeq: 1,
+      },
+    },
+    runInstanceIdsByProfile: { p1: ['r1'] },
+    runLaunchSeqByInstance: { r1: 1 },
+  });
+
+  restartProfile('p1', 'Dev');
+  expect(useIDEStore.getState().restartingProfileIds).toContain('p1');
+  expect(useIDEStore.getState().restartingRunInstanceIds).toContain('r1');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(useIDEStore.getState().restartingProfileIds).not.toContain('p1');
+  expect(useIDEStore.getState().restartingRunInstanceIds).not.toContain('r1');
 });

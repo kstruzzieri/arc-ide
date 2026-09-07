@@ -52,30 +52,3 @@ func (m *Mock) SimulateEvent(event FileEvent) {
 		m.EventCallback(event)
 	}
 }
-
-// MockEventEmitter is a test implementation of EventEmitter.
-type MockEventEmitter struct {
-	EmitFunc func(eventName string, data ...any)
-
-	// EmittedEvents stores all emitted events for verification.
-	EmittedEvents []EmittedEvent
-}
-
-// Verify MockEventEmitter implements EventEmitter interface.
-var _ EventEmitter = (*MockEventEmitter)(nil)
-
-// EmittedEvent records a single emitted event.
-type EmittedEvent struct {
-	Name string
-	Data []any
-}
-
-func (m *MockEventEmitter) Emit(eventName string, data ...any) {
-	m.EmittedEvents = append(m.EmittedEvents, EmittedEvent{
-		Name: eventName,
-		Data: data,
-	})
-	if m.EmitFunc != nil {
-		m.EmitFunc(eventName, data...)
-	}
-}

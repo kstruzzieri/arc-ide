@@ -37,3 +37,10 @@ global.ResizeObserver = jest.fn().mockImplementation(() => ({
   unobserve: jest.fn(),
   disconnect: jest.fn(),
 }));
+
+// jsdom implements no layout, so Element.prototype.scrollIntoView is undefined.
+// Components legitimately call it to keep a surface on screen; a no-op keeps
+// that from throwing, and a test that cares can spy on it.
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}

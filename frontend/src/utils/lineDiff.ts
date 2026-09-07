@@ -324,7 +324,7 @@ export interface InlineDiffSegment {
  * Newlines are their own tokens — a whitespace run must never span a line
  * break, or a trailing-space edit diffs as del/ins of "\n\t" runs and renders
  * as bogus blocks across the break instead of a tiny change at the line end. */
-function tokenizeWords(text: string): string[] {
+export function tokenizeWords(text: string): string[] {
   return text.match(/\n|[^\S\n]+|\S+/g) ?? [];
 }
 

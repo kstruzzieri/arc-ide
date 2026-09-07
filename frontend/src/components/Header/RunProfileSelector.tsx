@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { PlayIcon, StopIcon, RestartIcon, LoaderIcon, ChevronDownIcon } from '../icons';
 import {
+  isLiveRunState,
+  representativeRunInstanceId,
   useIDEStore,
   useTreeViewMode,
   useActiveWorkspaceId,
@@ -9,7 +11,7 @@ import {
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { getVisualState } from '../../utils/visualState';
 import { startProfile, stopProfile, restartProfile } from '../../utils/profileActions';
-import { SetActiveVariant } from '../../../wailsjs/go/main/App';
+import { SetActiveVariant } from '../../wails/bindings';
 import { groupProfiles, SECTION_LABEL, type ProfileSection } from '../../utils/groupProfiles';
 import type { RunProfile } from '../../types/runProfile';
 import styles from './RunProfileSelector.module.css';
@@ -18,8 +20,16 @@ export function RunProfileSelector() {
   const [isOpen, setIsOpen] = useState(false);
   const profiles = useIDEStore((s) => s.runProfiles);
   const runOutputs = useIDEStore((s) => s.runOutputs);
+  const latestRunInstanceIdByProfile = useIDEStore((s) => s.latestRunInstanceIdByProfile);
+  const runInstanceIdsByProfile = useIDEStore((s) => s.runInstanceIdsByProfile);
+  const runLaunchSeqByInstance = useIDEStore((s) => s.runLaunchSeqByInstance);
+  const runCompounds = useIDEStore((s) => s.runCompounds);
+  const compoundIdByRunInstance = useIDEStore((s) => s.compoundIdByRunInstance);
   const stoppingIds = useIDEStore((s) => s.stoppingProfileIds);
   const restartingIds = useIDEStore((s) => s.restartingProfileIds);
+  const stoppingRunIds = useIDEStore((s) => s.stoppingRunInstanceIds);
+  const restartingRunIds = useIDEStore((s) => s.restartingRunInstanceIds);
+  const runControlsDisabled = useIDEStore((s) => s.runEventsPaused || s.isLoadingProfiles);
   const setSelectedProfile = useIDEStore((s) => s.setSelectedProfile);
   const runProfileState = useIDEStore((s) => s.runProfileState);
   const hiddenProfileIds = useIDEStore((s) => s.hiddenProfileIds);
@@ -42,6 +52,22 @@ export function RunProfileSelector() {
     ).map((p) => p.id)
   );
   const targetOutsideView = !!target && !renderedIds.has(target.id);
+  const runIndex = { runOutputs, runInstanceIdsByProfile, runLaunchSeqByInstance };
+  const profileExecution = (profileId: string) => {
+    const ordinaryRunInstanceId = representativeRunInstanceId(runIndex, profileId);
+    const aggregateRunInstanceId = latestRunInstanceIdByProfile[profileId];
+    const compoundId = compoundIdByRunInstance[aggregateRunInstanceId];
+    const ordinaryState = runOutputs[ordinaryRunInstanceId ?? '']?.state;
+    return {
+      runInstanceId: ordinaryRunInstanceId ?? aggregateRunInstanceId,
+      state:
+        ordinaryState == null
+          ? runCompounds[compoundId]?.state
+          : isLiveRunState(ordinaryState)
+            ? 'running'
+            : ordinaryState,
+    };
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -84,7 +110,16 @@ export function RunProfileSelector() {
       );
   };
   const renderRow = (p: RunProfile) => {
-    const rvs = getVisualState(p.id, runOutputs[p.id]?.state, stoppingIds, restartingIds);
+    const execution = profileExecution(p.id);
+    const rvs = getVisualState(
+      p.id,
+      execution.state,
+      stoppingIds,
+      restartingIds,
+      execution.runInstanceId,
+      stoppingRunIds,
+      restartingRunIds
+    );
     const variants = (p.envVariants ?? []).filter((v) => v.name);
     const rowActionLabel =
       rvs === 'running'
@@ -129,7 +164,7 @@ export function RunProfileSelector() {
           type="button"
           className={styles.rowRun}
           onClick={() => actOnRow(p, rvs)}
-          disabled={rvs === 'stopping'}
+          disabled={runControlsDisabled || rvs === 'stopping'}
           aria-label={rowActionLabel}
         >
           <RowActionIcon aria-hidden="true" />
@@ -167,9 +202,22 @@ export function RunProfileSelector() {
     return grouped.sections.map((s) => renderSectionRows(s.key, s.profiles));
   };
 
+  const targetExecution = target ? profileExecution(target.id) : undefined;
   const vs = target
-    ? getVisualState(target.id, runOutputs[target.id]?.state, stoppingIds, restartingIds)
+    ? getVisualState(
+        target.id,
+        targetExecution?.state,
+        stoppingIds,
+        restartingIds,
+        targetExecution?.runInstanceId,
+        stoppingRunIds,
+        restartingRunIds
+      )
     : 'idle';
+  const canRunAnother =
+    target?.type === 'single' &&
+    (runInstanceIdsByProfile[target.id] ?? []).filter((id) => isLiveRunState(runOutputs[id]?.state))
+      .length === 1;
 
   const onAction = () => {
     if (!target) return;
@@ -206,12 +254,24 @@ export function RunProfileSelector() {
         type="button"
         className={styles.action}
         onClick={onAction}
-        disabled={!target || vs === 'stopping'}
+        disabled={runControlsDisabled || !target || vs === 'stopping'}
         aria-label={actionLabel}
       >
         <span className={styles.dot} data-state={vs} aria-hidden="true" />
         {actionIcon}
       </button>
+      {canRunAnother && (
+        <button
+          type="button"
+          className={styles.action}
+          onClick={() => startProfile(target.id, target.name)}
+          disabled={runControlsDisabled}
+          aria-label={`Run another ${target.name}`}
+          title="Run another"
+        >
+          <PlayIcon aria-hidden="true" />
+        </button>
+      )}
       <button
         ref={triggerRef}
         type="button"

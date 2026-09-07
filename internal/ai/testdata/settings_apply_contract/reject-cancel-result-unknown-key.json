@@ -1,0 +1,8 @@
+{
+  "verdict": "reject",
+  "document": "cancel_result",
+  "value": {
+    "status": "cancelled",
+    "token": "opaque-challenge-token"
+  }
+}

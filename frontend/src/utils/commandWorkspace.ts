@@ -1,4 +1,4 @@
-import type { workspace } from '../../wailsjs/go/models';
+import type { workspace } from '../wails/bindings';
 
 /**
  * Heuristics that map a run command to the workspace its toolchain implies, so
@@ -32,13 +32,20 @@ const TOKEN_TYPE: Record<string, string> = {
 // Only these workspace types host a single language, so a cross-language command
 // is a real mismatch. project/docker/terraform/general can legitimately host any
 // command, so they never warn.
-const LANGUAGE_TYPES = new Set(['go', 'frontend', 'python']);
+const LANGUAGE_TYPES = new Set(['go', 'frontend', 'node', 'python']);
 
 const TYPE_LABEL: Record<string, string> = {
   go: 'Go',
   frontend: 'Frontend',
+  node: 'Node',
   python: 'Python',
 };
+
+function compatibleWorkspaceTypes(left: string, right: string): boolean {
+  return (
+    left === right || (['frontend', 'node'].includes(left) && ['frontend', 'node'].includes(right))
+  );
+}
 
 /** First real command token, skipping leading `KEY=value` env assignments. */
 function leadingToken(command: string): string | null {
@@ -73,7 +80,11 @@ export function pickWorkspaceForCommand(
 ): string {
   const inferred = inferCommandWorkspaceType(command);
   if (!inferred) return fallbackId;
-  const match = workspaces.find((w) => w.id !== 'project' && w.type === inferred);
+  const fallback = workspaces.find((w) => w.id === fallbackId);
+  if (fallback && compatibleWorkspaceTypes(fallback.type, inferred)) return fallbackId;
+  const match = workspaces.find(
+    (w) => w.id !== 'project' && compatibleWorkspaceTypes(w.type, inferred)
+  );
   return match ? match.id : fallbackId;
 }
 
@@ -89,7 +100,7 @@ export function commandWorkspaceMismatch(
   if (!ws) return null;
   const inferred = inferCommandWorkspaceType(command);
   if (!inferred) return null;
-  if (ws.type === inferred) return null;
+  if (compatibleWorkspaceTypes(ws.type, inferred)) return null;
   if (!LANGUAGE_TYPES.has(ws.type)) return null;
   return `This looks like a ${TYPE_LABEL[inferred]} command, but “${ws.name}” is a ${TYPE_LABEL[ws.type]} workspace — it will run in that folder and may not find its toolchain.`;
 }

@@ -8,6 +8,10 @@
   height: 100%;
   min-height: 0;
   font-family: var(--font-ui);
+  /* Sticky file-header height. Pins the header's min-height AND the scroller's
+     scroll-padding-top to one value so keyboard focus can never tuck a row
+     under the pinned header if the header's padding/font later changes. */
+  --search-header-h: 27px;
 }
 
 /* Header row: input + clear button + options toggles */
@@ -149,6 +153,9 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Keyboard focus lands below the pinned sticky header (shared with the
+     header's min-height so the two can't drift apart). */
+  scroll-padding-top: var(--search-header-h);
 }
 
 .resultsList {
@@ -157,13 +164,23 @@
 
 /* File group header */
 .fileHeader {
+  /* Sticky within .resultsScroll. The DOM is a flat sibling list, so each
+     passed header stays pinned at top: 0 and the next one paints over it
+     (opaque background, later DOM order wins). The visible pinned header is
+     always the group currently under the scroll position. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--surface-border-subtle);
   display: flex;
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 3px 10px 3px 6px;
-  background: transparent;
-  border: none;
+  /* min-height shared with .resultsScroll scroll-padding-top (see --search-header-h). */
+  min-height: var(--search-header-h);
+  padding: 4px 10px 4px 6px;
+  border-top: none;
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: 12px;
@@ -172,12 +189,18 @@
   transition: background var(--transition);
 }
 
+/* Divider above each group after the first (flat DOM: a header that follows
+   a result row starts a new group). */
+.resultRow + .fileHeader {
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
 .fileHeader:hover {
   background: var(--surface-hover);
 }
 
 .fileHeader:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -205,12 +228,20 @@
 }
 
 .fileName {
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 0;
   max-width: 60%;
+}
+
+/* Root-level files render no .fileDir sibling inside .filePath; without this
+   the 60% cap ellipsizes long names next to empty space. */
+.fileName:only-child {
+  max-width: none;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .fileDir {
@@ -230,23 +261,18 @@
 
 .matchCount {
   flex-shrink: 0;
-  padding: 0 5px;
-  background: var(--surface-elevated);
-  border-radius: 8px;
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
-  color: var(--text-secondary);
-  line-height: 16px;
-  min-width: 18px;
-  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Result rows (a line match) */
 .resultRow {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 2px 10px 2px 26px;
+  gap: 6px;
+  padding: 2px 8px 2px 12px;
   cursor: pointer;
   background: transparent;
   border: none;
@@ -263,38 +289,195 @@
 }
 
 .resultRow:focus-visible {
-  outline: 2px solid var(--accent);
+  /* --focus-ring is a FIXED high-contrast token; --accent is workspace-themeable
+     and its blue/purple/gray variants fall below WCAG 3:1 against these
+     surfaces. */
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
 .resultRow.focused {
   background: var(--surface-hover);
+  /* Inset bar: selection cue that survives colorblind viewing and doesn't
+     rely on background contrast alone. Fixed token, same reason as above. */
+  box-shadow: inset 2px 0 0 var(--focus-ring);
+}
+
+.resultRow.focused .lineText {
+  color: var(--text-primary);
 }
 
 .lineNumber {
   flex-shrink: 0;
-  min-width: 36px;
+  /* 28px fits 4 digits at 11px tabular figures; flex-basis auto lets 10k+
+     line files widen instead of clipping. */
+  min-width: 28px;
   text-align: right;
   color: var(--text-muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
+/* Single-line, match-anchored layout. Context spans ellipsize; shrink is
+   strongly biased toward context so matches stay visible. */
 .lineText {
+  display: flex;
   flex: 1;
   min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  overflow-wrap: anywhere;
-  color: var(--text-primary);
+  overflow: hidden;
+  color: var(--text-secondary);
+}
+
+/* Context: enormous shrink factor so context always yields before the match
+   does. white-space: pre keeps runs of spaces/tabs intact without wrapping. */
+.context {
+  flex: 0 100000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* Leading context ellipsizes on the LEFT so the text nearest the match stays
+   visible — direction:rtl flips which edge text-overflow clips, and the inner
+   <bdi dir="ltr"> (see MatchLine) isolates the content so bidi-neutral
+   punctuation doesn't reorder. Same trick as .fileDir above. */
+.contextLead {
+  direction: rtl;
 }
 
 .match {
   background: var(--accent-dim);
-  color: var(--accent);
+  /* Fixed cyan, not var(--accent): themeable accent variants (blue/purple/
+     gray) fall below 4.5:1 on these surfaces at 12px. Plain text-primary
+     passes AA but proved too subtle to pick out of dense results — the fixed
+     high-contrast hue (same token as the focus ring, ~8:1 on the panel)
+     keeps the match discernible in every workspace theme. */
+  color: var(--focus-ring);
   border-radius: 2px;
   padding: 0 1px;
   font-weight: 600;
+  /* flex-shrink 1 vs 100000 strongly biases shrinking toward context (shrink
+     is weighted by factor × base size, so this is a bias, not a guarantee).
+     Each mark keeps a 3ch floor while the combined floors fit; on dense
+     multi-match lines at 180px, trailing marks past the container edge are
+     clipped — accepted: the FIRST match is always visible. */
+  flex: 0 1 auto;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* ── #215 Dimmed syntax tokens ───────────────────────────────────────────────
+   Context tokens are colored from the active syntax palette (exposed as
+   --syntax-* custom properties on the container by SearchPanel) and blended
+   toward the context gray so the match stays the most salient element. The
+   weight variable is bumped on the persistent roving .focused cue so keyboard
+   focus remains legible while the row owns the active result. Raw palette
+   colors would fail WCAG AA at full saturation on these surfaces (see the
+   palettes contrast guard).
+
+   The tok-* classes are raw global strings emitted by the search highlighter,
+   scoped here beneath the hashed .context class. color-mix is already used
+   across the app; where unsupported, the declaration is ignored and the span
+   inherits the .context gray for a free monochrome fallback. */
+.resultRow {
+  --search-token-weight: 40%;
+}
+
+.resultRow.focused {
+  --search-token-weight: 55%;
+}
+
+.context :global(.tok-keyword) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-keyword) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-string) {
+  color: color-mix(in srgb, var(--syntax-string) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-number) {
+  color: color-mix(in srgb, var(--syntax-number) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-comment) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-comment) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-function) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-function) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-type) {
+  color: color-mix(in srgb, var(--syntax-type) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-variable) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-variable) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-property) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-property) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-operator) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-operator) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-punctuation) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-punctuation) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-constant) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-constant) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-tag) {
+  color: color-mix(in srgb, var(--syntax-tag) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-attribute) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-attribute) var(--search-token-weight),
+    var(--text-secondary)
+  );
+}
+.context :global(.tok-regexp) {
+  color: color-mix(in srgb, var(--syntax-regexp) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-escape) {
+  color: color-mix(in srgb, var(--syntax-escape) var(--search-token-weight), var(--text-secondary));
+}
+.context :global(.tok-decorator) {
+  color: color-mix(
+    in srgb,
+    var(--syntax-decorator) var(--search-token-weight),
+    var(--text-secondary)
+  );
 }
 
 /* Empty / error states */

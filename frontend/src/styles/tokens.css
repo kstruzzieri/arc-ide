@@ -23,26 +23,71 @@
   /* Text */
   --text-primary: #f1f5f9; /* slate-100 */
   --text-secondary: #94a3b8; /* slate-400 */
-  --text-muted: #64748b; /* slate-500 */
+  --text-muted: #90a0b6; /* AA through selected workspace-accent tints */
   --text-disabled: #475569; /* slate-600 */
 
-  /* Workspace Accent Palette */
-  --accent-blue: #2563eb;
-  --accent-green: #22c55e;
-  --accent-cyan: #06b6d4;
-  --accent-orange: #f97316;
-  --accent-purple: #a855f7;
-  --accent-amber: #f59e0b;
+  /* Workspace Accent Palette — one accent per workspace type, at that
+   * ecosystem's brand hue. Named by type rather than colour because the mapping
+   * is 1:1: renaming the hue later must not silently repoint a workspace.
+   *
+   * Every value is held clear of --git-* and --status-* by at least CIEDE2000
+   * ΔE 10, guarded by __tests__/styles/tokens.test.ts. The previous palette
+   * failed that twice: --accent-green was byte-identical to --git-added, and
+   * --accent-amber to --status-warning, so a Python rail and an added file (and
+   * a Terraform rail and a warning) were literally the same colour.
+   *
+   * Node and Python are deeper than their brand colours (nodejs green, python
+   * yellow). Those are too light to survive the selected-row tint: at 20% over
+   * the panel they lift the background until --text-muted drops under 4.5:1.
+   * That guard caps how bright any accent here can be.
+   *
+   * The uneven lightness across these is deliberate. Normalising them to one
+   * lightness measurably worsens the weakest pair — do not "tidy" it.
+   */
+  --accent-rust: #e2703a;
+  --accent-node: #8fc606;
+  --accent-python: #bfad00;
+  --accent-docker: #0573d7;
+  --accent-terraform: #a855f7;
+  --accent-frontend: #f0389d;
+  --accent-go: #12b5cd;
   --accent-general: #6b7280;
+
+  /* Generic hue ramp. These are NOT workspace accents — they are a neutral
+   * palette for UI that needs several distinguishable colours with no workspace
+   * meaning (Structure view symbol kinds, the LSP setup card). Kept separate so
+   * repointing a workspace accent cannot silently restyle a symbol kind. */
+  --palette-blue: #2563eb;
+  --palette-green: #22c55e;
+  --palette-cyan: #06b6d4;
+  --palette-orange: #f97316;
+  --palette-purple: #a855f7;
+  --palette-amber: #f59e0b;
+  --palette-red: #f87171;
 
   /* Project/Default Accent — Glacier Blue (matches FIRN wordmark) */
   --accent-project: #38bdf8;
+  --focus-ring: #38bdf8;
+
+  /* #271 center-panel identity key for FILES. Deliberately a literal that
+   * duplicates --accent-go (and Golem's local --golem-teal): the FILES bar
+   * must not restyle when a workspace accent is repointed. GOLEM keys on the
+   * pinned project accent. Both are guarded in __tests__/styles/tokens.test.ts. */
+  --files-key: #12b5cd;
+  --files-key-dim: rgba(18, 181, 205, 0.12);
+  --files-key-glow: rgba(18, 181, 205, 0.3);
 
   /* Active Workspace Accent — change this to swap the entire theme */
   --accent: var(--accent-project);
   --accent-dark: #0284c7; /* sky-600 */
   --accent-dim: rgba(56, 189, 248, 0.12);
   --accent-glow: rgba(56, 189, 248, 0.25);
+
+  /* Merge decision semantics stay stable when workspace accents change. */
+  --side-cur: #38bdf8;
+  --side-inc: #22c55e;
+  --side-both: #2dd4bf;
+  --side-man: #a855f7;
 
   /* Terminal — Glacier Glow (fixed, workspace-agnostic)
      Near-black void with glacier blue luminescence */
@@ -73,6 +118,9 @@
   --panel-left-width: 260px;
   --panel-right-width: 280px;
   --panel-bottom-height: 200px;
+  --panel-golem-width: 420px; /* #271 center island preferred width */
+  --panel-rail-width: 40px; /* #271 collapsed identity rail */
+  --panel-bar-height: 38px; /* #271 command bar */
   --panel-gap: 6px;
   --panel-radius: 10px;
   --content-padding: 6px;
@@ -97,46 +145,53 @@
   --accent-glow: rgba(56, 189, 248, 0.25);
 }
 
-[data-accent='blue'] {
-  --accent: var(--accent-blue);
-  --accent-dark: #1e40af;
-  --accent-dim: rgba(37, 99, 235, 0.12);
-  --accent-glow: rgba(37, 99, 235, 0.25);
+[data-accent='rust'] {
+  --accent: var(--accent-rust);
+  --accent-dark: #a3512a;
+  --accent-dim: rgba(226, 112, 58, 0.12);
+  --accent-glow: rgba(226, 112, 58, 0.25);
 }
 
-[data-accent='green'] {
-  --accent: var(--accent-green);
-  --accent-dark: #15803d;
-  --accent-dim: rgba(34, 197, 94, 0.12);
-  --accent-glow: rgba(34, 197, 94, 0.25);
+[data-accent='node'] {
+  --accent: var(--accent-node);
+  --accent-dark: #678f04;
+  --accent-dim: rgba(143, 198, 6, 0.12);
+  --accent-glow: rgba(143, 198, 6, 0.25);
 }
 
-[data-accent='cyan'] {
-  --accent: var(--accent-cyan);
-  --accent-dark: #0e7490;
-  --accent-dim: rgba(6, 182, 212, 0.12);
-  --accent-glow: rgba(6, 182, 212, 0.25);
+[data-accent='python'] {
+  --accent: var(--accent-python);
+  --accent-dark: #8a7d00;
+  --accent-dim: rgba(191, 173, 0, 0.12);
+  --accent-glow: rgba(191, 173, 0, 0.25);
 }
 
-[data-accent='orange'] {
-  --accent: var(--accent-orange);
-  --accent-dark: #c2410c;
-  --accent-dim: rgba(249, 115, 22, 0.12);
-  --accent-glow: rgba(249, 115, 22, 0.25);
+[data-accent='docker'] {
+  --accent: var(--accent-docker);
+  --accent-dark: #04539b;
+  --accent-dim: rgba(5, 115, 215, 0.12);
+  --accent-glow: rgba(5, 115, 215, 0.25);
 }
 
-[data-accent='purple'] {
-  --accent: var(--accent-purple);
-  --accent-dark: #7c3aed;
+[data-accent='terraform'] {
+  --accent: var(--accent-terraform);
+  --accent-dark: #793db2;
   --accent-dim: rgba(168, 85, 247, 0.12);
   --accent-glow: rgba(168, 85, 247, 0.25);
 }
 
-[data-accent='amber'] {
-  --accent: var(--accent-amber);
-  --accent-dark: #b45309;
-  --accent-dim: rgba(245, 158, 11, 0.12);
-  --accent-glow: rgba(245, 158, 11, 0.25);
+[data-accent='frontend'] {
+  --accent: var(--accent-frontend);
+  --accent-dark: #ad2871;
+  --accent-dim: rgba(240, 56, 157, 0.12);
+  --accent-glow: rgba(240, 56, 157, 0.25);
+}
+
+[data-accent='go'] {
+  --accent: var(--accent-go);
+  --accent-dark: #0d8294;
+  --accent-dim: rgba(18, 181, 205, 0.12);
+  --accent-glow: rgba(18, 181, 205, 0.25);
 }
 
 [data-accent='general'] {

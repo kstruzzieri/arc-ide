@@ -41,6 +41,13 @@
   background: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
+.tabList {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 /* ── Panel tabs (Output / Problems / Terminal) ───────────────── */
 .tab {
   display: flex;
@@ -144,6 +151,20 @@
   user-select: none;
   max-width: 160px;
   flex-shrink: 0;
+}
+
+.sessionTabTarget {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sessionTabTarget:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
 }
 
 .sessionTab svg {
@@ -342,6 +363,30 @@
   outline-offset: -2px;
 }
 
+.problemsConflictRow {
+  cursor: default;
+}
+
+.problemsResolve {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--status-warning);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--status-warning);
+  font: inherit;
+  cursor: pointer;
+}
+
+.problemsResolve:hover {
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+}
+
+.problemsResolve:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .problemsSeverity {
   font-size: 10px;
   font-weight: 700;
@@ -381,7 +426,6 @@
   color: var(--text-muted);
   font-size: 10px;
   flex-shrink: 0;
-  opacity: 0.7;
 }
 
 /* ── Drag and drop ───────────────────────────────────────────── */
@@ -463,6 +507,11 @@
   background: var(--status-success);
   box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
   animation: statePulse 2s ease-in-out infinite;
+}
+
+.stateStopping {
+  background: var(--status-warning);
+  animation: statePulse 1.2s ease-in-out infinite;
 }
 
 .stateSuccess {

@@ -3,7 +3,7 @@ import {
   pickWorkspaceForCommand,
   commandWorkspaceMismatch,
 } from '../../utils/commandWorkspace';
-import type { workspace } from '../../../wailsjs/go/models';
+import type { workspace } from '../../wails/bindings';
 
 const ws = (id: string, type: string, name = id): workspace.WorkspaceDef =>
   ({
@@ -11,7 +11,7 @@ const ws = (id: string, type: string, name = id): workspace.WorkspaceDef =>
     name,
     relDir: id === 'project' ? '' : id,
     type,
-    accent: 'blue',
+    accent: 'frontend',
   }) as workspace.WorkspaceDef;
 
 const defs = [
@@ -55,6 +55,20 @@ describe('pickWorkspaceForCommand', () => {
     const noGo = [ws('project', 'project'), ws('frontend', 'frontend')];
     expect(pickWorkspaceForCommand('go test', noGo, 'frontend')).toBe('frontend');
   });
+
+  it('selects Node when it is the only JavaScript workspace', () => {
+    const nodeOnly = [ws('project', 'project'), ws('node', 'node', 'Node')];
+    expect(pickWorkspaceForCommand('npm run dev', nodeOnly, 'project')).toBe('node');
+  });
+
+  it('preserves an active Node fallback in a mixed JavaScript repository', () => {
+    const mixedJavaScript = [
+      ws('project', 'project'),
+      ws('frontend', 'frontend', 'Frontend'),
+      ws('node', 'node', 'Node'),
+    ];
+    expect(pickWorkspaceForCommand('npm run dev', mixedJavaScript, 'node')).toBe('node');
+  });
 });
 
 describe('commandWorkspaceMismatch', () => {
@@ -66,6 +80,16 @@ describe('commandWorkspaceMismatch', () => {
 
   it('does not warn when the command matches the workspace type', () => {
     expect(commandWorkspaceMismatch('npm run dev', ws('frontend', 'frontend'))).toBeNull();
+  });
+
+  it('does not warn when an npm command targets a Node workspace', () => {
+    expect(commandWorkspaceMismatch('npm run dev', ws('node', 'node', 'Node'))).toBeNull();
+  });
+
+  it('labels Node when a Go command targets a Node workspace', () => {
+    const msg = commandWorkspaceMismatch('go test ./...', ws('node', 'node', 'Node'));
+    expect(msg).toContain('Go');
+    expect(msg).toContain('Node');
   });
 
   it('does not warn for project/infra workspaces that can host anything', () => {

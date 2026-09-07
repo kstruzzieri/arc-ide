@@ -1,6 +1,18 @@
 # Build outputs
-build/bin
+/bin/
 frontend/dist
+
+# Task's local checksum cache (used by the wails3 Taskfiles to skip up-to-date work)
+/.task/
+
+# Wails v3 build assets that `wails3 task common:update:build-assets` emits for
+# packaging targets #273 does not maintain (deb/rpm, NSIS, iOS), plus
+# the .desktop file generated during every Linux build.
+/build/ios/
+/build/linux/desktop
+/build/linux/firn.desktop
+/build/linux/nfpm/
+/build/windows/nsis/
 
 # Dependencies
 node_modules
@@ -22,8 +34,6 @@ Thumbs.db
 *.so
 *.dylib
 
-# Wails dev (wailsjs bindings are committed to avoid CI chicken-and-egg issues)
-
 # Test coverage
 coverage.out
 
@@ -32,7 +42,6 @@ coverage.out
 
 # Working plans and specs (WIP, do not commit)
 docs/plans/*
-!docs/plans/milestone-6-search-implementation-plan.md
 docs/superpowers/
 
 # Agent worktrees (created by Task tool with isolation: worktree)

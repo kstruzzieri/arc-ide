@@ -1,5 +1,5 @@
-import { LSPDidChange, LSPDidClose, LSPDidOpen, LSPDidSave } from '../../wailsjs/go/main/App';
-import { lsp } from '../../wailsjs/go/models';
+import { LSPDidChange, LSPDidClose, LSPDidOpen, LSPDidSave } from '../wails/bindings';
+import { lsp } from '../wails/bindings';
 
 export const DIDCHANGE_DEBOUNCE_MS = 150;
 

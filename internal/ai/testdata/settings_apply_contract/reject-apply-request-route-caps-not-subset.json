@@ -1,0 +1,38 @@
+{
+  "verdict": "reject",
+  "document": "apply_request",
+  "mode": "apply",
+  "value": {
+    "targetRevision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "source": {
+      "kind": "applied"
+    },
+    "changes": [
+      {
+        "kind": "route",
+        "useCase": "agent",
+        "modelFacts": {
+          "provider": "hosted",
+          "model": "wire-model",
+          "type": "dense"
+        },
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "embed"
+          ],
+          "knownCaps": [
+            "chat",
+            "stream"
+          ]
+        },
+        "exposedCaps": [
+          "chat"
+        ],
+        "thinkMode": "",
+        "confirmUnknown": false
+      }
+    ],
+    "keys": {}
+  }
+}

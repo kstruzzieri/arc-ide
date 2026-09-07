@@ -1,4 +1,4 @@
-jest.mock('../../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../../wails/bindings', () => ({
   LSPComplete: jest.fn(),
   LSPResolveCompletionItem: jest.fn(),
   LSPDefinition: jest.fn(),
@@ -13,6 +13,7 @@ import { EditorView } from '@codemirror/view';
 import {
   createEditorExtensions,
   applyEditorTheme,
+  languageCompartment,
 } from '../../../../components/Editor/codemirror/extensions';
 
 describe('editor theme wiring', () => {
@@ -24,6 +25,18 @@ describe('editor theme wiring', () => {
     });
     expect(Array.isArray(ext)).toBe(true);
     expect(ext.length).toBeGreaterThan(0);
+  });
+
+  it('starts without a language until the async loader resolves', () => {
+    const state = EditorState.create({
+      doc: 'const x = 1',
+      extensions: createEditorExtensions({
+        filename: 'a.ts',
+        filePath: '/a.ts',
+      }),
+    });
+
+    expect(languageCompartment.get(state)).toEqual([]);
   });
 
   it('applyEditorTheme reconfigures a live view without throwing', () => {

@@ -7,7 +7,7 @@ const mockSetActiveVariant = jest.fn<Promise<void>, [string, string]>();
 const mockAdoptRunProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockUnadoptRunProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: jest.fn(() => Promise.resolve()),
   StopRunProfile: jest.fn(() => Promise.resolve()),
   RestartRunProfile: jest.fn(() => Promise.resolve()),

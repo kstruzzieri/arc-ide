@@ -13,8 +13,14 @@ beforeEach(() => {
     runStartTimestamps: {},
     stopRequestTimestamps: {},
     activeRunOutputId: null,
+    runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
     activeTerminalTab: 'terminal',
     isBottomPanelCollapsed: false,
+    isFilesPanelCollapsed: false,
+    isGolemPanelCollapsed: true,
+    centerReveal: 'files',
   });
 });
 
@@ -218,10 +224,11 @@ describe('lifecycleStore - hideProfile / unhideProfile', () => {
 });
 
 describe('lifecycleStore - focusProfileOutput', () => {
-  it('should set activeRunOutputId to the given profileId', () => {
+  it('should select the newest retained run instance for the profile', () => {
+    useIDEStore.setState({ runInstanceIdsByProfile: { 'profile-1': ['r1'] } });
     const { focusProfileOutput } = useIDEStore.getState();
     focusProfileOutput('profile-1');
-    expect(useIDEStore.getState().activeRunOutputId).toBe('profile-1');
+    expect(useIDEStore.getState().activeRunOutputId).toBe('r1');
   });
 
   it('should set activeTerminalTab to "output"', () => {
@@ -243,6 +250,33 @@ describe('lifecycleStore - focusProfileOutput', () => {
     useIDEStore.setState({ isBottomPanelCollapsed: false });
     focusProfileOutput('profile-2');
     expect(useIDEStore.getState().isBottomPanelCollapsed).toBe(false);
+  });
+
+  // The output dock lives inside the Files column (#271), so focusing a run's
+  // output has to reveal that column too, however it came to be hidden.
+  it('reveals a preference-collapsed Files column', () => {
+    useIDEStore.getState().setFilesPanelCollapsed(true);
+    useIDEStore.getState().focusProfileOutput('profile-1');
+    expect(useIDEStore.getState()).toMatchObject({
+      isFilesPanelCollapsed: false,
+      centerReveal: 'files',
+      activeTerminalTab: 'output',
+      isBottomPanelCollapsed: false,
+    });
+  });
+
+  it('retargets the transient reveal when Files is only responsively hidden', () => {
+    // Saved collapse already false: only the transient target can bring the
+    // column back from a window-pressure rail, and a repeat click must repeat it.
+    useIDEStore.getState().revealCenterPanel('golem');
+    expect(useIDEStore.getState().isFilesPanelCollapsed).toBe(false);
+
+    useIDEStore.getState().focusProfileOutput('profile-1');
+    expect(useIDEStore.getState().centerReveal).toBe('files');
+
+    useIDEStore.getState().revealCenterPanel('golem');
+    useIDEStore.getState().focusProfileOutput('profile-1');
+    expect(useIDEStore.getState().centerReveal).toBe('files');
   });
 });
 
@@ -294,12 +328,16 @@ describe('lifecycleStore - stopRequestTimestamps', () => {
   });
 
   it('handleRunStatus with terminal state clears stopRequestTimestamps', () => {
-    useIDEStore.setState({
-      runOutputs: {},
-      stopRequestTimestamps: { 'profile-1': 10000 },
-      runStartTimestamps: { 'profile-1': 9000 },
-    });
     const { handleRunStatus } = useIDEStore.getState();
+    handleRunStatus({
+      runInstanceId: 'r1',
+      profileId: 'profile-1',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 9000,
+    });
+    useIDEStore.setState({ stopRequestTimestamps: { 'profile-1': 10000 } });
     handleRunStatus({
       runInstanceId: 'r1',
       profileId: 'profile-1',
@@ -343,6 +381,8 @@ describe('lifecycleStore - run output working directory snapshots', () => {
     useIDEStore.setState({
       runProfiles: [makeProfile('frontend')],
       runOutputs: {},
+      runInstanceIdsByProfile: {},
+      latestRunInstanceIdByProfile: {},
       activeRunOutputId: null,
     });
   });
@@ -369,7 +409,7 @@ describe('lifecycleStore - run output working directory snapshots', () => {
 
     useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
 
-    const output = useIDEStore.getState().runOutputs['profile-1'];
+    const output = useIDEStore.getState().runOutputs.r1;
     expect(output.workingDir).toBe('frontend');
     expect(output.entries[0].text).toBe('src/App.tsx:7:11');
   });
@@ -412,13 +452,13 @@ describe('lifecycleStore - run output working directory snapshots', () => {
       timestamp: 3000,
     });
 
-    const output = useIDEStore.getState().runOutputs['profile-1'];
-    expect(output.workingDir).toBe('packages/web');
-    expect(output.previousWorkingDir).toBe('frontend');
-    expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
+    const outputs = useIDEStore.getState().runOutputs;
+    expect(outputs.r2.workingDir).toBe('packages/web');
+    expect(outputs.r1.workingDir).toBe('frontend');
+    expect(outputs.r1.entries[0].text).toBe('src/old.ts:1:1');
   });
 
-  it('preserves previousWorkingDir when rerun output arrives before its running status', () => {
+  it('preserves both working directories when rerun output arrives before running status', () => {
     const store = useIDEStore.getState();
 
     // First run r1 (default profile workingDir 'frontend').
@@ -448,7 +488,7 @@ describe('lifecycleStore - run output working directory snapshots', () => {
     });
 
     // Rerun r2: output arrives BEFORE the running status, so appendRunOutput
-    // provisions/rotates the buffer (setting previousWorkingDir from r1).
+    // provisions the retained r2 record with its own working directory.
     useIDEStore.setState({ runProfiles: [makeProfile('packages/web')] });
     store.appendRunOutput({
       runInstanceId: 'r2',
@@ -467,14 +507,11 @@ describe('lifecycleStore - run output working directory snapshots', () => {
       timestamp: 3000,
     });
 
-    const output = useIDEStore.getState().runOutputs['profile-1'];
-    expect(output.runInstanceId).toBe('r2');
-    expect(output.workingDir).toBe('packages/web');
-    // Regression (criticize-review bug #1): the running status must NOT clobber
-    // the previousWorkingDir the provision path set from the prior run.
-    expect(output.previousWorkingDir).toBe('frontend');
-    expect(output.previousEntries[0].text).toBe('src/old.ts:1:1');
-    expect(output.entries[0].text).toBe('new line');
+    const outputs = useIDEStore.getState().runOutputs;
+    expect(outputs.r2.workingDir).toBe('packages/web');
+    expect(outputs.r2.entries[0].text).toBe('new line');
+    expect(outputs.r1.workingDir).toBe('frontend');
+    expect(outputs.r1.entries[0].text).toBe('src/old.ts:1:1');
   });
 
   it('drops stale terminal status after rerun output provisioned a newer buffer', () => {
@@ -522,11 +559,11 @@ describe('lifecycleStore - run output working directory snapshots', () => {
       timestamp: 2600,
     });
 
-    const output = useIDEStore.getState().runOutputs['profile-1'];
-    expect(output.runInstanceId).toBe('r2');
-    expect(output.state).toBe('failed');
-    expect(output.entries.map((entry) => entry.text)).toEqual(['new line']);
-    expect(output.previousEntries.map((entry) => entry.text)).toEqual(['old line']);
+    const outputs = useIDEStore.getState().runOutputs;
+    expect(outputs.r2.state).toBe('idle');
+    expect(outputs.r2.entries.map((entry) => entry.text)).toEqual(['new line']);
+    expect(outputs.r1.state).toBe('failed');
+    expect(outputs.r1.entries.map((entry) => entry.text)).toEqual(['old line']);
 
     store.handleRunStatus({
       runInstanceId: 'r2',
@@ -537,7 +574,7 @@ describe('lifecycleStore - run output working directory snapshots', () => {
       timestamp: 3000,
     });
 
-    const runningOutput = useIDEStore.getState().runOutputs['profile-1'];
+    const runningOutput = useIDEStore.getState().runOutputs.r2;
     expect(runningOutput.runInstanceId).toBe('r2');
     expect(runningOutput.state).toBe('running');
     expect(runningOutput.entries.map((entry) => entry.text)).toEqual(['new line']);
@@ -573,10 +610,18 @@ describe('lifecycleStore - resetWorkspaceRunState', () => {
     expect(useIDEStore.getState().waveformData).toEqual({});
   });
 
-  it('should clear hiddenProfileIds', () => {
-    const { hideProfile, resetWorkspaceRunState } = useIDEStore.getState();
+  it('should preserve hiddenProfileIds until the outgoing workspace is saved', () => {
+    const { hideProfile, resetWorkspaceRunState, resetWorkspaceSession } = useIDEStore.getState();
     hideProfile('profile-1');
+
+    // resetWorkspaceRunState runs before the workspace-switch flush captures
+    // the outgoing workspace, so it must leave persisted preferences alone.
     resetWorkspaceRunState();
+    expect(useIDEStore.getState().hiddenProfileIds).toEqual(['profile-1']);
+
+    // resetWorkspaceSession runs during the incoming workspace's restore,
+    // after that snapshot has been taken.
+    resetWorkspaceSession();
     expect(useIDEStore.getState().hiddenProfileIds).toEqual([]);
   });
 

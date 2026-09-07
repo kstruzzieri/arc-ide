@@ -1,5 +1,6 @@
 import { useIDEStore } from '../../stores/ideStore';
-import type { CompoundRunEvent, OutputChunk } from '../../types/runOutput';
+import { MAX_OUTPUT_ENTRIES } from '../../types/runOutput';
+import type { CompoundRunEvent, OutputChunk, RunStatusEvent } from '../../types/runOutput';
 
 const COMPOUND_ID = 'ci';
 const AGG_RID = 'r2';
@@ -42,25 +43,81 @@ function makeChunk(data: string, overrides: Partial<OutputChunk> = {}): OutputCh
   };
 }
 
+function aggregateStatus(
+  runInstanceId: string,
+  state: RunStatusEvent['state'],
+  timestamp: number
+): RunStatusEvent {
+  return {
+    runInstanceId,
+    profileId: COMPOUND_ID,
+    stepIdx: 0,
+    state,
+    exitCode: state === 'failed' ? 1 : 0,
+    timestamp,
+  };
+}
+
+function snapshot(
+  runInstanceId: string,
+  state: 'running' | 'success' | 'failed' | 'stopped' = 'running'
+): CompoundRunEvent {
+  const terminal = state !== 'running';
+  return makeEvent({
+    runInstanceId,
+    state,
+    steps: [
+      {
+        idx: 0,
+        runInstanceId: `${runInstanceId}-step-0`,
+        profileId: 'build',
+        name: 'Build',
+        state,
+        exitCode: state === 'failed' ? 1 : 0,
+        workingDir: 'frontend',
+        durationMs: terminal ? 100 : 0,
+        startedAt: 1000,
+        endedAt: terminal ? 1100 : undefined,
+      },
+    ],
+  });
+}
+
+function deliverCompoundSnapshot(event: CompoundRunEvent, timestamp = 1000): void {
+  const store = useIDEStore.getState();
+  store.handleRunStatus({
+    ...aggregateStatus(event.runInstanceId, event.state, timestamp),
+    profileId: event.compoundId,
+  });
+  store.handleCompoundRun(event);
+}
+
 beforeEach(() => {
+  // Clear cross-test line assemblers before installing this test's workspace.
+  useIDEStore.getState().resetWorkspaceRunState();
   useIDEStore.setState({
+    runProfiles: [
+      { id: COMPOUND_ID, name: 'CI', type: 'compound', source: 'user', steps: ['build'] },
+      { id: 'build', name: 'Build', type: 'single', source: 'user', command: 'echo build' },
+    ],
     runCompounds: {},
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
+    compoundIdByRunInstance: {},
     runHistory: {},
     stoppingProfileIds: [],
     restartingProfileIds: [],
     runStartTimestamps: {},
     stopRequestTimestamps: {},
     activeRunOutputId: null,
+    runEventsPaused: false,
   });
-  // Drop any leftover assemblers from prior tests by reusing the reset action,
-  // then re-clear runCompounds (resetWorkspaceRunState clears assemblers globally).
-  useIDEStore.getState().resetWorkspaceRunState();
 });
 
 describe('compoundRunStore - handleCompoundRun', () => {
   it('creates a CompoundRun with step metadata', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     const run = useIDEStore.getState().runCompounds[COMPOUND_ID];
     expect(run).toBeDefined();
     expect(run.name).toBe('CI');
@@ -73,14 +130,14 @@ describe('compoundRunStore - handleCompoundRun', () => {
   });
 
   it('replaces name/state/currentStep/steps but preserves existing stepOutputs', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     // Route some output into step 0.
     useIDEStore.getState().appendRunOutput(makeChunk('hello\n'));
     const outputsBefore = useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0];
     expect(outputsBefore).toHaveLength(1);
 
     // Deliver an updated event (e.g. name change / step advanced).
-    useIDEStore.getState().handleCompoundRun(
+    deliverCompoundSnapshot(
       makeEvent({
         name: 'CI v2',
         currentStep: 1,
@@ -110,7 +167,7 @@ describe('compoundRunStore - handleCompoundRun', () => {
 
 describe('compoundRunStore - appendRunOutput routing for composite keys', () => {
   it('routes assembled line into runCompounds stepOutputs without creating runOutputs', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     useIDEStore.getState().appendRunOutput(makeChunk('hello\n'));
 
     const run = useIDEStore.getState().runCompounds[COMPOUND_ID];
@@ -132,14 +189,14 @@ describe('compoundRunStore - appendRunOutput routing for composite keys', () => 
 
 describe('compoundRunStore - terminal step flush', () => {
   it('flushes unterminated content when a step becomes terminal', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     // Chunk WITHOUT a trailing newline — stays in the assembler carry-over.
     useIDEStore.getState().appendRunOutput(makeChunk('partial line'));
     // Not yet emitted as a complete line.
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0]).toBeUndefined();
 
     // Step transitions to success -> flush.
-    useIDEStore.getState().handleCompoundRun(
+    deliverCompoundSnapshot(
       makeEvent({
         state: 'success',
         steps: [
@@ -167,8 +224,8 @@ describe('compoundRunStore - terminal step flush', () => {
 
 describe('compoundRunStore - run history on terminal step', () => {
   it('appends a RunHistoryEntry for a step with startedAt and endedAt', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
-    useIDEStore.getState().handleCompoundRun(
+    deliverCompoundSnapshot(makeEvent());
+    deliverCompoundSnapshot(
       makeEvent({
         state: 'success',
         steps: [
@@ -196,7 +253,7 @@ describe('compoundRunStore - run history on terminal step', () => {
   });
 
   it('does not re-append history when the same terminal snapshot is delivered twice', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     const terminalEvent = makeEvent({
       state: 'success',
       steps: [
@@ -214,19 +271,19 @@ describe('compoundRunStore - run history on terminal step', () => {
         },
       ],
     });
-    useIDEStore.getState().handleCompoundRun(terminalEvent);
-    useIDEStore.getState().handleCompoundRun(terminalEvent);
+    deliverCompoundSnapshot(terminalEvent);
+    deliverCompoundSnapshot(terminalEvent);
     expect(useIDEStore.getState().runHistory['build']).toHaveLength(1);
   });
 });
 
 describe('compoundRunStore - clearRunOutput / clearCompoundRunOutput', () => {
-  it('clearRunOutput on a compound id clears its stepOutputs', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+  it('clearRunOutput resolves an aggregate run instance and clears its stepOutputs', () => {
+    deliverCompoundSnapshot(makeEvent());
     useIDEStore.getState().appendRunOutput(makeChunk('hello\n'));
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0]).toHaveLength(1);
 
-    useIDEStore.getState().clearRunOutput(COMPOUND_ID);
+    useIDEStore.getState().clearRunOutput(AGG_RID);
     const run = useIDEStore.getState().runCompounds[COMPOUND_ID];
     expect(run).toBeDefined();
     expect(run.stepOutputs).toEqual({});
@@ -238,7 +295,7 @@ describe('compoundRunStore - clearRunOutput / clearCompoundRunOutput', () => {
   });
 
   it('clearCompoundRunOutput clears stepOutputs while keeping the run record', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     useIDEStore.getState().appendRunOutput(makeChunk('hello\n'));
     useIDEStore.getState().clearCompoundRunOutput(COMPOUND_ID);
     const run = useIDEStore.getState().runCompounds[COMPOUND_ID];
@@ -250,7 +307,7 @@ describe('compoundRunStore - clearRunOutput / clearCompoundRunOutput', () => {
 
 describe('compoundRunStore - resetWorkspaceRunState', () => {
   it('clears runCompounds to {}', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID]).toBeDefined();
     useIDEStore.getState().resetWorkspaceRunState();
     expect(useIDEStore.getState().runCompounds).toEqual({});
@@ -260,10 +317,10 @@ describe('compoundRunStore - resetWorkspaceRunState', () => {
 describe('compoundRunStore - rerun resets step output', () => {
   it('starts step outputs fresh when a terminal compound runs again', () => {
     // First run: produce output, then go terminal.
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     useIDEStore.getState().appendRunOutput(makeChunk('first run\n'));
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0]).toHaveLength(1);
-    useIDEStore.getState().handleCompoundRun(
+    deliverCompoundSnapshot(
       makeEvent({
         state: 'success',
         steps: [
@@ -283,12 +340,19 @@ describe('compoundRunStore - rerun resets step output', () => {
       })
     );
 
-    // Second run of the same compound: a terminal→running snapshot must drop the
-    // previous run's output rather than carrying it over.
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    // Second run of the same compound gets a fresh aggregate identity and output.
+    const rerun = makeEvent({
+      runInstanceId: 'r4',
+      steps: [{ ...makeEvent().steps[0], runInstanceId: 'r5' }],
+    });
+    deliverCompoundSnapshot(rerun, 3000);
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0] ?? []).toHaveLength(0);
 
-    useIDEStore.getState().appendRunOutput(makeChunk('second run\n'));
+    useIDEStore
+      .getState()
+      .appendRunOutput(
+        makeChunk('second run\n', { runInstanceId: 'r5', parentRunInstanceId: 'r4' })
+      );
     const outputs = useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0];
     expect(outputs).toHaveLength(1);
     expect(outputs[0].text).toBe('second run');
@@ -297,7 +361,7 @@ describe('compoundRunStore - rerun resets step output', () => {
 
 describe('compoundRunStore - clearAllRunOutputs', () => {
   it('preserves a still-running compound so later output is not orphaned', () => {
-    useIDEStore.getState().handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     useIDEStore.getState().appendRunOutput(makeChunk('before clear\n'));
 
     useIDEStore.getState().clearAllRunOutputs();
@@ -319,7 +383,7 @@ describe('compoundRunStore - clearAllRunOutputs', () => {
 describe('compoundRunStore - identity routing & stale-event guards', () => {
   it('routes step 0 output by parentRunInstanceId + stepIdx', () => {
     const s = useIDEStore.getState();
-    s.handleCompoundRun(makeEvent());
+    deliverCompoundSnapshot(makeEvent());
     s.appendRunOutput(makeChunk('line\n', { stepIdx: 0 }));
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0]?.[0]?.text).toBe('line');
   });
@@ -352,7 +416,7 @@ describe('compoundRunStore - identity routing & stale-event guards', () => {
       data: 'stale\n',
       timestamp: 3,
     });
-    const entries = useIDEStore.getState().runOutputs['build'].entries.map((e) => e.text);
+    const entries = useIDEStore.getState().runOutputs.r5.entries.map((e) => e.text);
     expect(entries).toEqual(['fresh']);
   });
 
@@ -392,10 +456,10 @@ describe('compoundRunStore - identity routing & stale-event guards', () => {
       data: 'new\n',
       timestamp: 4,
     });
-    const out = useIDEStore.getState().runOutputs['build'];
+    const out = useIDEStore.getState().runOutputs.r6;
     expect(out.runInstanceId).toBe('r6');
     expect(out.entries.map((e) => e.text)).toEqual(['new']);
-    expect(out.previousEntries.map((e) => e.text)).toEqual(['old']);
+    expect(useIDEStore.getState().runOutputs.r5.entries.map((e) => e.text)).toEqual(['old']);
   });
 
   it('drops a stale run:status that would flush the active run', () => {
@@ -425,17 +489,341 @@ describe('compoundRunStore - identity routing & stale-event guards', () => {
       exitCode: 0,
       timestamp: 3,
     });
-    expect(useIDEStore.getState().runOutputs['build'].state).toBe('running');
+    expect(useIDEStore.getState().runOutputs.r7.state).toBe('running');
   });
 
   it('does not let a stale running compound snapshot replace a rerun', () => {
-    const s = useIDEStore.getState();
-    s.handleCompoundRun(makeEvent({ runInstanceId: 'r10', state: 'running' }));
+    deliverCompoundSnapshot(makeEvent({ runInstanceId: 'r10', state: 'running' }), 1000);
     // First run completes, then a newer rerun starts running.
-    s.handleCompoundRun(makeEvent({ runInstanceId: 'r10', state: 'success' }));
-    s.handleCompoundRun(makeEvent({ runInstanceId: 'r12', state: 'running' }));
+    deliverCompoundSnapshot(makeEvent({ runInstanceId: 'r10', state: 'success' }), 1100);
+    deliverCompoundSnapshot(makeEvent({ runInstanceId: 'r12', state: 'running' }), 2000);
     // A late old 'running' snapshot (r10) must be dropped.
-    s.handleCompoundRun(makeEvent({ runInstanceId: 'r10', state: 'running' }));
+    deliverCompoundSnapshot(makeEvent({ runInstanceId: 'r10', state: 'running' }), 1000);
     expect(useIDEStore.getState().runCompounds[COMPOUND_ID].runInstanceId).toBe('r12');
+  });
+});
+
+describe('compoundRunStore - Phase 2A regressions', () => {
+  it('seeds compound state and identity indexes from the initial aggregate running status', () => {
+    useIDEStore.getState().handleRunStatus(aggregateStatus('r10', 'running', 1000));
+
+    const state = useIDEStore.getState();
+    const compound = state.runCompounds[COMPOUND_ID];
+    expect(compound).toBeDefined();
+    expect(compound?.compoundId).toBe(COMPOUND_ID);
+    expect(compound?.runInstanceId).toBe('r10');
+    expect(compound?.state).toBe('running');
+    expect(state.compoundIdByRunInstance).toEqual({ r10: COMPOUND_ID });
+    expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBe('r10');
+  });
+
+  it('captures the aggregate exit code onto the compound run on a terminal status', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'failed', 1100));
+
+    const compound = useIDEStore.getState().runCompounds[COMPOUND_ID];
+    expect(compound.state).toBe('failed');
+    expect(compound.exitCode).toBe(1);
+  });
+
+  it('rejects delayed running status and snapshot after a newer rerun completes', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    store.handleRunStatus(aggregateStatus('r12', 'running', 2000));
+    store.handleCompoundRun(snapshot('r12'));
+    store.handleRunStatus(aggregateStatus('r12', 'success', 2100));
+    store.handleCompoundRun(snapshot('r12', 'success'));
+
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID].runInstanceId).toBe('r12');
+    expect(state.runCompounds[COMPOUND_ID].state).toBe('success');
+    expect(state.compoundIdByRunInstance).toEqual({ r12: COMPOUND_ID });
+    expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBe('r12');
+  });
+
+  it('does not recreate a terminal compound from delayed final events after Clear All', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+    store.clearAllRunOutputs();
+
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds).toEqual({});
+    expect(state.compoundIdByRunInstance).toEqual({});
+    expect(state.activeRunOutputId).toBeNull();
+  });
+
+  it('accepts a timestamp-newer aggregate rerun from a fully cleared tombstone', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+    store.clearAllRunOutputs();
+
+    store.handleRunStatus(aggregateStatus('r12', 'running', 2000));
+
+    let state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID]?.runInstanceId).toBe('r12');
+    expect(state.runCompounds[COMPOUND_ID]?.steps).toEqual([]);
+    expect(state.compoundIdByRunInstance).toEqual({ r12: COMPOUND_ID });
+    expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBe('r12');
+
+    store.handleCompoundRun(snapshot('r12'));
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+
+    state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID].runInstanceId).toBe('r12');
+    expect(state.runCompounds[COMPOUND_ID].steps).toHaveLength(1);
+  });
+
+  it('does not recreate an old compound from StopAll final events after workspace reset', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.resetWorkspaceRunState();
+
+    store.handleRunStatus(aggregateStatus('r10', 'stopped', 1100));
+    store.handleCompoundRun(snapshot('r10', 'stopped'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds).toEqual({});
+    expect(state.compoundIdByRunInstance).toEqual({});
+    expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBeUndefined();
+  });
+
+  it('clears an ordinary run whose RID equals a compound profile id without clearing the compound', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus(AGG_RID, 'running', 1000));
+    store.handleCompoundRun(snapshot(AGG_RID));
+    store.appendRunOutput(makeChunk('compound output\n'));
+    store.handleRunStatus({
+      runInstanceId: COMPOUND_ID,
+      profileId: 'build',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 2000,
+    });
+    store.appendRunOutput({
+      runInstanceId: COMPOUND_ID,
+      profileId: 'build',
+      stepIdx: 0,
+      stream: 'stdout',
+      data: 'ordinary output\n',
+      timestamp: 2001,
+    });
+    store.handleRunStatus({
+      runInstanceId: COMPOUND_ID,
+      profileId: 'build',
+      stepIdx: 0,
+      state: 'success',
+      exitCode: 0,
+      timestamp: 2002,
+    });
+
+    store.clearRunOutput(COMPOUND_ID);
+
+    const state = useIDEStore.getState();
+    expect(state.runOutputs[COMPOUND_ID]).toBeUndefined();
+    expect(state.runCompounds[COMPOUND_ID].stepOutputs[0]?.map((entry) => entry.text)).toEqual([
+      'compound output',
+    ]);
+  });
+
+  it('does not let a compound snapshot steal an ordinary selection with the same id', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus({
+      runInstanceId: COMPOUND_ID,
+      profileId: 'build',
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+      timestamp: 2000,
+    });
+    store.handleRunStatus({
+      runInstanceId: COMPOUND_ID,
+      profileId: 'build',
+      stepIdx: 0,
+      state: 'success',
+      exitCode: 0,
+      timestamp: 2001,
+    });
+    store.setActiveRunOutput(COMPOUND_ID);
+
+    store.handleRunStatus(aggregateStatus(AGG_RID, 'running', 3000));
+    store.handleCompoundRun(snapshot(AGG_RID));
+
+    expect(useIDEStore.getState().activeRunOutputId).toBe(COMPOUND_ID);
+  });
+
+  it('preserves the truncation sentinel when terminal flush exceeds the step cap', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus(AGG_RID, 'running', 1000));
+    store.handleCompoundRun(snapshot(AGG_RID));
+    store.appendRunOutput(
+      makeChunk(
+        `${Array.from({ length: MAX_OUTPUT_ENTRIES + 1 }, (_, index) => `line-${index}`).join('\n')}\n`
+      )
+    );
+    store.appendRunOutput(makeChunk('partial terminal line'));
+
+    expect(useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0][0].text).toBe(
+      '[truncated — oldest output removed]'
+    );
+
+    store.handleRunStatus(aggregateStatus(AGG_RID, 'success', 1100));
+    store.handleCompoundRun(snapshot(AGG_RID, 'success'));
+
+    const entries = useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0];
+    expect(entries).toHaveLength(MAX_OUTPUT_ENTRIES);
+    expect(entries[0].text).toBe('[truncated — oldest output removed]');
+    expect(entries.at(-1)?.text).toBe('partial terminal line');
+  });
+
+  it('clears pending step carry-over when an authorized aggregate rerun rotates', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.appendRunOutput(
+      makeChunk('old partial', {
+        runInstanceId: 'r10-step-0',
+        parentRunInstanceId: 'r10',
+      })
+    );
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+
+    store.handleRunStatus(aggregateStatus('r12', 'running', 2000));
+    store.handleCompoundRun(snapshot('r12'));
+    store.appendRunOutput(
+      makeChunk('new line\n', {
+        runInstanceId: 'r12-step-0',
+        parentRunInstanceId: 'r12',
+      })
+    );
+
+    expect(
+      useIDEStore.getState().runCompounds[COMPOUND_ID].stepOutputs[0]?.map((entry) => entry.text)
+    ).toEqual(['new line']);
+  });
+
+  it('rejects a mismatched running aggregate status without an ordering timestamp', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    store.handleRunStatus({
+      runInstanceId: 'r12',
+      profileId: COMPOUND_ID,
+      stepIdx: 0,
+      state: 'running',
+      exitCode: 0,
+    });
+    store.handleCompoundRun(snapshot('r12'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID].runInstanceId).toBe('r10');
+    expect(state.runCompounds[COMPOUND_ID].state).toBe('success');
+    expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBe('r10');
+  });
+
+  it('rejects same-RID running status and snapshot after the aggregate is terminal', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1200));
+    store.handleCompoundRun(snapshot('r10'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID].runInstanceId).toBe('r10');
+    expect(state.runCompounds[COMPOUND_ID].state).toBe('success');
+  });
+
+  it('rejects a compound snapshot whose aggregate state was not authorized by status', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    store.handleRunStatus(aggregateStatus('r10', 'failed', 1200));
+    store.handleCompoundRun(snapshot('r10', 'failed'));
+
+    const state = useIDEStore.getState();
+    expect(state.runCompounds[COMPOUND_ID].state).toBe('success');
+    expect(state.runHistory[COMPOUND_ID]).toEqual([
+      { state: 'success', duration: 100, timestamp: 1100 },
+    ]);
+  });
+
+  it.each(['success', 'failed', 'stopped'] as const)(
+    'does not regress an aggregate %s execution on same-RID idle status',
+    (terminalState) => {
+      const store = useIDEStore.getState();
+      store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+      store.handleCompoundRun(snapshot('r10'));
+      store.handleRunStatus(aggregateStatus('r10', terminalState, 1100));
+      store.handleCompoundRun(snapshot('r10', terminalState));
+
+      store.handleRunStatus(aggregateStatus('r10', 'idle', 1200));
+
+      expect(useIDEStore.getState().runCompounds[COMPOUND_ID].state).toBe(terminalState);
+    }
+  );
+
+  it('does not duplicate aggregate history for repeated terminal status', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    store.handleRunStatus(aggregateStatus('r10', 'success', 1100));
+    store.handleCompoundRun(snapshot('r10', 'success'));
+
+    expect(useIDEStore.getState().runHistory[COMPOUND_ID]).toEqual([
+      { state: 'success', duration: 100, timestamp: 1100 },
+    ]);
+  });
+
+  it('rejects old aggregate terminal events after reset removes its profile snapshot', () => {
+    const store = useIDEStore.getState();
+    store.handleRunStatus(aggregateStatus('r10', 'running', 1000));
+    store.handleCompoundRun(snapshot('r10'));
+    store.resetWorkspaceRunState();
+    useIDEStore.setState({
+      runProfiles: [
+        { id: 'build', name: 'Build', type: 'single', source: 'user', command: 'echo build' },
+      ],
+    });
+
+    store.handleRunStatus(aggregateStatus('r10', 'stopped', 1100));
+    store.handleCompoundRun(snapshot('r10', 'stopped'));
+
+    const state = useIDEStore.getState();
+    expect(state.runOutputs.r10).toBeUndefined();
+    expect(state.runCompounds).toEqual({});
+    expect(state.compoundIdByRunInstance).toEqual({});
+    expect(state.latestRunInstanceIdByProfile[COMPOUND_ID]).toBeUndefined();
   });
 });

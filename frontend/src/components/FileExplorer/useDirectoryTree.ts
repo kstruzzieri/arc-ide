@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { ReadDirectoryShallow } from '../../../wailsjs/go/main/App';
+import { ReadDirectoryShallow } from '../../wails/bindings';
 import { useIDEStore, useWorkspace } from '../../stores/ideStore';
 import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 
@@ -14,47 +14,66 @@ import { getCachedWorkspaceTree } from '../../utils/workspaceTreeCache';
 export function useDirectoryTree() {
   const workspace = useWorkspace();
   const setDirectoryTree = useIDEStore((state) => state.setDirectoryTree);
-  const mergeChildren = useIDEStore((state) => state.mergeChildren);
   const setTreeLoading = useIDEStore((state) => state.setTreeLoading);
   const setTreeError = useIDEStore((state) => state.setTreeError);
   const requestIdRef = useRef(0);
 
   const fetchTree = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    const isCurrentWorkspace = () => useIDEStore.getState().workspace === workspace;
     if (!workspace?.path) {
+      if (!isCurrentWorkspace()) return;
       setDirectoryTree([]);
       setTreeLoading(false);
       return;
     }
 
-    const requestId = ++requestIdRef.current;
-    const hasCachedTree = getCachedWorkspaceTree(workspace.path) !== undefined;
+    const cachedTree = getCachedWorkspaceTree(workspace.path);
+    const hasCachedTree = Boolean(cachedTree?.length);
+    // A cached-empty tree is still known content: no skeleton across its
+    // refresh, but failures use the uncached error strategy (hasCachedTree).
+    const hasCachedEntry = cachedTree !== undefined;
 
-    if (!hasCachedTree) {
+    // setTreeError also clears isLoadingTree, so it must run before
+    // setTreeLoading(true) or the skeleton never survives the same batch.
+    setTreeError(null);
+    if (!hasCachedEntry) {
       setTreeLoading(true);
     }
-    setTreeError(null);
 
     try {
       const entries = await ReadDirectoryShallow(workspace.path, workspace.path);
-      if (requestIdRef.current !== requestId) return;
-      mergeChildren(workspace.path, entries);
-    } catch (err) {
-      if (requestIdRef.current !== requestId) return;
+      const state = useIDEStore.getState();
+      if (requestIdRef.current !== requestId || state.workspace !== workspace) return;
+      state.mergeChildren(workspace.path, entries);
+      state.clearDirty(workspace.path);
+    } catch {
+      const state = useIDEStore.getState();
+      if (requestIdRef.current !== requestId || state.workspace !== workspace) return;
       if (hasCachedTree) {
+        state.markDirty(workspace.path);
+        state.showToast('Failed to refresh file tree', 'error');
         return;
       }
-      const message = err instanceof Error ? err.message : 'Failed to read directory';
-      setTreeError(message);
+      setTreeError('Failed to read directory');
     } finally {
-      if (requestIdRef.current === requestId && !hasCachedTree) {
+      if (
+        requestIdRef.current === requestId &&
+        useIDEStore.getState().workspace === workspace &&
+        !hasCachedEntry
+      ) {
         setTreeLoading(false);
       }
     }
-  }, [workspace?.path, setDirectoryTree, mergeChildren, setTreeLoading, setTreeError]);
+  }, [workspace, setDirectoryTree, setTreeLoading, setTreeError]);
 
   // Fetch tree when workspace changes
   useEffect(() => {
-    fetchTree();
+    const requestIds = requestIdRef;
+    void fetchTree();
+    return () => {
+      requestIds.current++;
+    };
   }, [fetchTree]);
 
   return { refetch: fetchTree };

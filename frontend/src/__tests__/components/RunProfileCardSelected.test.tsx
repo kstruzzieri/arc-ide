@@ -3,7 +3,7 @@ import { RunProfileCard } from '../../components/RunProfiles/RunProfileCard';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile } from '../../types/runProfile';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: jest.fn(() => Promise.resolve()),
   StopRunProfile: jest.fn(() => Promise.resolve()),
   RestartRunProfile: jest.fn(() => Promise.resolve()),

@@ -3,7 +3,7 @@
 set -eu
 
 if [ "$#" -ne 5 ]; then
-	echo "usage: $0 <tag> <changelog> <output> <package.json> <wails.json>" >&2
+	echo "usage: $0 <tag> <changelog> <output> <package.json> <config.yml>" >&2
 	exit 2
 fi
 
@@ -11,7 +11,7 @@ tag=$1
 changelog=$2
 output=$3
 package_json=$4
-wails_json=$5
+config_yml=$5
 version=${tag#v}
 base_version=${version%%-*}
 header_prefix="## [$base_version] - "
@@ -28,12 +28,13 @@ if [ "$package_version" != "$base_version" ]; then
 	exit 1
 fi
 
-# wails build stamps info.productVersion into the packaged binaries
+# wails3 stamps build/config.yml info.version into the packaged binaries
 # (Info.plist / Windows file version); guard it so a release cannot ship apps
-# advertising the Wails default of 1.0.0.
-wails_version=$(awk -F'"' '$2 == "productVersion" { print $4; exit }' "$wails_json")
+# advertising a stale version. The awk reads `version:` only inside the `info:`
+# block, so the top-level `version: '3'` schema marker is not matched.
+wails_version=$(awk '/^info:/{in_info=1; next} in_info && /^[^ ]/{in_info=0} in_info && $1=="version:"{gsub(/["'"'"']/,"",$2); print $2; exit}' "$config_yml")
 if [ "$wails_version" != "$base_version" ]; then
-	echo "wails productVersion $wails_version does not match tag $tag" >&2
+	echo "config.yml info.version $wails_version does not match tag $tag" >&2
 	exit 1
 fi
 

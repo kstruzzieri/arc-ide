@@ -6,9 +6,10 @@
  * share a single code path instead of duplicating file-open flows.
  */
 
-import { useIDEStore, type EditorFile } from '../stores/ideStore';
-import { ReadFile } from '../../wailsjs/go/main/App';
+import { useIDEStore, type EditorFile, type EditorNavigationRequest } from '../stores/ideStore';
+import { ReadFile } from '../wails/bindings';
 import { createEditorFile } from './editorFile';
+import { focusEditorSurface } from './editorSurface';
 import { flushWorkingTreeEdit } from './fileWrites';
 import { getFileNameFromPath, pathsReferToSameFile, toNativeLocalPath } from './lspUri';
 
@@ -18,6 +19,15 @@ interface EditorNavigationOptions {
 
 function shouldApplyNavigation(options?: EditorNavigationOptions): boolean {
   return options?.shouldApply?.() ?? true;
+}
+
+/**
+ * The already-open editor file for `localPath`, if any. Single source of truth
+ * for "is this file open?" so the open flow and the navigation flow can never
+ * disagree about what counts as the same file.
+ */
+function findOpenFile(localPath: string): EditorFile | undefined {
+  return useIDEStore.getState().openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
 }
 
 /**
@@ -37,18 +47,20 @@ export async function ensureEditorFileOpen(
   }
 
   // Already open — just activate and return
-  const existing = useIDEStore
-    .getState()
-    .openFiles.find((f) => pathsReferToSameFile(f.id, localPath));
+  const existing = findOpenFile(localPath);
   if (existing) {
     if (!shouldApplyNavigation(options)) return null;
     useIDEStore.getState().setActiveFile(existing.id);
+    focusEditorSurface('file');
     return existing;
   }
 
   // Read and open
   try {
     const content = await ReadFile(localPath);
+    if (content === null) {
+      throw new Error(`ReadFile returned no content for ${localPath}`);
+    }
     if (!shouldApplyNavigation(options)) return null;
 
     if (content.isBinary) {
@@ -60,6 +72,7 @@ export async function ensureEditorFileOpen(
 
     const file = createEditorFile(localPath, content);
     useIDEStore.getState().openFile(file);
+    focusEditorSurface('file');
     return file;
   } catch (err) {
     if (!shouldApplyNavigation(options)) return null;
@@ -80,9 +93,48 @@ export async function navigateToEditorLocation(
   column: number,
   options?: EditorNavigationOptions
 ): Promise<void> {
-  const file = await ensureEditorFileOpen(path, options);
-  if (!file) return;
-  if (!shouldApplyNavigation(options)) return;
+  // Register the navigation BEFORE the tab is activated when the file is already
+  // open. Activating a tab runs the editor's file-switch effect, which restores
+  // a background tab's remembered scroll position; if the navigation is already
+  // pending when that runs, the editor skips the scroll restore and lets this
+  // jump own the viewport. Setting it only afterwards (which a not-yet-open file
+  // must do, since its id doesn't exist until it opens) loses the jump for an
+  // already-open background tab — the file switches but the target line stays
+  // off-screen. A not-yet-open file has no cached scroll, so ordering is moot
+  // there and the post-open request below covers it.
+  const existing = findOpenFile(toNativeLocalPath(path));
+  let preRegisteredNavigation: EditorNavigationRequest | null = null;
+  if (existing && shouldApplyNavigation(options)) {
+    useIDEStore.getState().requestEditorNavigation(existing.id, line, column);
+    preRegisteredNavigation = useIDEStore.getState().pendingEditorNavigation;
+  }
 
-  useIDEStore.getState().requestEditorNavigation(file.id, line, column);
+  const file = await ensureEditorFileOpen(path, options);
+  if (!file || !shouldApplyNavigation(options)) {
+    // The open/activate did not happen (a failed working-tree flush, or the user
+    // switched workspaces mid-flight). Retract the navigation we registered up
+    // front, otherwise it lingers in the store and would later hijack the
+    // viewport the next time that tab is activated for an unrelated reason —
+    // and, in the workspace-switch case, would point into the old workspace.
+    // Revisions can be reused after the editor consumes and clears a request,
+    // so only retract the exact request object registered by this operation.
+    if (
+      preRegisteredNavigation &&
+      useIDEStore.getState().pendingEditorNavigation === preRegisteredNavigation
+    ) {
+      useIDEStore
+        .getState()
+        .clearPendingEditorNavigation(
+          preRegisteredNavigation.fileId,
+          preRegisteredNavigation.revision
+        );
+    }
+    return;
+  }
+
+  // Freshly opened file: its id did not exist before activation, so request the
+  // jump now. (An already-open file was pre-registered above.)
+  if (!existing) {
+    useIDEStore.getState().requestEditorNavigation(file.id, line, column);
+  }
 }

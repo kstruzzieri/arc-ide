@@ -3,25 +3,16 @@ const mockDidChange = jest.fn().mockResolvedValue(undefined);
 const mockDidSave = jest.fn().mockResolvedValue(undefined);
 const mockDidClose = jest.fn().mockResolvedValue(undefined);
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  LSPDidOpen: (...args: unknown[]) => mockDidOpen(...args),
-  LSPDidChange: (...args: unknown[]) => mockDidChange(...args),
-  LSPDidSave: (...args: unknown[]) => mockDidSave(...args),
-  LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
-}));
-
-jest.mock('../../../wailsjs/go/models', () => ({
-  lsp: {
-    TextDocumentContentChangeEvent: class {
-      text: string;
-      range?: unknown;
-      constructor(source: { text: string; range?: unknown }) {
-        this.text = source.text;
-        this.range = source.range;
-      }
-    },
-  },
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    LSPDidOpen: (...args: unknown[]) => mockDidOpen(...args),
+    LSPDidChange: (...args: unknown[]) => mockDidChange(...args),
+    LSPDidSave: (...args: unknown[]) => mockDidSave(...args),
+    LSPDidClose: (...args: unknown[]) => mockDidClose(...args),
+  };
+});
 
 import {
   closeLSPDocument,

@@ -1,4 +1,4 @@
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitBranches: jest.fn(),
   GitCheckout: jest.fn(),
@@ -14,10 +14,10 @@ jest.mock('../../../wailsjs/go/main/App', () => ({
 }));
 
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
-import { GitCheckout, GitBranches } from '../../../wailsjs/go/main/App';
+import { GitCheckout, GitBranches } from '../../wails/bindings';
 import { BranchSwitcher } from './BranchSwitcher';
 import { useGitStore } from '../../stores/gitStore';
-import type { git } from '../../../wailsjs/go/models';
+import type { git } from '../../wails/bindings';
 
 const mockCheckout = GitCheckout as jest.MockedFunction<typeof GitCheckout>;
 
@@ -148,5 +148,55 @@ describe('BranchSwitcher', () => {
     fireEvent.mouseDown(screen.getByPlaceholderText(/find or create branch/i));
 
     expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('restores the owning trigger focus after Escape when two instances are mounted', async () => {
+    seed(true);
+    render(
+      <>
+        <BranchSwitcher />
+        <BranchSwitcher respondToFocusRequest={false} />
+      </>
+    );
+
+    const triggers = screen.getAllByRole('button', { name: /branch: main/i });
+    fireEvent.click(triggers[1]);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(triggers[1]).toHaveFocus();
+  });
+
+  it('restores its trigger focus after choosing an option', async () => {
+    seed(true);
+    render(<BranchSwitcher />);
+
+    const trigger = screen.getByRole('button', { name: /branch: main/i });
+    fireEvent.click(trigger);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('option', { name: 'feature/x' }));
+    await act(async () => {});
+
+    expect(trigger).toHaveFocus();
+  });
+
+  it('does not steal focus from an outside pointer destination', async () => {
+    seed(true);
+    render(
+      <>
+        <BranchSwitcher />
+        <button type="button">Destination</button>
+      </>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /branch: main/i }));
+    await act(async () => {});
+    const destination = screen.getByRole('button', { name: 'Destination' });
+    destination.focus();
+    fireEvent.mouseDown(destination);
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(destination).toHaveFocus();
   });
 });

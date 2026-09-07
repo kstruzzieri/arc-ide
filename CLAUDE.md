@@ -16,7 +16,10 @@ firn-ide/
 ├── app.go                      # Wails bindings
 ├── internal/
 │   ├── filesystem/             # File read/write/watch
+│   ├── git/                    # Status, diff, hunk staging, merge conflict data
+│   ├── lsp/                    # LSP client, registry, managed provisioning, python env
 │   ├── runprofile/             # Run profile detection, execution, management
+│   ├── search/                 # ripgrep search runner and parser
 │   ├── terminal/               # PTY session management
 │   ├── watcher/                # FS event watcher
 │   ├── workspace/              # Workspace persistence
@@ -24,17 +27,22 @@ firn-ide/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/         # React components
-│   │   │   ├── Editor/         # CodeMirror 6 editor
+│   │   │   ├── CommandPalette/ # Cmd+Shift+P palette over the command registry
+│   │   │   ├── Editor/         # CodeMirror 6 editor + merge resolution view
 │   │   │   ├── FileExplorer/   # File tree navigation
+│   │   │   ├── GitPanel/       # Commit/stage panel and diff surfaces
 │   │   │   ├── RunProfiles/    # Run profile cards and panels
 │   │   │   ├── RunOutput/      # Output display (merged, lanes, diff, timeline)
+│   │   │   ├── Search/         # Workspace-wide ripgrep search UI
+│   │   │   ├── Structure/      # Current-file symbol outline
 │   │   │   ├── Terminal/       # xterm.js terminal
 │   │   │   └── layout/         # Panel system, sidebar, header
-│   │   ├── stores/             # Zustand state management
+│   │   ├── stores/             # Zustand state (ide, git, lsp, search)
 │   │   ├── hooks/              # Custom React hooks
 │   │   ├── utils/              # Shared utilities
-│   │   └── types/              # TypeScript type definitions
-│   └── wailsjs/                # Generated Go bindings
+│   │   ├── types/              # TypeScript type definitions
+│   │   └── wails/              # Adapter — single import surface for generated bindings
+│   └── bindings/               # Generated Go bindings
 ├── docs/
 │   ├── roadmap.md              # Consolidated roadmap with all issues
 │   ├── design-specification.md # Full UI/UX specification
@@ -49,7 +57,7 @@ firn-ide/
 
 - **Framework**: Wails (Go backend + React frontend via system WebView)
 - **Frontend**: React 19 + Vite + TypeScript
-- **Backend**: Go 1.23+
+- **Backend**: Go 1.25+
 - **State**: Zustand
 - **Editor**: CodeMirror 6
 - **Terminal**: xterm.js + PTY
@@ -75,6 +83,13 @@ Lightweight run configurations as first-class citizens:
 - Purpose-built expanded panels per state (output preview, stats, error detail, stop progress)
 - Predicted completion ETA with median-based estimation
 - Pin/unpin profiles, hide/unhide, profile browser
+- First-class execution identity: output, lifecycle, and status route by `runInstanceId`, and the two most recent ordinary executions per profile are retained as diffable tabs
+
+### Language Intelligence
+Only the active workspace runs language servers. Missing servers are provisioned lazily into `~/.firn/servers` from pinned, checksum-verified artifacts (`basedpyright`, `gopls`, `typescript-language-server`, `rust-analyzer`) — never into the global `PATH` or project dependencies.
+
+### Git Integration
+Working-tree status, branch switching, side-by-side and editable diffs, hunk-level staging with intent-to-add, and a CodeMirror merge-resolution surface for conflicts. Merge sessions never write or stage until every region is resolved, and closing the surface is non-destructive.
 
 ### Performance Budgets
 - Cold start: < 2-4 seconds

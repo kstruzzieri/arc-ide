@@ -42,6 +42,19 @@ describe('replaceChildrenAt', () => {
     expect(replaceChildrenAt(tree, '/nope', [])).toBe(tree);
   });
 
+  it('marks a deep node unreadable without replacing trustworthy children', () => {
+    const loadedChild = file('/r/a/x/keep.txt');
+    const sibling = dir('/r/b');
+    const tree = [dir('/r/a', [dir('/r/a/x', [loadedChild])]), sibling];
+
+    const next = replaceChildrenAt(tree, '/r/a/x', undefined, true);
+
+    const target = next[0].children![0];
+    expect(target.unreadable).toBe(true);
+    expect(target.children).toBe(tree[0].children![0].children);
+    expect(next[1]).toBe(sibling);
+  });
+
   it('descends through Windows paths', () => {
     const tree = [dir('C:\\repo\\src', [dir('C:\\repo\\src\\pkg')])];
     const next = replaceChildrenAt(tree, 'C:\\repo\\src\\pkg', [

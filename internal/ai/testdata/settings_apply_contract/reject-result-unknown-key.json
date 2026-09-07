@@ -1,0 +1,8 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "busy",
+    "retryAfter": 5
+  }
+}

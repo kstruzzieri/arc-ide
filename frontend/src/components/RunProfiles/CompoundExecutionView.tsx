@@ -1,10 +1,16 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { MergedView } from '../RunOutput/MergedView';
 import { SourceTimelineView } from '../RunOutput/SourceTimelineView';
 import type { TimelineSource } from '../RunOutput/SourceTimelineView';
 import { resolveFileReferencePath } from '../../utils/parseFileReferences';
 import { useIDEStore, useWorkspace, useRunOutputAutoScroll } from '../../stores/ideStore';
-import { StopRunProfile } from '../../../wailsjs/go/main/App';
+import { stopProfile } from '../../utils/profileActions';
 import type { CompoundRun, CompoundStep, CompoundStepState } from '../../types/runOutput';
 import styles from './CompoundExecutionView.module.css';
 
@@ -57,11 +63,40 @@ function initialViewState(compound: CompoundRun): CompoundViewState {
   return createInitialViewState(compound.compoundId, initialSelectedStepIdx(compound));
 }
 
+function moveTabFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
+  const target = event.target as HTMLElement;
+  if (target.getAttribute('role') !== 'tab') return;
+
+  const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+  const index = tabs.indexOf(target);
+  let next: number | null = null;
+
+  switch (event.key) {
+    case 'ArrowRight':
+      next = index < tabs.length - 1 ? index + 1 : 0;
+      break;
+    case 'ArrowLeft':
+      next = index > 0 ? index - 1 : tabs.length - 1;
+      break;
+    case 'Home':
+      next = 0;
+      break;
+    case 'End':
+      next = tabs.length - 1;
+      break;
+  }
+
+  if (next !== null) {
+    event.preventDefault();
+    tabs[next]?.focus();
+  }
+}
+
 export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) {
   const workspace = useWorkspace();
   const workspacePath = workspace?.path;
   const autoScroll = useRunOutputAutoScroll();
-  const showToast = useIDEStore((s) => s.showToast);
+  const runControlsDisabled = useIDEStore((s) => s.runEventsPaused || s.isLoadingProfiles);
   const requestEditorNavigation = useIDEStore((s) => s.requestEditorNavigation);
   const defaultSelectedStepIdx = initialSelectedStepIdx(compound);
   const currentInitialViewState = useMemo(
@@ -143,10 +178,7 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
   );
 
   const handleStop = () => {
-    StopRunProfile(compound.compoundId).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      showToast(`Failed to stop "${compound.name}": ${message}`, 'error');
-    });
+    stopProfile(compound.compoundId, compound.name);
   };
 
   const handleJumpToFailure = () => {
@@ -201,6 +233,7 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
               type="button"
               className={`${styles.actionButton} ${styles.stopButton}`}
               onClick={handleStop}
+              disabled={runControlsDisabled}
               aria-label={`Stop ${compound.name}`}
             >
               Stop
@@ -210,11 +243,19 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
       </div>
 
       <div className={styles.tabBar}>
-        <div className={styles.tabGroup} role="tablist" aria-label="Compound output view">
+        <div
+          className={styles.tabGroup}
+          role="tablist"
+          aria-label="Compound output view"
+          onKeyDown={moveTabFocus}
+        >
           <button
             type="button"
+            id="compound-stages-tab"
             role="tab"
             aria-selected={tab === 'stages'}
+            aria-controls="compound-output-panel"
+            tabIndex={tab === 'stages' ? 0 : -1}
             className={styles.tabButton}
             onClick={() => setCompoundTab('stages')}
           >
@@ -222,8 +263,11 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
           </button>
           <button
             type="button"
+            id="compound-all-tab"
             role="tab"
             aria-selected={tab === 'all'}
+            aria-controls="compound-output-panel"
+            tabIndex={tab === 'all' ? 0 : -1}
             className={styles.tabButton}
             onClick={() => setCompoundTab('all')}
           >
@@ -233,7 +277,13 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
       </div>
 
       {tab === 'stages' ? (
-        <div className={styles.compoundBody}>
+        <div
+          id="compound-output-panel"
+          className={styles.compoundBody}
+          role="tabpanel"
+          aria-labelledby="compound-stages-tab"
+          tabIndex={0}
+        >
           <div className={styles.stageList}>
             {compound.steps.map((step) => {
               const duration = formatStepDuration(step.durationMs);
@@ -278,7 +328,13 @@ export function CompoundExecutionView({ compound }: CompoundExecutionViewProps) 
           </div>
         </div>
       ) : (
-        <div className={styles.allBody}>
+        <div
+          id="compound-output-panel"
+          className={styles.allBody}
+          role="tabpanel"
+          aria-labelledby="compound-all-tab"
+          tabIndex={0}
+        >
           <SourceTimelineView
             sources={timelineSources}
             autoScroll={autoScroll}

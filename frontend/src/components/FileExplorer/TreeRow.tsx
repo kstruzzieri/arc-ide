@@ -1,10 +1,11 @@
 // src/components/FileExplorer/TreeRow.tsx
 import React from 'react';
-import { ChevronRightIcon, ChevronDownIcon } from '../icons';
+import { AlertCircleIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { FileIcon } from './FileIcon';
 import { getFolderType } from './fileIconUtils';
 import type { WorkspaceAccent } from '../../stores/ideStore';
 import type { GitRowStatus } from '../../types/git';
+import { accentVar } from '../../utils/accent';
 import { shortenPath } from '../../utils/workspace';
 import styles from './TreeRow.module.css';
 
@@ -37,6 +38,8 @@ export interface TreeRowProps {
   isExpanded: boolean;
   isSelected: boolean;
   regionAccent: WorkspaceAccent | null;
+  fileAccent: WorkspaceAccent | null;
+  ownershipAccent?: WorkspaceAccent | null;
   setSize: number;
   posInSet: number;
   /** Root only: absolute path shown as a dimmed label. */
@@ -47,6 +50,8 @@ export interface TreeRowProps {
   isActive: boolean;
   /** Show the expand chevron: true for unloaded dirs or dirs with children; false for loaded-empty dirs and files. */
   canExpand: boolean;
+  /** The backend or latest lazy read could not read this item. */
+  unreadable: boolean;
   /** Git working-tree decoration; undefined renders an undecorated row. */
   gitStatus?: GitRowStatus;
   onToggle: (kind: 'root' | 'entry', path?: string) => void;
@@ -69,12 +74,15 @@ function TreeRowImpl({
   isExpanded,
   isSelected,
   regionAccent,
+  fileAccent,
+  ownershipAccent,
   setSize,
   posInSet,
   rootPath,
   rowId,
   isActive,
   canExpand,
+  unreadable,
   gitStatus,
   onToggle,
   onSelect,
@@ -109,6 +117,7 @@ function TreeRowImpl({
     `${styles.row}` +
     (kind === 'root' ? ` ${styles.root}` : '') +
     (regionAccent ? ` ${styles.tinted}` : '') +
+    (ownershipAccent ? ` ${styles.ownershipRail}` : '') +
     (isActive ? ` ${styles.active}` : '');
 
   return (
@@ -117,14 +126,14 @@ function TreeRowImpl({
       className={className}
       data-hidden={isHidden || undefined}
       data-git={gitStatus}
-      style={{
-        paddingLeft: `${indentPx}px`,
-        ...(regionAccent
-          ? ({
-              ['--region-accent' as string]: `var(--accent-${regionAccent})`,
-            } as React.CSSProperties)
-          : {}),
-      }}
+      style={
+        {
+          paddingLeft: `${indentPx}px`,
+          ...(regionAccent ? { '--region-accent': `var(--accent-${regionAccent})` } : {}),
+          ...(fileAccent ? { '--file-accent': accentVar(fileAccent) } : {}),
+          ...(ownershipAccent ? { '--ownership-accent': accentVar(ownershipAccent) } : {}),
+        } as React.CSSProperties
+      }
       onClick={handleRowClick}
       onDoubleClick={handleRowDoubleClick}
       role="treeitem"
@@ -133,6 +142,12 @@ function TreeRowImpl({
       aria-posinset={posInSet}
       aria-expanded={isDir ? isExpanded : undefined}
       aria-selected={isSelected || undefined}
+      aria-label={
+        // Keep the path a sighted user still sees when overriding the root name.
+        unreadable
+          ? `${name}, unreadable${kind === 'root' && rootPath ? `, ${shortenPath(rootPath)}` : ''}`
+          : undefined
+      }
       tabIndex={-1}
     >
       {canExpand ? (
@@ -155,7 +170,20 @@ function TreeRowImpl({
       )}
 
       <FileIcon name={name} isDir={isDir} isExpanded={isExpanded} className={styles.icon} />
+      {fileAccent && (
+        <span className={styles.fileAccent} data-testid="file-accent-marker" aria-hidden="true" />
+      )}
       <span className={styles.name}>{name}</span>
+      {unreadable && (
+        <span
+          className={styles.unreadable}
+          title="Unable to read this item"
+          data-testid="unreadable-indicator"
+          aria-hidden="true"
+        >
+          <AlertCircleIcon />
+        </span>
+      )}
       {kind === 'root' && rootPath && <span className={styles.path}>{shortenPath(rootPath)}</span>}
       {gitStatus && (
         <span className={styles.gitBadge} data-testid="git-badge" aria-hidden="true">

@@ -6,7 +6,7 @@ const mockStart = jest.fn().mockResolvedValue(undefined);
 const mockStop = jest.fn().mockResolvedValue(undefined);
 const mockRestart = jest.fn().mockResolvedValue(undefined);
 const mockSetVariant = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (...a: unknown[]) => mockStart(...a),
   StopRunProfile: (...a: unknown[]) => mockStop(...a),
   RestartRunProfile: (...a: unknown[]) => mockRestart(...a),
@@ -22,11 +22,13 @@ beforeEach(() => {
     ],
     runProfileState: {},
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
     hiddenProfileIds: [],
     stoppingProfileIds: [],
     restartingProfileIds: [],
     activeWorkspaceId: 'ws1', // workspace view (NOT a treeViewMode field)
-    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'blue' }] as never,
+    workspaces: [{ id: 'ws1', name: 'frontend', path: '/x', accent: 'frontend' }] as never,
     selectedProfileId: 'p1',
   });
 });
@@ -63,16 +65,16 @@ test('inline run button runs that row immediately', () => {
 test('inline action stops a running row', () => {
   useIDEStore.setState({
     runOutputs: {
-      p2: {
+      r1: {
         runInstanceId: 'r1',
         profileId: 'p2',
         state: 'running',
         exitCode: 0,
-        runCount: 1,
         entries: [],
-        previousEntries: [],
       },
     },
+    runInstanceIdsByProfile: { p2: ['r1'] },
+    latestRunInstanceIdByProfile: { p2: 'r1' },
   });
   open();
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Stop test/i }));
@@ -82,16 +84,16 @@ test('inline action stops a running row', () => {
 test('inline action restarts a failed row', () => {
   useIDEStore.setState({
     runOutputs: {
-      p2: {
+      r1: {
         runInstanceId: 'r1',
         profileId: 'p2',
         state: 'failed',
         exitCode: 1,
-        runCount: 1,
         entries: [],
-        previousEntries: [],
       },
     },
+    runInstanceIdsByProfile: { p2: ['r1'] },
+    latestRunInstanceIdByProfile: { p2: 'r1' },
   });
   open();
   fireEvent.click(
@@ -135,8 +137,8 @@ test('project view groups rows by workspace', () => {
       },
     ],
     workspaces: [
-      { id: 'ws1', name: 'frontend', path: '/x', accent: 'blue' },
-      { id: 'ws2', name: 'backend', path: '/y', accent: 'green' },
+      { id: 'ws1', name: 'frontend', path: '/x', accent: 'frontend' },
+      { id: 'ws2', name: 'backend', path: '/y', accent: 'python' },
     ] as never,
     activeWorkspaceId: 'project', // project view
     selectedProfileId: null,

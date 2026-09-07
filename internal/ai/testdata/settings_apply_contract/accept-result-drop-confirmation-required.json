@@ -1,0 +1,22 @@
+{
+  "verdict": "accept",
+  "document": "apply_result",
+  "value": {
+    "status": "drop_confirmation_required",
+    "drops": [
+      {
+        "changeId": "route:agent",
+        "fields": [
+          "slots",
+          "think_tags"
+        ]
+      },
+      {
+        "changeId": "route:chat",
+        "fields": [
+          "think_tags"
+        ]
+      }
+    ]
+  }
+}

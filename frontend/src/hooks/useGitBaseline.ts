@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitFileAtRev } from '../../wailsjs/go/main/App';
+import { GitFileAtRev } from '../wails/bindings';
 import { useGitStore } from '../stores/gitStore';
 import { classifyChange } from '../types/git';
 import { joinRepoPath, normalizeFsPath } from '../utils/paths';

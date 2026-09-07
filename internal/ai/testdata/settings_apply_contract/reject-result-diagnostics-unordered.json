@@ -1,0 +1,22 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "provider_in_use",
+        "subjectKind": "provider",
+        "subjectName": "hosted",
+        "blocking": true
+      },
+      {
+        "code": "config_save_failed",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      }
+    ],
+    "consentOutcome": "unchanged"
+  }
+}

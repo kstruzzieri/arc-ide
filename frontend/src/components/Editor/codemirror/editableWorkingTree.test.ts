@@ -10,7 +10,7 @@ jest.mock('@codemirror/state', () => ({
   Annotation: { define: () => mockExternalDocUpdate },
   Transaction: { addToHistory: { of: jest.fn(() => 'NO_HISTORY') } },
 }));
-jest.mock('../../../../wailsjs/go/main/App', () => ({ WriteFile: jest.fn() }));
+jest.mock('../../../wails/bindings', () => ({ WriteFile: jest.fn() }));
 
 import {
   isWorkingTreeEditable,
@@ -20,7 +20,8 @@ import {
 import { flushWorkingTreeEdit, writeFileSerialized } from '../../../utils/fileWrites';
 import type { DiffSession } from '../../../stores/gitStore';
 import { useIDEStore, type EditorFile } from '../../../stores/ideStore';
-import { WriteFile } from '../../../../wailsjs/go/main/App';
+import { WriteFile } from '../../../wails/bindings';
+import { CancellablePromise } from '../../../wails/runtime';
 
 const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
 
@@ -107,6 +108,13 @@ describe('persistWorkingTreeEdit — open buffer', () => {
   });
 });
 
+// Awaiting a v3 binding promise costs extra microtask ticks because
+// CancellablePromise is a Promise subclass, so drain the queue instead of
+// counting individual ticks.
+const flushMicrotasks = async () => {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve();
+};
+
 describe('persistWorkingTreeEdit — disk write (file not open)', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
@@ -175,13 +183,13 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     mockWriteFile
       .mockImplementationOnce(
         () =>
-          new Promise<void>((resolve) => {
+          new CancellablePromise<void>((resolve) => {
             resolveFirst = resolve;
           })
       )
       .mockImplementationOnce(
         () =>
-          new Promise<void>((resolve) => {
+          new CancellablePromise<void>((resolve) => {
             resolveSecond = resolve;
           })
       );
@@ -195,13 +203,12 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
     resolveFirst();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(mockWriteFile).toHaveBeenCalledTimes(2);
     expect(mockWriteFile.mock.calls[1][1]).toBe('second');
 
     resolveSecond();
-    await Promise.resolve();
+    await flushMicrotasks();
   });
 
   it('serializes a full-editor save behind an in-flight diff write', async () => {
@@ -210,13 +217,13 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     mockWriteFile
       .mockImplementationOnce(
         () =>
-          new Promise<void>((resolve) => {
+          new CancellablePromise<void>((resolve) => {
             resolveDiff = resolve;
           })
       )
       .mockImplementationOnce(
         () =>
-          new Promise<void>((resolve) => {
+          new CancellablePromise<void>((resolve) => {
             resolveEditor = resolve;
           })
       );
@@ -238,8 +245,7 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
     resolveDiff();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(mockWriteFile).toHaveBeenCalledTimes(2);
     expect(mockWriteFile.mock.calls[1][1]).toBe('newer editor content');
 
@@ -252,7 +258,7 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     useIDEStore.setState({ openFiles: [openFile({ content: 'stale disk content' })] });
 
     jest.runOnlyPendingTimers();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(mockWriteFile).not.toHaveBeenCalled();
     expect(useIDEStore.getState().openFiles[0].content).toBe('diff edit');
@@ -268,15 +274,14 @@ describe('persistWorkingTreeEdit — disk write (file not open)', () => {
     try {
       persistWorkingTreeEdit(session(), 'x');
       jest.runOnlyPendingTimers();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushMicrotasks();
 
       expect(showToast).toHaveBeenCalledWith(expect.stringContaining('disk full'), 'error');
 
       mockWriteFile.mockResolvedValue(undefined);
       persistWorkingTreeEdit(session(), 'retry');
       jest.runOnlyPendingTimers();
-      await Promise.resolve();
+      await flushMicrotasks();
       expect(mockWriteFile).toHaveBeenLastCalledWith(
         '/repo/src/a.ts',
         'retry',

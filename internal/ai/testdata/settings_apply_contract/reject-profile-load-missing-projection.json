@@ -1,0 +1,9 @@
+{
+  "verdict": "reject",
+  "document": "profile_load_result",
+  "value": {
+    "status": "loaded",
+    "profileId": "curated/local",
+    "sourceRevision": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+  }
+}

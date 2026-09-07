@@ -1,0 +1,58 @@
+{
+  "verdict": "accept",
+  "document": "apply_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "consent_store_failed",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      },
+      {
+        "code": "eligibility_ineligible",
+        "subjectKind": "model",
+        "subjectName": "agent-m",
+        "blocking": true
+      },
+      {
+        "code": "eligibility_unknown",
+        "subjectKind": "model",
+        "subjectName": "agent-m",
+        "blocking": true
+      },
+      {
+        "code": "invalid_argument",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      },
+      {
+        "code": "key_value_invalid",
+        "subjectKind": "provider",
+        "subjectName": "hosted",
+        "blocking": true
+      },
+      {
+        "code": "profile_source_unavailable",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      },
+      {
+        "code": "provider_exists",
+        "subjectKind": "provider",
+        "subjectName": "hosted",
+        "blocking": true
+      },
+      {
+        "code": "role_not_found",
+        "subjectKind": "role",
+        "subjectName": "agent-m",
+        "blocking": true
+      }
+    ],
+    "consentOutcome": "unchanged"
+  }
+}

@@ -727,3 +727,15 @@
 .emptyState p {
   margin: 0;
 }
+
+/* Partial-output warning. Sits above the view so it is read before the log, and
+   uses the warning accent rather than the muted empty-state color. */
+.truncationNotice {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: var(--font-ui);
+  color: var(--warning, #d08770);
+  background: color-mix(in srgb, var(--warning, #d08770) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warning, #d08770) 30%, transparent);
+}

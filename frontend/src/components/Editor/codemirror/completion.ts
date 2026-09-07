@@ -17,7 +17,7 @@ import {
   snippet,
 } from '@codemirror/autocomplete';
 import type { EditorView } from '@codemirror/view';
-import { LSPComplete, LSPResolveCompletionItem } from '../../../../wailsjs/go/main/App';
+import { LSPComplete, LSPResolveCompletionItem } from '../../../wails/bindings';
 import { decodeLSPContent } from '../../../utils/lspContent';
 import { flushLSPDocumentChange } from '../../../utils/lspDocumentSync';
 

@@ -4,6 +4,14 @@
 # intentionally NOT mirrored — it installs wails + system GTK deps and is too
 # heavy for a hook; CI keeps that one. Bypass all of this with `git push --no-verify`.
 
+# Git exports repository-local GIT_* vars to hooks; a linked-worktree GIT_DIR
+# left set here redirects the go-test git subprocesses into the parent repo
+# (issue #194). Strip Git's whole repository-local set (`git rev-parse
+# --local-env-vars`, mirrors internal/git scrubGitEnv) before running anything.
+unset GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+	GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_GRAFT_FILE \
+	GIT_SHALLOW_FILE GIT_NAMESPACE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE \
+	GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_INTERNAL_SUPER_PREFIX
 set -e
 
 # --- Frontend: ESLint + build + Jest (build.yml/test.yml/lint.yml) ----------
@@ -41,8 +49,12 @@ if [ ! -d frontend/dist ]; then
   exit 0
 fi
 
-echo "pre-push: go test ./..."
-go test ./...
+# -tags gtk3 mirrors test.yml exactly: on Linux it selects the WebKit2GTK 4.1
+# ABI Firn ships (without it package main compiles against GTK4), and on
+# macOS/Windows the tag is inert. golangci-lint below gets the same tag from
+# .golangci.yml's run.build-tags rather than the command line.
+echo "pre-push: go test -tags gtk3 ./..."
+go test -tags gtk3 ./...
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "pre-push: golangci-lint not installed — skipping Go lint."

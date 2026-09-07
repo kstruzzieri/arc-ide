@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../../wailsjs/go/main/App';
-import type { runprofile } from '../../../wailsjs/go/models';
+import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../wails/bindings';
+import type { runprofile } from '../../wails/bindings';
 import {
   useIDEStore,
   useWorkspace,
@@ -264,14 +264,15 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   return (
     <div className={styles.form}>
       <div className={styles.header}>
-        <button className={styles.back} onClick={close} aria-label="Back to profiles">
+        <button type="button" className={styles.back} onClick={close} aria-label="Back to profiles">
           ←
         </button>
         <span className={styles.title}>{title}</span>
-        <button className={styles.cancel} onClick={close}>
+        <button type="button" className={styles.cancel} onClick={close}>
           Cancel
         </button>
         <button
+          type="button"
           className={styles.save}
           onClick={onSave}
           disabled={!canSave}
@@ -365,7 +366,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
               onChange={(e) => patch({ workingDir: e.target.value })}
               aria-label="Working directory"
             />
-            <button className={styles.browse} onClick={onBrowse} aria-label="Browse">
+            <button type="button" className={styles.browse} onClick={onBrowse} aria-label="Browse">
               Browse…
             </button>
           </div>
@@ -392,6 +393,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
                 onChange={(e) => updateEnvRow(i, { ...row, value: e.target.value })}
               />
               <button
+                type="button"
                 className={styles.removeRow}
                 onClick={() => removeEnvRow(i)}
                 aria-label={`Remove env row ${i + 1}`}
@@ -403,7 +405,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           {dupKeys.length > 0 && (
             <span className={styles.fieldError}>Duplicate env key: {dupKeys.join(', ')}</span>
           )}
-          <button className={styles.addRow} onClick={addEnvRow}>
+          <button type="button" className={styles.addRow} onClick={addEnvRow}>
             + Add variable
           </button>
         </div>
@@ -440,6 +442,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
             (confirmingDelete ? (
               <>
                 <button
+                  type="button"
                   className={styles.deleteConfirm}
                   onClick={onDelete}
                   disabled={saving}
@@ -447,12 +450,17 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
                 >
                   Confirm delete
                 </button>
-                <button className={styles.cancel} onClick={() => setConfirmingDelete(false)}>
+                <button
+                  type="button"
+                  className={styles.cancel}
+                  onClick={() => setConfirmingDelete(false)}
+                >
                   Cancel
                 </button>
               </>
             ) : (
               <button
+                type="button"
                 className={styles.delete}
                 onClick={() => setConfirmingDelete(true)}
                 aria-label="Delete profile"

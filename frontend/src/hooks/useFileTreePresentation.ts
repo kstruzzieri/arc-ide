@@ -8,7 +8,12 @@ import {
   useCanFocusWorkspace,
 } from '../stores/ideStore';
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
-import { createRegionAccentResolver, relativePathFromRoot } from '../utils/workspaceRegions';
+import {
+  createRegionAccentResolver,
+  createWorkspacePathResolver,
+  getInfraFileAccent,
+  relativePathFromRoot,
+} from '../utils/workspaceRegions';
 
 export interface FileTreePresentation {
   mode: 'project' | 'workspace';
@@ -21,11 +26,17 @@ export interface FileTreePresentation {
   roots: FileEntry[];
   /** True when a workspace's relDir cannot be located in the loaded tree. */
   scopedError: boolean;
+  /** The scoped workspace directory itself could not be read. */
+  rootUnreadable: boolean;
   /**
    * Per-entry tint resolver. Project View → per-region multi-color resolver.
    * Workspace View → uniform resolver returning the active workspace accent.
    */
   getRegionAccent?: (entry: FileEntry) => WorkspaceAccent | null;
+  /** Fixed Docker/Terraform accent, independent of the workspace region tint. */
+  getFileAccent: (entry: FileEntry) => WorkspaceAccent | null;
+  /** Workspace View only: per-row workspace ownership accent. */
+  getOwnershipAccent?: (entry: FileEntry) => WorkspaceAccent | null;
   /**
    * Active workspace accent, used for the Workspace-View left rail. Undefined in
    * Project View (regions are multi-color) and when the workspace has no accent.
@@ -34,19 +45,19 @@ export interface FileTreePresentation {
 }
 
 /**
- * Finds the directory node whose normalized repo-relative path equals `relDir`.
- * This uses the same helper as region tinting so Workspace View scoping has the
- * same segment-safe containment and Windows/backslash behavior.
+ * Finds the exact scoped directory, or the nearest unreadable ancestor when
+ * that directory cannot yet be reached. This uses the same normalized relative
+ * paths as region tinting, including segment-safe Windows/backslash behavior.
  */
 function findScopedNode(tree: FileEntry[], repoRoot: string, relDir: string): FileEntry | null {
   for (const entry of tree) {
-    if (entry.isDir && relativePathFromRoot(entry.path, repoRoot) === relDir) {
-      return entry;
-    }
+    if (!entry.isDir) continue;
+    const entryRel = relativePathFromRoot(entry.path, repoRoot);
+    if (entryRel === relDir) return entry;
+    if (!entryRel || !relDir.startsWith(`${entryRel}/`)) continue;
+    if (entry.unreadable) return entry;
     const childMatch = entry.children ? findScopedNode(entry.children, repoRoot, relDir) : null;
-    if (childMatch) {
-      return childMatch;
-    }
+    if (childMatch) return childMatch;
   }
   return null;
 }
@@ -66,9 +77,20 @@ export function useFileTreePresentation(): FileTreePresentation {
     () => (mode === 'project' ? createRegionAccentResolver(repoRoot, workspaces) : undefined),
     [mode, repoRoot, workspaces]
   );
+  const getOwnershipAccent = useMemo(() => {
+    if (mode !== 'workspace') return undefined;
+    const resolveWorkspace = createWorkspacePathResolver(repoRoot, workspaces);
+    return (entry: FileEntry): WorkspaceAccent | null =>
+      (resolveWorkspace(entry.path)?.accent as WorkspaceAccent) || null;
+  }, [mode, repoRoot, workspaces]);
 
   return useMemo<FileTreePresentation>(() => {
-    const base = { mode, canFocusWorkspace };
+    const base = {
+      mode,
+      canFocusWorkspace,
+      getFileAccent: getInfraFileAccent,
+      rootUnreadable: false,
+    };
 
     if (mode === 'project') {
       return {
@@ -83,10 +105,8 @@ export function useFileTreePresentation(): FileTreePresentation {
 
     const relDir = active?.relDir ?? '';
     const workspaceLabel = active?.name ?? repoName;
-    // Workspace View washes the whole scoped tree in the active workspace's
-    // accent (uniform), reinforcing which workspace the files belong to.
+    // The outer rail carries the active scope; row washes follow ownership.
     const treeAccent = (active?.accent as WorkspaceAccent) || undefined;
-    const workspaceResolver = treeAccent ? () => treeAccent : undefined;
 
     if (relDir === '') {
       return {
@@ -95,21 +115,35 @@ export function useFileTreePresentation(): FileTreePresentation {
         rootPath: repoRoot,
         roots: tree,
         scopedError: false,
-        getRegionAccent: workspaceResolver,
+        getRegionAccent: getOwnershipAccent,
+        getOwnershipAccent,
         treeAccent,
       };
     }
 
     const scoped = findScopedNode(tree, repoRoot, relDir);
-    const scopedUnloaded = scoped !== null && scoped.children === undefined;
+    const scopedIsExact = scoped !== null && relativePathFromRoot(scoped.path, repoRoot) === relDir;
+    const rootUnreadable = Boolean(scoped?.unreadable);
+    const scopedUnloaded = scopedIsExact && scoped.children === undefined && !rootUnreadable;
     return {
       ...base,
       rootLabel: workspaceLabel,
       rootPath: scoped?.path ?? `${repoRoot}/${relDir}`,
-      roots: scoped?.children ?? [],
+      roots: scopedIsExact ? (scoped.children ?? []) : [],
       scopedError: scoped === null || scopedUnloaded,
-      getRegionAccent: workspaceResolver,
+      rootUnreadable,
+      getRegionAccent: getOwnershipAccent,
+      getOwnershipAccent,
       treeAccent,
     };
-  }, [mode, canFocusWorkspace, repoName, repoRoot, tree, active, getRegionAccent]);
+  }, [
+    mode,
+    canFocusWorkspace,
+    repoName,
+    repoRoot,
+    tree,
+    active,
+    getRegionAccent,
+    getOwnershipAccent,
+  ]);
 }

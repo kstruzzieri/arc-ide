@@ -6,33 +6,14 @@ import { useSearchStore } from '../../stores/searchStore';
 const mockSearchWorkspace = jest.fn();
 const mockCancelSearch = jest.fn().mockResolvedValue(undefined);
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  SearchWorkspace: (...args: unknown[]) => mockSearchWorkspace(...args),
-  CancelSearch: (...args: unknown[]) => mockCancelSearch(...args),
-}));
-
-// --- Wails models mock: only the search namespace is used by the hook ---
-jest.mock('../../../wailsjs/go/models', () => ({
-  search: {
-    SearchRequest: class {
-      requestId: string;
-      root: string;
-      query: string;
-      options: { regex: boolean; caseSensitive: boolean; wholeWord: boolean };
-      constructor(source: {
-        requestId: string;
-        root: string;
-        query: string;
-        options: { regex: boolean; caseSensitive: boolean; wholeWord: boolean };
-      }) {
-        this.requestId = source.requestId;
-        this.root = source.root;
-        this.query = source.query;
-        this.options = source.options;
-      }
-    },
-  },
-}));
+jest.mock('../../wails/bindings', () => {
+  const actual = jest.requireActual('../../wails/bindings');
+  return {
+    ...actual,
+    SearchWorkspace: (...args: unknown[]) => mockSearchWorkspace(...args),
+    CancelSearch: (...args: unknown[]) => mockCancelSearch(...args),
+  };
+});
 
 // Imported after mocks so the hook closes over the mocks above.
 import { SEARCH_DEBOUNCE_MS, useWorkspaceSearch } from '../../hooks/useWorkspaceSearch';

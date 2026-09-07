@@ -21,7 +21,7 @@ import { useIDEStore } from '../stores/ideStore';
 import { useLSPStore, findServerStatusForFile } from '../stores/lspStore';
 import { lspFamilyForFile } from '../utils/lspLanguageId';
 import { flushLSPDocumentChange } from '../utils/lspDocumentSync';
-import { LSPDocumentSymbol } from '../../wailsjs/go/main/App';
+import { LSPDocumentSymbol } from '../wails/bindings';
 import type { DocumentSymbolNode } from '../utils/documentSymbols';
 
 export const STRUCTURE_FETCH_DEBOUNCE_MS = 300;

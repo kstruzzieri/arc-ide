@@ -1,4 +1,4 @@
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -30,7 +30,8 @@ import {
   GitFileHunks,
   GitApplyHunk,
   ReadFile,
-} from '../../wailsjs/go/main/App';
+} from '../wails/bindings';
+import { CancellablePromise } from '../wails/runtime';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from './gitStore';
 import { useIDEStore } from './ideStore';
 
@@ -97,7 +98,7 @@ describe('gitStore refresh', () => {
   it('drops a stale refresh that resolves after a workspace switch', async () => {
     let resolveA!: (v: Awaited<ReturnType<typeof GitStatus>>) => void;
     mockGitStatus.mockReturnValueOnce(
-      new Promise((res) => {
+      new CancellablePromise((res) => {
         resolveA = res;
       })
     );
@@ -225,7 +226,7 @@ describe('gitStore operations', () => {
   it('pull records op-in-flight state and output', async () => {
     let resolvePull!: (v: string) => void;
     mockGitPull.mockReturnValue(
-      new Promise((res) => {
+      new CancellablePromise((res) => {
         resolvePull = res;
       })
     );
@@ -242,7 +243,7 @@ describe('gitStore operations', () => {
   it('drops a mutating op result that resolves after a workspace switch', async () => {
     let resolvePull!: (v: string) => void;
     mockGitPull.mockReturnValue(
-      new Promise((res) => {
+      new CancellablePromise((res) => {
         resolvePull = res;
       })
     );
@@ -602,7 +603,7 @@ describe('gitStore diff sessions', () => {
     // User clicks B; hold its worktree read open.
     let releaseB!: (v: Awaited<ReturnType<typeof ReadFile>>) => void;
     mockReadFile.mockReturnValueOnce(
-      new Promise((res) => {
+      new CancellablePromise((res) => {
         releaseB = res;
       })
     );
@@ -845,7 +846,7 @@ describe('gitStore diff sessions', () => {
     let resolveOld!: (value: Awaited<ReturnType<typeof GitFileAtRev>>) => void;
     mockFileAtRev
       .mockReturnValueOnce(
-        new Promise((resolve) => {
+        new CancellablePromise((resolve) => {
           resolveOld = resolve;
         })
       )

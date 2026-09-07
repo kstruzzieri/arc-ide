@@ -29,7 +29,7 @@ jest.mock('../../../components/RunOutput/SourceTimelineView', () => ({
 }));
 
 const stopMock = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
   StopRunProfile: (id: string) => stopMock(id),
 }));
 
@@ -185,6 +185,48 @@ describe('CompoundExecutionView', () => {
 
     expect(stages).toHaveAttribute('aria-selected', 'false');
     expect(allSteps).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('uses one selected tab stop and moves focus without changing the view', () => {
+    render(<CompoundExecutionView compound={makeCompound()} />);
+
+    const stages = screen.getByRole('tab', { name: /stages/i });
+    const allSteps = screen.getByRole('tab', { name: /all steps/i });
+    expect([stages.tabIndex, allSteps.tabIndex]).toEqual([0, -1]);
+
+    stages.focus();
+    fireEvent.keyDown(stages, { key: 'ArrowRight' });
+    expect(allSteps).toHaveFocus();
+    expect(stages).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(allSteps, { key: 'ArrowLeft' });
+    expect(stages).toHaveFocus();
+    fireEvent.keyDown(stages, { key: 'ArrowLeft' });
+    expect(allSteps).toHaveFocus();
+    fireEvent.keyDown(allSteps, { key: 'ArrowRight' });
+    expect(stages).toHaveFocus();
+    fireEvent.keyDown(stages, { key: 'End' });
+    expect(allSteps).toHaveFocus();
+    fireEvent.keyDown(allSteps, { key: 'Home' });
+    expect(stages).toHaveFocus();
+
+    fireEvent.click(allSteps);
+    expect([stages.tabIndex, allSteps.tabIndex]).toEqual([-1, 0]);
+  });
+
+  it('associates both tabs with the named compound-output panel', () => {
+    render(<CompoundExecutionView compound={makeCompound()} />);
+
+    const stages = screen.getByRole('tab', { name: /stages/i });
+    const allSteps = screen.getByRole('tab', { name: /all steps/i });
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('id', 'compound-output-panel');
+    expect(stages).toHaveAttribute('aria-controls', panel.id);
+    expect(allSteps).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', stages.id);
+
+    fireEvent.click(allSteps);
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', allSteps.id);
   });
 
   it('lets the user select a stage by clicking its row', () => {

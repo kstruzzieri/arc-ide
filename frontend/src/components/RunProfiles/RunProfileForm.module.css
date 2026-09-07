@@ -178,7 +178,7 @@
   padding: 3px 9px;
   border-radius: 11px;
   background: var(--accent-dim);
-  color: var(--accent);
+  color: var(--text-primary);
   border: 1px solid var(--accent-glow);
 }
 .fieldError {

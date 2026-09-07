@@ -1,0 +1,19 @@
+{
+  "verdict": "accept",
+  "document": "apply_request",
+  "mode": "apply",
+  "value": {
+    "targetRevision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "source": {
+      "kind": "applied"
+    },
+    "changes": [
+      {
+        "kind": "provider-update",
+        "name": "local",
+        "apiFormat": "ollama"
+      }
+    ],
+    "keys": {}
+  }
+}

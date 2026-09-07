@@ -430,6 +430,7 @@ function ConflictBanner({
   raw: string | null;
 }) {
   const [showRaw, setShowRaw] = useState(false);
+  const fileQueue = conflicts.map((file) => file.change.path);
 
   return (
     <div className={styles.conflictBanner} data-testid="conflict-banner" role="alert">
@@ -439,12 +440,23 @@ function ConflictBanner({
       </div>
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
-          <li key={f.change.path}>
+          <li key={f.change.path} className={styles.conflictItem}>
+            <button
+              type="button"
+              className={styles.conflictResolve}
+              onClick={() =>
+                void useGitStore.getState().openMergeResolution(f.change.path, fileQueue)
+              }
+              aria-label={`Resolve ${f.change.path}`}
+            >
+              Resolve
+            </button>
             <button
               type="button"
               className={styles.conflictOpen}
               onClick={() => void ensureEditorFileOpen(f.absPath)}
-              aria-label={`Open ${fileName(f.change.path)}`}
+              aria-label={`Open ${f.change.path}`}
+              title={f.change.path}
             >
               {f.change.path}
             </button>
@@ -524,7 +536,7 @@ function Section({
         </span>
       </div>
       {!collapsed && (
-        <ul className={styles.rows}>
+        <ul className={`${styles.rows} ${rowAction === null ? styles.rowsNoCheck : ''}`}>
           {files.map((f) => (
             <ChangeRow key={`${testId}-${f.change.path}`} file={f} rowAction={rowAction} />
           ))}

@@ -1,13 +1,19 @@
 import { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
-jest.mock('../../../../../wailsjs/go/main/App', () => ({
-  LSPHover: jest.fn(),
-  LSPDefinition: jest.fn(),
-}));
+jest.mock('../../../../wails/bindings', () => {
+  const actual = jest.requireActual('../../../../wails/bindings');
+  return {
+    ...actual,
+    LSPHover: jest.fn(),
+    LSPDefinition: jest.fn(),
+  };
+});
 
-jest.mock('../../../../../wailsjs/runtime/runtime', () => ({
-  ClipboardSetText: jest.fn(),
+jest.mock('../../../../wails/runtime', () => ({
+  // Spread the real adapter so CancellablePromise stays available to the test.
+  ...jest.requireActual('../../../../wails/runtime'),
+  ClipboardSetText: jest.fn(() => Promise.resolve()),
   BrowserOpenURL: jest.fn(),
 }));
 
@@ -15,9 +21,11 @@ jest.mock('../../../../utils/lspDocumentSync', () => ({
   flushLSPDocumentChange: jest.fn(() => Promise.resolve(false)),
 }));
 
-import { LSPHover } from '../../../../../wailsjs/go/main/App';
-import { lsp } from '../../../../../wailsjs/go/models';
+import { LSPHover } from '../../../../wails/bindings';
+import { lsp } from '../../../../wails/bindings';
+import { CancellablePromise } from '../../../../wails/runtime';
 import { flushLSPDocumentChange } from '../../../../utils/lspDocumentSync';
+import { loadLanguageSupport } from '../../../../components/Editor/codemirror/languages';
 import {
   collapseBlankRuns,
   createLSPHoverSource,
@@ -53,7 +61,7 @@ describe('createLSPHoverSource', () => {
     let resolveHover: (value: Awaited<ReturnType<typeof LSPHover>>) => void = () => {};
 
     mockHover.mockReturnValue(
-      new Promise((resolve) => {
+      new CancellablePromise((resolve) => {
         resolveHover = resolve;
       })
     );
@@ -111,7 +119,14 @@ describe('highlightSignatureParts', () => {
     ]);
   });
 
-  it('highlights a Go signature with the real Go parser when given a .go path', () => {
+  it('uses the regex fallback until the file language has loaded', () => {
+    const parts = highlightSignatureParts('func LogWarning(ctx context.Context)', '/proj/app.go');
+
+    expect(parts).not.toContainEqual({ text: 'func', className: 'firn-hover-keyword' });
+  });
+
+  it('highlights a Go signature with the already-loaded Go parser', async () => {
+    await expect(loadLanguageSupport('/proj/app.go')).resolves.not.toBeNull();
     const parts = highlightSignatureParts(
       'func LogWarning(ctx context.Context, message string)',
       '/proj/app.go'

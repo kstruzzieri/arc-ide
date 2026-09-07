@@ -3,7 +3,7 @@ import { useIDEStore } from '../../stores/ideStore';
 
 const mockListRecentWorkspaces = jest.fn();
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
+jest.mock('../../wails/bindings', () => ({
   ListRecentWorkspaces: mockListRecentWorkspaces,
 }));
 

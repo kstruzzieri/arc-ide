@@ -3,6 +3,7 @@
 // module and verify the component's construction/teardown contract instead.
 const destroyMock = jest.fn();
 let fakeSideBDoc = '';
+const fakeSideADispatch = jest.fn();
 const fakeDispatch = jest.fn(
   (transaction: { changes?: { from: number; to: number; insert: string } }) => {
     if (!transaction.changes) return;
@@ -10,6 +11,11 @@ const fakeDispatch = jest.fn(
     fakeSideBDoc = `${fakeSideBDoc.slice(0, from)}${insert}${fakeSideBDoc.slice(to)}`;
   }
 );
+const fakeSideA = {
+  state: {},
+  dispatch: fakeSideADispatch,
+  requestMeasure: jest.fn(),
+};
 const fakeSideB = {
   state: { doc: { toString: () => fakeSideBDoc }, selection: { main: { head: 0 } } },
   dispatch: (transaction: unknown) => fakeDispatch(transaction as never),
@@ -20,7 +26,7 @@ const mergeViewMock = jest.fn().mockImplementation((config: { b: { doc: string }
   fakeSideBDoc = config.b.doc;
   return {
     destroy: destroyMock,
-    a: { state: {}, requestMeasure: jest.fn() },
+    a: fakeSideA,
     b: fakeSideB,
   };
 });
@@ -56,17 +62,22 @@ jest.mock('@codemirror/view', () => ({
   gutter: (config: unknown) => gutterMock(config),
   GutterMarker: class {},
 }));
+const compartmentReconfigureMocks: jest.Mock[] = [];
 jest.mock('@codemirror/state', () => ({
   Annotation: { define: jest.fn(() => ({ of: jest.fn(() => 'EXTERNAL_DOC_UPDATE') })) },
   EditorState: { readOnly: { of: jest.fn(() => 'READONLY') } },
   RangeSet: { of: jest.fn() },
   Transaction: { addToHistory: { of: jest.fn(() => 'NO_HISTORY') } },
   Compartment: class {
+    private reconfigureMock = jest.fn((extension: unknown) => ({ __reconfigure: extension }));
+    constructor() {
+      compartmentReconfigureMocks.push(this.reconfigureMock);
+    }
     of(extension: unknown) {
       return extension;
     }
     reconfigure(extension: unknown) {
-      return { __reconfigure: extension };
+      return this.reconfigureMock(extension);
     }
   },
 }));
@@ -76,9 +87,10 @@ jest.mock('@codemirror/commands', () => ({
   defaultKeymap: ['DEFAULT_KEYS'],
   indentWithTab: 'INDENT_WITH_TAB',
 }));
+const mockLoadLanguageSupport = jest.fn<Promise<unknown>, [string]>();
 jest.mock('../../../components/Editor/codemirror', () => ({
   buildTheme: jest.fn(() => []),
-  getLanguageExtension: jest.fn(() => null),
+  loadLanguageSupport: mockLoadLanguageSupport,
   gitGutterExtension: jest.fn(() => 'GIT_GUTTER'),
   setGitBaseline: { of: jest.fn((v: unknown) => ({ __baseline: v })) },
 }));
@@ -86,9 +98,8 @@ const mockEnsureOpen = jest.fn().mockResolvedValue({ id: '/repo/src/a.ts' });
 jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureOpen(...args),
 }));
-// gitStore (imported for its store) transitively loads the ESM wailsjs App
-// bindings; mock them so the module graph stays jest-parseable.
-jest.mock('../../../../wailsjs/go/main/App', () => ({
+jest.mock('../../../wails/bindings', () => ({
+  ...jest.requireActual('../../../wails/bindings'),
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -106,11 +117,11 @@ jest.mock('../../../../wailsjs/go/main/App', () => ({
   WriteFile: jest.fn(),
 }));
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GitDiffView } from '../../../components/Editor/GitDiffView';
 import { useGitStore, type DiffSession } from '../../../stores/gitStore';
 import { useIDEStore } from '../../../stores/ideStore';
-import { WriteFile } from '../../../../wailsjs/go/main/App';
+import { WriteFile } from '../../../wails/bindings';
 import { flushWorkingTreeEdit } from '../../../utils/fileWrites';
 
 const mockWriteFile = WriteFile as jest.MockedFunction<typeof WriteFile>;
@@ -130,12 +141,94 @@ const base: DiffSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  compartmentReconfigureMocks.length = 0;
+  mockLoadLanguageSupport.mockReturnValue(new Promise(() => {}));
   mockEditListener = null;
   mockWriteFile.mockResolvedValue(undefined);
   useIDEStore.setState({ openFiles: [] });
 });
 
 describe('GitDiffView', () => {
+  it('loads once and reconfigures both panes with separate compartments', async () => {
+    const pending = deferred<unknown>();
+    const language = { name: 'typescript-support' };
+    mockLoadLanguageSupport.mockReturnValueOnce(pending.promise);
+
+    render(<GitDiffView session={base} />);
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledWith('a.ts'));
+    fakeSideADispatch.mockClear();
+    fakeDispatch.mockClear();
+
+    await act(async () => pending.resolve(language));
+
+    expect(fakeSideADispatch).toHaveBeenCalledWith({
+      effects: { __reconfigure: language },
+    });
+    expect(fakeDispatch).toHaveBeenCalledWith({ effects: { __reconfigure: language } });
+    expect(
+      compartmentReconfigureMocks.filter((mock) =>
+        mock.mock.calls.some(([extension]) => extension === language)
+      )
+    ).toHaveLength(2);
+  });
+
+  it('keeps both panes plain when no language support is available', async () => {
+    mockLoadLanguageSupport.mockResolvedValueOnce(null);
+
+    render(<GitDiffView session={base} />);
+
+    await waitFor(() =>
+      expect(fakeSideADispatch).toHaveBeenCalledWith({
+        effects: { __reconfigure: [] },
+      })
+    );
+    expect(fakeDispatch).toHaveBeenCalledWith({ effects: { __reconfigure: [] } });
+  });
+
+  it('ignores a language resolved for a replaced diff session', async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    mockLoadLanguageSupport.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { rerender } = render(<GitDiffView session={base} />);
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledWith('a.ts'));
+
+    const replacement = {
+      ...base,
+      path: 'src/b.py',
+      absPath: '/repo/src/b.py',
+    };
+    rerender(<GitDiffView session={replacement} />);
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalledWith('b.py'));
+    fakeSideADispatch.mockClear();
+    fakeDispatch.mockClear();
+
+    await act(async () => first.resolve({ name: 'stale-typescript' }));
+    expect(fakeSideADispatch).not.toHaveBeenCalled();
+    expect(fakeDispatch).not.toHaveBeenCalled();
+
+    const python = { name: 'python-support' };
+    await act(async () => second.resolve(python));
+    expect(fakeSideADispatch).toHaveBeenCalledWith({
+      effects: { __reconfigure: python },
+    });
+    expect(fakeDispatch).toHaveBeenCalledWith({ effects: { __reconfigure: python } });
+  });
+
+  it('ignores a language resolved after unmount', async () => {
+    const pending = deferred<unknown>();
+    mockLoadLanguageSupport.mockReturnValueOnce(pending.promise);
+    const { unmount } = render(<GitDiffView session={base} />);
+    await waitFor(() => expect(mockLoadLanguageSupport).toHaveBeenCalled());
+    fakeSideADispatch.mockClear();
+    fakeDispatch.mockClear();
+
+    unmount();
+    await act(async () => pending.resolve({ name: 'late-language' }));
+
+    expect(fakeSideADispatch).not.toHaveBeenCalled();
+    expect(fakeDispatch).not.toHaveBeenCalled();
+  });
+
   it('mounts a merge view with both revision docs and labels', () => {
     render(<GitDiffView session={base} />);
 
@@ -148,14 +241,13 @@ describe('GitDiffView', () => {
     expect(config.parent).toBe(screen.getByTestId('merge-host'));
   });
 
-  it('opens the working-tree file and yields the diff via Open File', async () => {
+  it('delegates Open File to the shared editor navigation utility', async () => {
     useGitStore.setState({ diffFocused: true });
     render(<GitDiffView session={base} />);
 
     fireEvent.click(screen.getByRole('button', { name: /open file/i }));
 
     await waitFor(() => expect(mockEnsureOpen).toHaveBeenCalledWith('/repo/src/a.ts'));
-    expect(useGitStore.getState().diffFocused).toBe(false);
   });
 
   it('destroys the merge view on unmount', () => {
@@ -577,3 +669,11 @@ describe('GitDiffView', () => {
     expect(mergeViewMock).not.toHaveBeenCalled();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useIDEStore } from '../stores/ideStore';
-import { OpenFolderDialog } from '../../wailsjs/go/main/App';
+import { OpenFolderDialog } from '../wails/bindings';
 import { openWorkspaceByPath } from '../utils/workspace';
 
 // Module-level lock shared across all hook instances (Header, FileExplorer,

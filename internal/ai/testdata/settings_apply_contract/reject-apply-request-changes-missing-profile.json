@@ -1,0 +1,14 @@
+{
+  "verdict": "reject",
+  "document": "apply_request",
+  "mode": "apply",
+  "value": {
+    "targetRevision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "source": {
+      "kind": "profile",
+      "profileId": "curated/local",
+      "sourceRevision": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    },
+    "keys": {}
+  }
+}

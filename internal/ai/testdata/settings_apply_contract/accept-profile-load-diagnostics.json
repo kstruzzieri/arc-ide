@@ -1,0 +1,16 @@
+{
+  "verdict": "accept",
+  "document": "profile_load_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "not_found",
+        "profileId": "user/missing"
+      },
+      {
+        "code": "io"
+      }
+    ]
+  }
+}

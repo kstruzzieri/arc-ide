@@ -56,3 +56,13 @@ it('leaves a surviving-but-still-unloaded dir unloaded', () => {
   const merged = preserveLoadedChildren(oldLevel, newLevel);
   expect(merged[0].children).toBeUndefined();
 });
+
+it('keeps an unreadable directory marked across a parent-only refresh', () => {
+  const oldDir = dir('/r/a');
+  oldDir.unreadable = true;
+
+  const merged = preserveLoadedChildren([oldDir], [dir('/r/a')]);
+
+  expect(merged[0].unreadable).toBe(true);
+  expect(merged[0].children).toBeUndefined();
+});

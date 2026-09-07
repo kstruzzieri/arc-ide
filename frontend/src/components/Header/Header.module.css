@@ -66,13 +66,6 @@
   background: var(--surface-panel);
 }
 
-.searchShortcut {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-disabled);
-  letter-spacing: 0.5px;
-}
-
 /* Workspace Selector */
 .workspaceWrapper {
   position: relative;

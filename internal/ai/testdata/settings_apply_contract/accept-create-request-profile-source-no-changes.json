@@ -1,0 +1,14 @@
+{
+  "verdict": "accept",
+  "document": "apply_request",
+  "mode": "create",
+  "value": {
+    "source": {
+      "kind": "profile",
+      "profileId": "curated/local",
+      "sourceRevision": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    },
+    "changes": [],
+    "keys": {}
+  }
+}

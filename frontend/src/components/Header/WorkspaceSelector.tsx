@@ -7,26 +7,10 @@ import {
   useActiveWorkspaceId,
   useIDEStore,
 } from '../../stores/ideStore';
-import { EventsOn } from '../../../wailsjs/runtime/runtime';
+import { EventsOn } from '../../wails/runtime';
+import { accentVar } from '../../utils/accent';
 
 const MENU_ID = 'workspace-selector-menu';
-
-const VALID_ACCENTS = new Set([
-  'project',
-  'blue',
-  'cyan',
-  'green',
-  'purple',
-  'orange',
-  'amber',
-  'general',
-]);
-
-// accentVar maps an accent value to its CSS custom property, falling back to the
-// neutral "project" accent for any value without a defined token.
-function accentVar(accent: string): string {
-  return `var(--accent-${VALID_ACCENTS.has(accent) ? accent : 'project'})`;
-}
 
 export function WorkspaceSelector() {
   const repo = useWorkspace();
@@ -133,6 +117,7 @@ export function WorkspaceSelector() {
   return (
     <div className={styles.wrapper}>
       <button
+        type="button"
         ref={buttonRef}
         className={styles.trigger}
         onClick={() => setIsOpen((p) => !p)}
@@ -165,6 +150,7 @@ export function WorkspaceSelector() {
           </div>
           {workspaces.map((w) => (
             <button
+              type="button"
               key={w.id}
               className={styles.menuItem}
               role="menuitemradio"

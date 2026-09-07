@@ -1,14 +1,38 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"firn/internal/git"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"firn/internal/git/gittest"
 )
+
+// isolatedGitEnv strips the repository-local GIT_* variables (so an inherited
+// GIT_DIR from a linked worktree cannot redirect these test git commands into
+// the real repo) and pins config to /dev/null. Package main cannot reach the
+// git package's unexported scrubGitEnv, so this mirrors it locally.
+func isolatedGitEnv() []string {
+	env := make([]string, 0, len(os.Environ())+6)
+	for _, v := range os.Environ() {
+		switch {
+		case strings.HasPrefix(v, "GIT_DIR="),
+			strings.HasPrefix(v, "GIT_WORK_TREE="),
+			strings.HasPrefix(v, "GIT_INDEX_FILE="),
+			strings.HasPrefix(v, "GIT_COMMON_DIR="),
+			strings.HasPrefix(v, "GIT_OBJECT_DIRECTORY="):
+			continue
+		}
+		env = append(env, v)
+	}
+	return append(env,
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+}
 
 func initGitRepoForApp(t *testing.T) string {
 	t.Helper()
@@ -23,6 +47,7 @@ func initGitRepoForApp(t *testing.T) string {
 	} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -31,6 +56,30 @@ func initGitRepoForApp(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {
+	if !NewApp().GitCommitMessageAvailable() {
+		t.Fatal("GitCommitMessageAvailable() = false, want true without a binary")
+	}
+}
+
+func TestGitGenerateCommitMessage_Binding(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	gittest.Start(t, "feat: add f.txt", nil)
+	app := NewApp()
+	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := app.GitGenerateCommitMessage(dir)
+
+	if err != nil {
+		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
+	}
+	if msg != "feat: add f.txt" {
+		t.Errorf("msg = %q", msg)
+	}
 }
 
 func TestGitStatus_Binding(t *testing.T) {
@@ -64,44 +113,6 @@ func TestGitStageAndCommit_Binding(t *testing.T) {
 	st, _ := app.GitStatus(dir)
 	if len(st.Files) != 0 {
 		t.Errorf("Files after commit = %+v, want empty", st.Files)
-	}
-}
-
-func TestGitCommitMessageAvailable_UsesGenerator(t *testing.T) {
-	app := NewApp()
-	app.gitMsgGen = &git.MessageGenerator{
-		LookPath: func(string) (string, error) { return "", errors.New("absent") },
-		Run: func(context.Context, string, []string) (string, error) {
-			t.Fatal("Run must not be called when binary is absent")
-			return "", nil
-		},
-	}
-
-	if app.GitCommitMessageAvailable() {
-		t.Error("GitCommitMessageAvailable() = true, want false when golem absent")
-	}
-}
-
-func TestGitGenerateCommitMessage_Binding(t *testing.T) {
-	dir := initGitRepoForApp(t)
-	app := NewApp()
-	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
-		t.Fatal(err)
-	}
-	app.gitMsgGen = &git.MessageGenerator{
-		LookPath: func(string) (string, error) { return "/fake/golem", nil },
-		Run: func(_ context.Context, _ string, args []string) (string, error) {
-			return "feat: add f.txt\n", nil
-		},
-	}
-
-	msg, err := app.GitGenerateCommitMessage(dir)
-
-	if err != nil {
-		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
-	}
-	if msg != "feat: add f.txt" {
-		t.Errorf("msg = %q", msg)
 	}
 }
 
@@ -151,5 +162,187 @@ func TestGitBranchesAndCheckout_Binding(t *testing.T) {
 	}
 	if len(branches) != 2 {
 		t.Errorf("branches = %v, want 2", branches)
+	}
+}
+
+// makeAppConflict builds a real merge conflict in a temp repo and returns dir.
+func makeAppConflict(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	run := func(allowFail bool, args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil && !allowFail {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(s string) {
+		if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(false, "init", "-b", "main")
+	run(false, "config", "user.name", "Test")
+	run(false, "config", "user.email", "test@example.com")
+	write("base\n")
+	run(false, "add", ".")
+	run(false, "commit", "-m", "base")
+	run(false, "checkout", "-b", "feature")
+	write("theirs\n")
+	run(false, "commit", "-am", "theirs")
+	run(false, "checkout", "main")
+	write("ours\n")
+	run(false, "commit", "-am", "ours")
+	run(true, "merge", "feature") // conflicts
+	return dir
+}
+
+func TestGitMergeBindings_SnapshotStagesHeadsResolve(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+
+	snap, err := app.GitConflictSnapshot(dir, "f.txt")
+	if err != nil {
+		t.Fatalf("GitConflictSnapshot() error = %v", err)
+	}
+	if len(snap.Regions) != 1 {
+		t.Fatalf("regions = %d, want 1", len(snap.Regions))
+	}
+
+	heads, err := app.GitMergeHeads(dir)
+	if err != nil {
+		t.Fatalf("GitMergeHeads() error = %v", err)
+	}
+	if heads.Operation != "merge" {
+		t.Errorf("Operation = %q, want merge", heads.Operation)
+	}
+
+	stages, err := app.GitConflictStages(dir, "f.txt")
+	if err != nil {
+		t.Fatalf("GitConflictStages() error = %v", err)
+	}
+	if stages.Ours == nil || stages.Theirs == nil {
+		t.Errorf("stages incomplete: %+v", stages)
+	}
+
+	if err := app.GitResolveConflictSide(dir, "f.txt", "ours"); err != nil {
+		t.Fatalf("GitResolveConflictSide() error = %v", err)
+	}
+	st, _ := app.GitStatus(dir)
+	for _, f := range st.Files {
+		if f.Unmerged {
+			t.Errorf("f.txt still unmerged after resolve: %+v", f)
+		}
+	}
+}
+
+func TestApp_GitConflictState_Binding(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+
+	state, err := app.GitConflictState(dir, "f.txt")
+
+	if err != nil {
+		t.Fatalf("GitConflictState() error = %v", err)
+	}
+	if state.SourceVersion == "" {
+		t.Error("SourceVersion is empty")
+	}
+	if state.Snapshot == nil || len(state.Snapshot.Regions) != 1 {
+		t.Errorf("Snapshot = %+v, want one region", state.Snapshot)
+	}
+	if state.Heads == nil || state.Heads.Operation != "merge" {
+		t.Errorf("Heads = %+v, want a merge operation", state.Heads)
+	}
+}
+
+func TestApp_GitConflictGuards_MismatchIsNotAnError(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+	state, err := app.GitConflictState(dir, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := state.SourceVersion + "-stale"
+
+	write, err := app.GitWriteConflictResult(dir, "f.txt", stale, "resolved\n", "utf-8", "lf")
+	if err != nil {
+		t.Fatalf("GitWriteConflictResult() error = %v, want a clean mismatch", err)
+	}
+	if write.Applied {
+		t.Error("write Applied = true, want false")
+	}
+
+	stage, err := app.GitStageConflictResult(dir, "f.txt", stale)
+	if err != nil {
+		t.Fatalf("GitStageConflictResult() error = %v, want a clean mismatch", err)
+	}
+	if stage.Applied {
+		t.Error("stage Applied = true, want false")
+	}
+
+	side, err := app.GitApplyConflictSide(dir, "f.txt", "ours", stale)
+	if err != nil {
+		t.Fatalf("GitApplyConflictSide() error = %v, want a clean mismatch", err)
+	}
+	if side.Applied {
+		t.Error("side Applied = true, want false")
+	}
+
+	st, _ := app.GitStatus(dir)
+	unmerged := false
+	for _, f := range st.Files {
+		if f.Unmerged {
+			unmerged = true
+		}
+	}
+	if !unmerged {
+		t.Error("f.txt is no longer unmerged, want every refused mutation to be a no-op")
+	}
+}
+
+func TestApp_GitConflictGuards_SucceedWithTheLiveVersion(t *testing.T) {
+	dir := makeAppConflict(t)
+	app := NewApp()
+	state, err := app.GitConflictState(dir, "f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	write, err := app.GitWriteConflictResult(dir, "f.txt", state.SourceVersion, "resolved\n", "utf-8", "lf")
+	if err != nil || !write.Applied {
+		t.Fatalf("GitWriteConflictResult() = %+v, err = %v, want applied", write, err)
+	}
+	stage, err := app.GitStageConflictResult(dir, "f.txt", write.SourceVersion)
+	if err != nil || !stage.Applied {
+		t.Fatalf("GitStageConflictResult() = %+v, err = %v, want applied", stage, err)
+	}
+
+	st, _ := app.GitStatus(dir)
+	for _, f := range st.Files {
+		if f.Unmerged {
+			t.Errorf("f.txt still unmerged after guarded write and stage: %+v", f)
+		}
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "f.txt"))
+	if string(got) != "resolved\n" {
+		t.Errorf("worktree content = %q, want the resolved result", got)
+	}
+}
+
+func TestApp_GitConflictState_OperationalErrorStillErrors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	app := NewApp()
+
+	// Not a repository at all: an operational failure must remain an error and
+	// never be reported as a benign version mismatch.
+	if _, err := app.GitConflictState(t.TempDir(), "f.txt"); err == nil {
+		t.Fatal("GitConflictState(non-repo) error = nil, want an operational error")
 	}
 }

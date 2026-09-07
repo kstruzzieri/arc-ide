@@ -1,0 +1,7 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "toString"
+  }
+}

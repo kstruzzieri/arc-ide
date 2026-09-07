@@ -1,14 +1,18 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RunProfiles } from '../../components/RunProfiles/RunProfiles';
 import { useIDEStore } from '../../stores/ideStore';
 import type { RunProfile, RunProfileUIState } from '../../types/runProfile';
 import type { RunOutput } from '../../types/runOutput';
 
-jest.mock('../../../wailsjs/go/main/App', () => ({
-  StartRunProfile: jest.fn(() => Promise.resolve()),
-  StopRunProfile: jest.fn(() => Promise.resolve()),
-  RestartRunProfile: jest.fn(() => Promise.resolve()),
+const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+
+jest.mock('../../wails/bindings', () => ({
+  StartRunProfile: (id: string) => mockStartProfile(id),
+  StopRunProfile: (id: string) => mockStopProfile(id),
+  RestartRunProfile: (id: string) => mockRestartProfile(id),
   PinRunProfile: jest.fn(() => Promise.resolve()),
   UnpinRunProfile: jest.fn(() => Promise.resolve()),
   SetActiveVariant: jest.fn(() => Promise.resolve()),
@@ -67,17 +71,27 @@ const profileState: Record<string, RunProfileUIState> = {
   // detectedProfile has no lastRunAt -> detected
 };
 
-function makeRunOutput(profileId: string, state: RunOutput['state']): RunOutput {
+function makeRunOutput(
+  profileId: string,
+  state: RunOutput['state'],
+  runInstanceId = 'r1',
+  launchSeq = 1,
+  text?: string
+): RunOutput {
   return {
-    runInstanceId: 'r1',
+    runInstanceId,
     profileId,
     state,
     exitCode: 0,
-    runCount: 1,
-    entries: [],
-    previousEntries: [],
-  };
+    entries: text == null ? [] : [{ stream: 'stdout', text, timestamp: launchSeq }],
+    launchSeq,
+    workspaceEpoch: 1,
+  } as RunOutput;
 }
+
+const setPhase2BState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
+  useIDEStore.setState(patch);
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -86,6 +100,10 @@ beforeEach(() => {
     runProfileState: profileState,
     activeWorkspaceId: WS, // workspace view
     runOutputs: {},
+    runInstanceIdsByProfile: {},
+    latestRunInstanceIdByProfile: {},
+    runCompounds: {},
+    compoundIdByRunInstance: {},
     runHistory: {},
     runStartTimestamps: {},
     hiddenProfileIds: [],
@@ -114,13 +132,241 @@ describe('RunProfiles panel grouping (workspace view)', () => {
 describe('RunProfiles panel header counter', () => {
   it('shows running and total counts scoped to the active workspace', () => {
     useIDEStore.setState({
-      runOutputs: { [pinnedProfile.id]: makeRunOutput(pinnedProfile.id, 'running') },
+      runOutputs: { r1: makeRunOutput(pinnedProfile.id, 'running') },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['r1'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'r1' },
     });
 
     render(<RunProfiles />);
 
     expect(screen.getByText(/1 running/i)).toBeInTheDocument();
     expect(screen.getByText(/\d+ total/i)).toBeInTheDocument();
+  });
+
+  it('counts running state from the explicit latest run instance', () => {
+    useIDEStore.setState({
+      runOutputs: {
+        old: makeRunOutput(pinnedProfile.id, 'success'),
+        live: { ...makeRunOutput(pinnedProfile.id, 'running'), runInstanceId: 'live' },
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['old', 'live'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'live' },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+  });
+
+  it('uses the newest live execution for a mixed live-and-failed profile card', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        live: makeRunOutput(pinnedProfile.id, 'running', 'live', 10, 'live output'),
+        failed: makeRunOutput(pinnedProfile.id, 'failed', 'failed', 11, 'failed output'),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['live', 'failed'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'failed' },
+      runLaunchSeqByInstance: { live: 10, failed: 11 },
+      runStartTimestamps: { live: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Stop Dev' }).length).toBeGreaterThan(0);
+    expect(screen.getByText('live output')).toBeInTheDocument();
+    expect(screen.queryByText('failed output')).not.toBeInTheDocument();
+  });
+
+  it('offers Run another with one live plus one terminal execution and removes it at the two-live cap', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        terminal: makeRunOutput(pinnedProfile.id, 'failed', 'terminal', 19),
+        first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['terminal', 'first'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'first' },
+      runLaunchSeqByInstance: { terminal: 19, first: 20 },
+      runStartTimestamps: { first: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    const runAnother = screen.getByRole('button', { name: 'Run another Dev' });
+    fireEvent.click(runAnother);
+    expect(mockStartProfile).toHaveBeenCalledWith(pinnedProfile.id);
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
+        },
+        runInstanceIdsByProfile: { [pinnedProfile.id]: ['first', 'second'] },
+        latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'second' },
+        runLaunchSeqByInstance: { first: 20, second: 21 },
+        runStartTimestamps: { first: Date.now() - 1000, second: Date.now() - 500 },
+      });
+    });
+
+    expect(screen.queryByRole('button', { name: 'Run another Dev' })).not.toBeInTheDocument();
+  });
+
+  it('badges the card only once a profile has more than one live execution', () => {
+    setPhase2BState({
+      runProfiles: [pinnedProfile],
+      runProfileState: {},
+      runOutputs: {
+        terminal: makeRunOutput(pinnedProfile.id, 'failed', 'terminal', 19),
+        first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+      },
+      runInstanceIdsByProfile: { [pinnedProfile.id]: ['terminal', 'first'] },
+      latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'first' },
+      runLaunchSeqByInstance: { terminal: 19, first: 20 },
+      runStartTimestamps: { first: Date.now() - 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    // A retained terminal sibling is not a concurrent run, so no badge yet.
+    expect(screen.queryByText('2 running')).not.toBeInTheDocument();
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
+        },
+        runInstanceIdsByProfile: { [pinnedProfile.id]: ['first', 'second'] },
+        latestRunInstanceIdByProfile: { [pinnedProfile.id]: 'second' },
+        runLaunchSeqByInstance: { first: 20, second: 21 },
+        runStartTimestamps: { first: Date.now() - 1000, second: Date.now() - 500 },
+      });
+    });
+
+    // Both live: the card's status and Stop track only the newest, so the badge
+    // is what tells the user a sibling survives a Stop.
+    expect(screen.getByText('2 running')).toBeInTheDocument();
+
+    act(() => {
+      setPhase2BState({
+        runOutputs: {
+          first: makeRunOutput(pinnedProfile.id, 'stopped', 'first', 20),
+          second: makeRunOutput(pinnedProfile.id, 'running', 'second', 21),
+        },
+      });
+    });
+
+    expect(screen.queryByText('2 running')).not.toBeInTheDocument();
+  });
+
+  it('counts a compound through its aggregate run instance without an ordinary output', () => {
+    const compoundProfile: RunProfile = {
+      id: 'ci',
+      name: 'CI',
+      type: 'compound',
+      source: 'user',
+      steps: [pinnedProfile.id],
+      workspaceId: WS,
+      workspaceName: 'Frontend',
+    };
+    useIDEStore.setState({
+      runProfiles: [compoundProfile],
+      latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+      runCompounds: {
+        ci: {
+          runInstanceId: 'agg-r1',
+          compoundId: 'ci',
+          name: 'CI',
+          state: 'running',
+          currentStep: 0,
+          steps: [],
+          stepOutputs: {},
+        },
+      },
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText(/1 running/i)).toBeInTheDocument();
+  });
+
+  it('renders a failed compound card exit code from its aggregate run', () => {
+    const compoundProfile: RunProfile = {
+      id: 'ci',
+      name: 'CI',
+      type: 'compound',
+      source: 'user',
+      steps: [pinnedProfile.id],
+      workspaceId: WS,
+      workspaceName: 'Frontend',
+    };
+    useIDEStore.setState({
+      runProfiles: [compoundProfile],
+      runProfileState: { ci: { adopted: true } },
+      latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+      runCompounds: {
+        ci: {
+          runInstanceId: 'agg-r1',
+          compoundId: 'ci',
+          name: 'CI',
+          state: 'failed',
+          exitCode: 3,
+          currentStep: 0,
+          steps: [],
+          stepOutputs: {},
+        },
+      },
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+      runHistory: { ci: [{ state: 'failed', duration: 1000, timestamp: 2000 }] },
+    });
+
+    render(<RunProfiles />);
+
+    expect(screen.getByText('exit 3')).toBeInTheDocument();
+  });
+
+  it('shows the stopping UI (not "Restarting") when a live compound is stopped', () => {
+    const compoundProfile: RunProfile = {
+      id: 'ci',
+      name: 'CI',
+      type: 'compound',
+      source: 'user',
+      steps: [pinnedProfile.id],
+      workspaceId: WS,
+      workspaceName: 'Frontend',
+    };
+    useIDEStore.setState({
+      runProfiles: [compoundProfile],
+      runProfileState: { ci: { adopted: true } },
+      latestRunInstanceIdByProfile: { ci: 'agg-r1' },
+      runCompounds: {
+        ci: {
+          runInstanceId: 'agg-r1',
+          compoundId: 'ci',
+          name: 'CI',
+          state: 'running',
+          currentStep: 0,
+          steps: [],
+          stepOutputs: {},
+        },
+      },
+      compoundIdByRunInstance: { 'agg-r1': 'ci' },
+      stoppingProfileIds: ['ci'],
+      stopRequestTimestamps: { ci: 1000 },
+    });
+
+    render(<RunProfiles />);
+
+    // The real-stop path keys off the compound's live 'running' state, which is
+    // only visible to the card because the aggregate run is synthesized into a
+    // RunOutput. A regression would fall back to the restart indicator.
+    expect(screen.queryByText(/Restarting/i)).not.toBeInTheDocument();
   });
 });
 
@@ -284,7 +530,7 @@ describe('RunProfiles panel — view toggle', () => {
       runProfileState: profileState,
       workspaces: [
         { id: 'project', name: 'Project', relDir: '', accent: 'project' },
-        { id: WS, name: 'Frontend', relDir: 'frontend', accent: 'blue' },
+        { id: WS, name: 'Frontend', relDir: 'frontend', accent: 'frontend' },
       ] as never,
       activeWorkspaceId: WS, // start in workspace view
       runOutputs: {},

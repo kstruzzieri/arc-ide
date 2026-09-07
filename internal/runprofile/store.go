@@ -280,7 +280,7 @@ func (s *Store) RecordRun(id string, ts int64) error {
 	defer s.mu.Unlock()
 	next := copyProfileState(s.state)
 	st := next[id]
-	st.LastRunAt = ts
+	st.LastRunAt = max(st.LastRunAt, ts)
 	next[id] = st
 	return s.persistRecency(next)
 }

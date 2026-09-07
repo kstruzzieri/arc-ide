@@ -1,0 +1,16 @@
+{
+  "verdict": "reject",
+  "document": "apply_result",
+  "value": {
+    "status": "limited",
+    "diagnostics": [
+      {
+        "code": "identifier_not_editable",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": false
+      }
+    ],
+    "consentOutcome": "unchanged"
+  }
+}

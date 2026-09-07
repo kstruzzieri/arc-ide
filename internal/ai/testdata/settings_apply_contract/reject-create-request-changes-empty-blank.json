@@ -1,0 +1,12 @@
+{
+  "verdict": "reject",
+  "document": "apply_request",
+  "mode": "create",
+  "value": {
+    "source": {
+      "kind": "blank"
+    },
+    "changes": [],
+    "keys": {}
+  }
+}

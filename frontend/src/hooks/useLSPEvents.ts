@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { EventsOn } from '../wails/runtime';
 import { useLSPStore, pathContainsOrEquals } from '../stores/lspStore';
 import { useIDEStore } from '../stores/ideStore';
 import type { LSPDiagnostic, LSPServerStatus } from '../stores/lspStore';

@@ -1,4 +1,4 @@
-jest.mock('../../wailsjs/go/main/App', () => ({
+jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
   GitUnstage: jest.fn(),
@@ -12,7 +12,7 @@ jest.mock('../../wailsjs/go/main/App', () => ({
 }));
 
 import { renderHook, act } from '@testing-library/react';
-import { GitStatus, GitBranches, GitCommitMessageAvailable } from '../../wailsjs/go/main/App';
+import { GitStatus, GitBranches, GitCommitMessageAvailable } from '../wails/bindings';
 import { useGitSync } from './useGitSync';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from '../stores/gitStore';
 import { useIDEStore } from '../stores/ideStore';

@@ -28,94 +28,109 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Milestone 4: Run Profiles | **COMPLETE** | #16-17, #59-64 complete; #18/#71 Phase 1 (#123) + #71 P2 panel (#125) + P2 follow-ups/recency sidecar (#127) + #18 P3 header selector (#129) + lifecycle-script detection fix (#130) + #18 P4 create/edit form (#132) + UI polish (#133) + store persist rollback (#134) shipped → **#18/#71 closed**; LANES output #107 (#138) + #137 (#139) shipped; #103 run execution identity (#144) merged → epic complete |
 | Milestone 5: Language Server Protocol | **COMPLETE** | #19-22, #73-76 complete |
 | Milestone 6: Search | **COMPLETE** | #23-25 |
-| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); #169 editable diff shipped (PR #181); follow-ups #164-166 |
-| Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147) shipped; follow-ups #148/#149; #39 open |
-| Editor & LSP DX | **COMPLETE** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178, final fixes merged in PR #183, packaged native closure gate passed, and #112 closed as completed |
+| Milestone 7: Git Integration | **COMPLETE** | #26-27 shipped (PR #162); #163 hunk-level staging shipped (PR #173, hardened #174/#176); #167 intent-to-add shipped (PR #177); #169 editable diff shipped (PR #181); #164 shipped in full via PRs #208/#209/#213/#239/#244 and is closed; #222 and #242 closed, with merge follow-ups #219/#220/#221/#223/#240/#241 and #166 open (#165 shipped) |
+| Performance | **IN PROGRESS** | #38 complete; #37 virtualization (#111) + lazy directory loading Phase 2 (#147), #149 nested `.gitignore` (#192), #39 dynamic languages (#200), and #195 unreadable-directory UX (#203) shipped; #148/#196 remain benchmark-gated |
+| Editor & LSP DX | **COMPLETE** | #113/#114 theme + #119 picker a11y; #112 provisioning shipped via PRs #121/#150/#178, final fixes merged in PR #183, packaged native closure gate passed, and #112 closed as completed; #168 Structure view closed |
+| Workspace & Search UX | **COMPLETE** | #202 hybrid tree rails shipped (PR #211); #207 search hierarchy (PR #214) and #215 dimmed syntax tokens (PR #217) closed |
+| Toolchain | **COMPLETE** | #225 module and every CI job on Go 1.25 via `go-version-file: 'go.mod'`; unblocked #165/#226, both now shipped |
 | Dependency Upgrades | **COMPLETE** | #40 |
-| Code Quality | **IN PROGRESS** | #42 closed as completed; #41 open and needs re-scoping against the current 1,787-line store |
-| Accessibility | **IN PROGRESS** | #43 open; tree roving focus, `aria-busy`, and several live regions already shipped, so the remaining scope requires an audit |
-| Future Features | Not started | #44-46 |
-| Bug Fixes | **IN PROGRESS** | #33 closed; #34 open |
+| Code Quality | **IN PROGRESS** | #42 closed; #41 remains an incremental extraction constraint, not a standalone refactor project |
+| Accessibility | **COMPLETE** | #43 closed via PR #201 after the WCAG AA remainder and automated evidence landed; a human VoiceOver/NVDA pass remains prudent release validation |
+| Future Features | **IN PROGRESS** | #44 implementation shipped via PR #206 (tracker still open); #45/#46 are unlocked; #226 Golem chat panel shipped via PR #262 on the #165 embedded runtime; #263 slices A and B shipped via PRs #269/#270/#272 with the upstream-gated write phases still open, #285 phase routing shipped via PR #287, and #271 center panel and undock shipped via PR #288; #264/#265 and the polish follow-ups #284/#289/#291/#293 remain open |
+| Platform | **COMPLETE** | #273 Wails v3.0.0-beta.16 host migration shipped via PRs #274/#280; macOS floor raised to 12, Linux pinned to WebKit2GTK 4.1 (GTK3); #281 (GTK4 + WebKitGTK 6.0, gates v3.1) and #282 hygiene follow-ups open |
+| Bug Fixes | **COMPLETE** | #33, #34, #194, and #204 closed; linked-worktree Git isolation shipped via PR #197; editor nav-scroll (#216/#218) and clipped run-profile adopt button (#227) fixed |
 
 ---
 
 ## Current Repository Review and Prioritized Roadmap
 
-> **Authoritative snapshot:** 2026-07-12 (America/New_York), `develop` at `b0445c9`. This section supersedes the archived delivery narrative below for current prioritization.
+This section supersedes the archived delivery narrative below for current prioritization.
 
 ### Repository health
 
-- `develop` is clean and synchronized with `origin/develop`; GitHub has **15 open issues and no open pull requests**. Issue #112 is closed as completed, and its final fix/evidence PR #183 is merged at `b0445c9`.
-- The latest release is `v0.10.0`. The v0.11.0 release-preparation branch now covers LSP Phase 3 and #112 closure fixes, the Structure view, hunk staging and editable Git diffs, intent-to-add, terminal recovery, and the checksum-verifying install path; release publication remains pending verification and owner authorization.
-- Required release flow: merge the verified preparation work to `develop`, open a `develop` → `main` release PR, tag the resulting `main` commit as `v0.11.0-rc.1`, validate macOS amd64/arm64, Linux amd64, Windows amd64, and install behavior, then tag final `v0.11.0` only after the RC passes and the owner authorizes promotion. Tagging `develop` instead requires an explicit branch-policy update.
-- Verification at this snapshot is green across the Go and frontend suites, `go vet`, TypeScript/Vite production build, ESLint, Prettier, and workflow validation.
-- The CodeMirror language bundle is still eager: `codemirror-languages` is **382.35 kB / 143.21 kB gzip**, providing a measurable baseline for #39.
-- `frontend/src/stores/ideStore.ts` is now **1,787 lines**. Git, LSP, and search already have dedicated stores, so #41's original "255-line monolith" description is obsolete and should target the remaining workspace/tree/editor/terminal/run-output responsibilities.
-- Release documentation is refreshed for the post-`v0.10.0` work. Release candidates may use the v0.11.0 **Pending** entry; the final tag is blocked until it has an ISO release date.
-- Release hardening aligns backend CI with Go 1.23 and pins every workflow Wails install to the module's v2.11.0. Cross-platform PR verification remains a future release-engineering improvement.
-- The frontend suite passes but some non-silent runs emit React `act(...)` console warnings. File a focused test-hygiene ticket so warnings cannot hide real regressions.
+- `v0.12.0` is live from `main`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
+- No planned stabilization sprint follows the release. Cut `v0.12.1` only for observed regressions; otherwise continue the parallel product tracks below.
+- #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
+- Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
+- Release documentation and install examples now target `v0.12.0`.
+- PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs now pin `wails3` to the module's `v3.0.0-beta.16`; cross-platform PR verification remains a future release-engineering improvement.
+- #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
+- The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — and the Phase 3 confidence layer added #240-#242, rather than any observed regression. Treat those as scoped enhancements, not defects.
 
-### Immediate backlog normalization (Wave 0)
+### Latest delivery wave
 
-Complete these before beginning another large feature:
+Six recent implementation tracks landed:
 
-1. **#42 — closed:** cross-platform path handling is implemented through `os.UserHomeDir`, `filepath`, platform-specific files, and the release build matrix.
-2. **#112 — closed as completed:** the 2026-07-12 packaged native rerun passed lazy provisioning for Python, Go, TypeScript, and Rust, Python environment/override wiring, and same-session Offline-to-Retry recovery. The rerun also found and fixed the missing frontend `.rs` LSP mapping; final fixes merged in PR #183.
-3. **#41 — re-scope:** preserve the public selector/action contract, acknowledge the already-extracted Git/LSP/search stores, and phase the remaining extraction by domain.
-4. **#43 — audit then re-scope:** mark already-shipped tree focus, busy state, and live-region work complete; define the remaining contrast, skip-link, keyboard, and screen-reader findings from evidence.
-5. **#142 — narrow scope:** the invalid nested-button tab DOM has already been fixed; keep only owning-workspace tab accents and the optional active-workspace filter stretch goal.
-6. Update `README.md` and `CHANGELOG.md`, then cut a `v0.11.0` stabilization release.
+1. **#44 — implemented via PR #206:** the native-dialog command palette, deterministic fuzzy matcher, late-bound command registry, and shared shortcuts shipped. The GitHub issue remains open because the PR used `Addresses #44`; close it after tracker housekeeping.
+2. **#164 — shipped in full and closed, phases 0-3 via PRs #208/#209/#213/#239 and phase 4 via PR #244:** backend conflict snapshots, the guarded merge-session store, the CodeMirror Result-spine merge editor, the confidence layer (preview, word marks, provenance stripes, targeted reopen, base display, line numbers, announcements), and multi-file hardening. What remains is the follow-up backlog, not the issue itself.
+3. **#202 — closed via PR #211:** Workspace view now carries two distinct rails for active scope and per-file ownership without adding a third visual channel or changing Project view.
+4. **#207 / #215 — closed via PRs #214/#217:** search results gained match-anchored rows and file/directory hierarchy, then dimmed syntax-token highlighting that keeps the match the brightest element in the row.
+5. **#216 / #218 — editor navigation fixes:** navigating to a line now scrolls correctly both for a freshly opened file and for an already-open background tab.
+6. **#146 Phase 2 (complete, issue closed):** Phase 2A merged via PR #224, Phase 2B same-profile parallelism via PR #232, Phase 2C persisted run history via PR #233, and Phase 2D owned compound execution plans via PR #237. `internal/runhistory` retains 50 summaries and 5 rich ordinary records per profile, with 10 MiB per-record and 20 MiB per-workspace bounds. Terminal events enqueue persistence; close gives appends a best-effort 300 ms drain, waits durably for explicit redactions, and still withholds acknowledgement when editor flush fails. Phase 2D landed an `executionNode` tree deep-copied at admission behind a recursive reflection guard, and the two bugs it surfaced are fixed: the run-output listener unmounting on panel collapse (#235 via PR #245) and compound drains misclassifying an administratively cancelled preflight as failed (#236 via PR #238).
+
+PR #227 additionally fixed a clipped adopt button in the run-profile card action row.
 
 ### Parallel development plan
 
-#### Wave 1 — foundations
+#### Current wave — three isolated worktrees
 
-| Track | Tickets | Execution rule |
-|-------|---------|----------------|
-| Quality and accessibility | #34, then the audited remainder of #43 | Land before adding more keyboard-driven menus. #34 currently has 53 of 112 frontend buttons without an explicit type. |
-| Performance and filesystem | #39 and #149 in parallel; benchmark #148 | #39 is frontend and #149 backend, so they can proceed independently. Do not implement #148 unless profiling proves startup time or descriptor pressure. |
-| Workspace visual identity | #142, then #143 | Localized frontend work; land before the central store refactor to reduce conflicts. |
-| State architecture | #41 | Contract tests and decomposition design can start in parallel, but land after #142/#143. Preserve selectors/actions while extracting domains incrementally. |
+| Lane | Ticket | Primary ownership | Dependency and conflict rule |
+|------|--------|-------------------|------------------------------|
+| A | Golem follow-ups — #263 settings UI, #264 durable multi-conversation, #265 token/context usage | `internal/ai`, `frontend/src/components/Golem`, `golemStore` | #165 and #226 are both shipped: the embedded `go-llm` runtime replaced the commit-message shell-out, and PR #262 landed the chat panel on it. #265 is blocked on go-llm emitting usage; go-llm #393 (sanitized tool args on `tool.started`/`tool.finished`) would fill in the tool-chip detail view. #263 Phase 1 (read-only projection, diagnostics, panel view) merged as PR #269, Slice A (read-only configuration workspace and diagnostics) merged as PR #270, and Slice B (transactional settings writes) merged as PR #272. The go-llm phase-routing and destination-admission consumer slice — pin bump to go-llm `be8e259`, `requiredAgentCaps`/`agent.ModelCallCapabilities` floor with `planning` in the vocabulary, the commit-message generator behind a consent-derived `DestinationPolicy`, `NormalizeEndpoint` aligned with destination/v1, reachable-set admission mirroring upstream, batch settings-apply consent with provenance, atomic `GrantMany`, and a grant-only "Approve missing destinations" transaction — is tracked as #285 on this branch. #263 Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain; Slice D no longer owns the go-llm pin bump, which #285 satisfies. |
+| B | #164 merge follow-up backlog — #220, #219, #221, #223, #240, #241 | `frontend/src/components/Editor/Merge*`, merge-specific `GitPanel` seams, `gitStore` merge tests | #164 itself is closed: phase 4 shipped via PR #244, and #222 and #242 are closed. What remains is the follow-up backlog above. Do not start #166 or #46 against the same editor/Git seams. |
+| C | #45 — context menus | `FileExplorer` row/context surfaces, editor tab-bar menus, command registry entries | Unblocked: #202 released the File Explorer seams. Reuse #44's registry instead of adding a parallel action path. Keep out of the merge editor while Lane B is active. |
 
-#### Wave 2 — product tracks
+#### Follow-on queue
 
-Begin after #41 and the #43 accessibility baseline land:
+1. Work the #164 merge follow-up backlog in Lane B — #220 auto-merged region hints, #219 key-hold preview, #221 multi-file conflict rail, #223 bulk take-Current/Incoming, #240 pre-stage diagnostics check, #241 base-relative word marks. #164 phase 4 shipped via PR #244; #222 newline metadata and #242 collapsed conflicted-file diagnostics are closed.
+2. Start #166 only after the merge surface stabilizes. Split it into safe/read-only branch metadata and later destructive merge/rebase/rename/delete operations.
+3. Start #46 after the #164 editor surface stabilizes; keep sibling navigation compatible with lazy directory loading.
+4. Work the Golem follow-ups in Lane A now that #226 has shipped. #263 settings UI Phase 1 is merged (PR #269); Slice A read-only diagnostics is merged (PR #270); Slice B write phases are merged (PR #272). The go-llm phase-routing and destination-admission consumer slice (#285) is on this branch: pin bump to go-llm `be8e259`, capability-aware chat/commit-message routing via `requiredAgentCaps`/`agent.ModelCallCapabilities`, aligned `NormalizeEndpoint` and reachable-set admission, batch settings-apply consent with provenance, and the grant-only "Approve missing destinations" transaction. #263 Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain; Slice D no longer owns the pin bump, which #285 satisfies. Take #264 durable multi-conversation next; hold #265 until go-llm emits usage.
+5. Close the #44 tracker as housekeeping; the implementation shipped in PR #206.
+6. Keep #148/#196 benchmark-gated and #41 unscheduled as a standalone rewrite.
 
-| Track | Tickets | Dependencies and sequencing |
-|-------|---------|-----------------------------|
-| Command UX | #44, then #45 and #46 in parallel | #44 should introduce a shared command/action registry reused by context menus, breadcrumbs, shortcuts, and later VCS actions. |
-| Run engine | #146 | Depends on #41 cleanly isolating run-output/execution state. Split persistence, per-run tabs, same-profile parallelism, and execution plans into independently reviewable phases. |
-| Git conflict UX | #164 | Can run alongside #44/#146. Treat it as data-loss-sensitive work with real-repository conflict fixtures and manual smoke tests. |
+### Ticket priority and disposition
 
-#### Wave 3 — Git expansion and conditional work
-
-- **#166:** split into a safe/read-only phase (remote/local/tag model, tracking metadata, search, keyboard navigation) and a destructive phase (merge/rebase/rename/delete). Land destructive operations only after #164 establishes conflict recovery.
-- **#148:** implement only when a benchmark demonstrates a real bottleneck; otherwise leave deferred.
-- **#165:** blocked on an upstream API decision. `go-llm` exposes `provider.Router`, but convenient provider assembly remains under `internal/providerbootstrap`, which Firn cannot import. Export a supported bootstrap API upstream first; keep agentflow proof-artifact UI out of this ticket.
-
-### Ticket priority, model, and reasoning assignment
-
-Model guidance follows OpenAI's current [GPT-5.6 model guide](https://developers.openai.com/api/docs/guides/latest-model), [reasoning-effort guidance](https://learn.chatgpt.com/docs/models#pick-a-reasoning-effort), and [granular UI guidance](https://learn.chatgpt.com/use-cases/make-granular-ui-changes#pick-your-model): use `gpt-5.6-sol` for frontier/cross-cutting work, `gpt-5.6-terra` for cost-balanced work, and `gpt-5.3-codex-spark` for fast localized UI iteration. Use the lowest reasoning level that reliably covers the risk.
-
-| Priority | Ticket | Recommended disposition | Model | Reasoning |
-|----------|--------|-------------------------|-------|-----------|
-| Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. | `gpt-5.6-terra` | Light |
-| Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; final fixes merged in PR #183 and the issue is closed as completed. | `gpt-5.6-sol` | High |
-| P0 | #34 Button types | Implement now; mechanical correctness sweep with focused form regression tests. | `gpt-5.3-codex-spark` | Light |
-| P0 | #43 WCAG AA | Audit and re-scope before implementation; test keyboard, contrast, and screen-reader behavior. | `gpt-5.6-sol` | High |
-| P1 | #142 Workspace-colored tabs | Implement owning-workspace accents only; the nested-button fix is already shipped. | `gpt-5.3-codex-spark` | Medium |
-| P1 | #143 Infra file accents | Localized tree-row presentation change using existing workspace-region resolution. | `gpt-5.3-codex-spark` | Light |
-| P1 | #39 Dynamic languages | Lazy-import and reconfigure CodeMirror languages; enforce a bundle-size regression budget. | `gpt-5.6-terra` | Medium |
-| P1 | #149 Nested `.gitignore` | Implement Git-compatible nested precedence and negation semantics with fixtures. | `gpt-5.6-sol` | High |
-| P1 | #41 Zustand slices | Incremental domain extraction with unchanged public selectors/actions. | `gpt-5.6-sol` | High |
-| P2 | #44 Command Palette | Build the shared command registry first, then fuzzy-search UI and shortcuts. | `gpt-5.6-terra` | High |
-| P2 | #146 Run identity Phase 2 | Execute after #41; split the capability upgrade into small review gates. | `gpt-5.6-sol` | Extra High |
-| P2 | #164 Three-way merge UI | Require real conflicts, recovery tests, and manual verification before merge. | `gpt-5.6-sol` | Extra High |
-| P2 | #166 Rich VCS menu | Separate safe/read-only behavior from destructive branch operations. | `gpt-5.6-sol` | Extra High |
-| P3 | #45 Context menus | Reuse #44 commands; file-explorer and editor-tab surfaces can then proceed in parallel. | `gpt-5.6-terra` | Medium |
-| P3 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract. | `gpt-5.6-terra` | Medium |
-| Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. | `gpt-5.6-sol` | Extra High |
-| Blocked | #165 `go-llm` integration | Export a supported upstream provider-bootstrap API before changing Firn. | `gpt-5.6-sol` | High |
+| Priority | Ticket | Recommended disposition |
+|----------|--------|-------------------------|
+| Closed | #42 Hardcoded macOS paths | Closed as completed on 2026-07-11; retain release smoke coverage. |
+| Closed | #112 LSP zero-config | Packaged native closure gate passed on 2026-07-12; final fixes merged in PR #183 and the issue is closed as completed. |
+| Closed | #34 Button types | Closed via PR #190 on 2026-07-13; explicit literal types on all production buttons plus an AST regression guard. |
+| Closed | #149 Nested `.gitignore` | Closed via PR #192 on 2026-07-14; recursive and shallow readers share nested Git-compatible rule evaluation. |
+| Closed | #142 Workspace-colored tabs | Closed via PR #191 on 2026-07-13; tabs resolve the owning workspace independently of the active workspace. |
+| Closed | #194 Git environment isolation | Closed via PR #197 on 2026-07-14; linked-worktree Git commands scrub repository-local environment. |
+| Closed | #43 WCAG AA | Closed via PR #201 on 2026-07-15; automated contrast, keyboard, focus, and ID-reference evidence landed. |
+| Closed | #39 Dynamic languages | Closed after PR #200; lazy CodeMirror loading cut initial static-JS gzip size by 26.24% and added a bundle gate. |
+| Closed | #143 Infra file accents | Closed after PR #199; Docker/Terraform identity now layers over workspace presentation. |
+| Closed | #195 Unreadable directories | Closed via PR #203; unreadable nodes remain visible and retry in place. |
+| Closed | #204 Loading skeleton | Closed via PR #205; uncached workspace loading no longer flashes a false empty state. |
+| Closed | #202 Hybrid workspace rails | Closed via PR #211; the two-rail Workspace view ships without changing Project view or adding a third visual channel. |
+| Closed | #207 Search result hierarchy | Closed via PR #214; match-anchored rows and file/directory hierarchy stay readable in a narrow panel. |
+| Closed | #215 Dimmed syntax tokens | Closed via PR #217; match context carries dimmed language tokens while the match stays the brightest element. |
+| Closed | Editor nav scroll (PRs #216/#218) | Fixed directly in PRs #216/#218; line navigation scrolls correctly for freshly opened and already-open background tabs. |
+| Delivered / tracker open | #44 Command Palette | PR #206 satisfies the issue requirements; verify and close the tracker without more implementation. |
+| Closed | #225 Go 1.25 toolchain | Module and every CI job resolve Go from `go-version-file: 'go.mod'`; shipped via PR #228. |
+| Closed | #164 Phase 3 merge confidence | Shipped via PR #239: preview, word marks, provenance stripes, targeted reopen, base display, line numbers, announcements. |
+| P0 | #164 Phase 4 multi-file hardening | Queue auto-advance (still suppressed in the UI) plus the watcher/external-change policy. The atomic single-snapshot swap is the risk: never apply a regions-only refetch to stale content. |
+| P1 | #45 Context menus | Reuse #44 commands now that #202 has released the File Explorer seams. |
+| P2 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract after the merge editor stabilizes. |
+| P2 | #220 Auto-merged region hints | Indicate what Git already merged so reviewers can distinguish it from unresolved regions. |
+| P2 | #219 Key-hold resolution preview | Preview a side without committing the decision; must not mutate the Result document. |
+| P2 | #221 Multi-file conflict rail | Extend the conflict rail across files in the Git panel; keep per-file finalize guards intact. |
+| P2 | #222 Newline metadata | Preserve per-side no-trailing-newline metadata through resolution and write. |
+| P2 | #223 Bulk conflict resolution | Add confirmed take-all-Current/Incoming actions; never silently overwrite manual decisions, never auto-write or stage. |
+| P2 | #240 Pre-stage diagnostics check | Once the buffer is marker-free, report whether the resolution compiles before it is staged. Needs a document handoff, not a refcounted lease. |
+| P2 | #241 Base-relative word marks | When git recorded a base, mark each side against it to show what that side changed rather than how the sides differ. |
+| P2 | #242 Conflicted-file diagnostics | Collapse per-marker errors into one actionable warning keyed on git's `UU` status; must clear the moment the file is written clean. |
+| P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
+| P2 | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics merged (PR #270); Slice B write phases merged (PR #272); Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain — Slice D no longer owns the go-llm pin bump, which the #285 phase-routing/destination-admission consumer slice satisfies. |
+| P2 | #271 Golem center panel (Plan A) | Golem moves out of the right dock into a full-height center island beside the Files column: persisted per-repository order/width/collapse, an effective-layout budget that rails the non-requested panel under window pressure, command bars for both panels, drag/keyboard/palette reorder, and Files reveal on every explicit editor, configuration, diff, merge and run-output intent. Implemented on `feature/issue-271-golem-center-panel` pending review; undock follows as Plan B. |
+| P2 | #271 Golem undocked window (Plan B) | The same chat, optionally hosted by a second native window. Go owns the lifecycle (open, ready, closing, closed) and persists mode plus last normal bounds in `~/.firn/app.json`; the main window stays the only executing owner, projecting a `GolemView` snapshot to the satellite and admitting or refusing every action it posts. Covers the bounded draft handoff in both directions, abort and re-dock recovery, restore on relaunch, delta ingest while the main window is minimized, the undocked Files/rail geometry, and the scoped window shortcuts. Implemented on `feature/issue-271-golem-center-panel` pending review; the supported-platform smoke pass (macOS first, then Windows/Linux) has not been run, so this is not shipped. |
+| P2 | #264 Golem durable multi-conversation | Persist and switch between conversations; the New chat reset shipped with #226 is the in-memory slice of this. |
+| P3 | #265 Golem token and context usage | Blocked: needs go-llm to emit usage on its run events first. |
+| Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |
+| Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. |
+| Gated | #196 Ignore-rule cache | Benchmark lazy expansion first; if needed, cache per directory with watcher-based invalidation, never polling. |
 
 ### #112 manual smoke pass and closure gate
 
@@ -177,17 +192,17 @@ Historical #112 follow-up checklist (now complete), in execution order:
 Build the current `develop` revision normally, then launch the packaged binary with a disposable home and a minimal tool shim. Building first avoids making the Go/npm build caches part of the smoke environment. The shim keeps the Go toolchain available for managed `gopls` installation while excluding user-installed `gopls`, `typescript-language-server`, `rust-analyzer`, and Python language servers from `PATH`.
 
 ```bash
-wails build
+wails3 task darwin:package ARCH=arm64
 SMOKE_HOME="$(mktemp -d)"
 SMOKE_BIN="$SMOKE_HOME/bin"
 mkdir -p "$SMOKE_BIN"
 ln -s "$(command -v go)" "$SMOKE_BIN/go"
 env HOME="$SMOKE_HOME" \
   PATH="$SMOKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  build/bin/Firn.app/Contents/MacOS/firn
+  bin/Firn.app/Contents/MacOS/firn
 ```
 
-The final path is the macOS build. Use `build/bin/firn` for Linux; on Windows, launch `build/bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
+The final path is the macOS build. Use `wails3 task linux:build` and `bin/firn` for Linux; on Windows, use `wails3 task windows:build` and launch `bin/firn.exe` under a disposable user profile with the equivalent restricted `PATH`. Before opening a file, confirm `$SMOKE_HOME/.firn/servers` is absent or empty. If a platform needs another runtime tool, add only that executable to `SMOKE_BIN`; do not add an entire directory containing language-server binaries.
 
 #### 2. Use a four-workspace smoke repository
 
@@ -258,7 +273,7 @@ One primary-platform manual pass is sufficient for closure when the cross-platfo
 
 > The narrative below preserves implementation context from earlier roadmap snapshots. Its references to "open" or "remaining" work are historical; the authoritative backlog and priorities are in the section above.
 
-Current status: **Milestone 7 (Git Integration) is complete and merged (PR #162, develop `eb43370`) — every planned milestone is now shipped.** Working-tree status in the file tree and status bar; a read-only side-by-side diff viewer with next/prev navigation, resizable columns, and a live editor-buffer diff; JetBrains-style commit panel with per-file include checkboxes, stage/commit/pull/push (Publish when there is no upstream), and workspace scoping via the ownership model; a portaled branch switcher shared between the header pill and the status bar; and gutter change bars with a peek popup showing a unified word-level inline diff and one-click revert-to-HEAD. The LSP hover was also reworked to highlight signatures with the file's real language parser (Go and all languages) and render doc links as clickable. **#163** hunk-level staging shipped (PR #173, hardened via review PR #174/#176) and **#167** intent-to-add (`git add -N`, track-without-staging on untracked rows so new files diff and hunk-stage) shipped via PR #177; on the LSP side **#151** Phase 3 managed provisioning for `gopls`, `tsserver`, and `rust-analyzer` shipped via PR #178 (Python landed in #150). Open Git follow-ups: **#164** 3-way merge UI, **#165** go-llm library integration (replace the golem shell-out), **#166** richer branch/VCS menu, **#169** editable diff. Other open follow-ups: #152 (LSP provisioning polish), #148/#149 (lazy-load watcher + nested gitignore), #146 (run-identity Phase 2), #142 (workspace-colored tabs), #168 (Structure view from document symbols).
+Current status: **Milestone 7 (Git Integration) is complete and merged (PR #162, develop `eb43370`) — every planned milestone is now shipped.** Working-tree status in the file tree and status bar; a read-only side-by-side diff viewer with next/prev navigation, resizable columns, and a live editor-buffer diff; JetBrains-style commit panel with per-file include checkboxes, stage/commit/pull/push (Publish when there is no upstream), and workspace scoping via the ownership model; a portaled branch switcher shared between the header pill and the status bar; and gutter change bars with a peek popup showing a unified word-level inline diff and one-click revert-to-HEAD. The LSP hover was also reworked to highlight signatures with the file's real language parser (Go and all languages) and render doc links as clickable. **#163** hunk-level staging shipped (PR #173, hardened via review PR #174/#176) and **#167** intent-to-add (`git add -N`, track-without-staging on untracked rows so new files diff and hunk-stage) shipped via PR #177; on the LSP side **#151** Phase 3 managed provisioning for `gopls`, `tsserver`, and `rust-analyzer` shipped via PR #178 (Python landed in #150). **#165** go-llm library integration shipped, replacing the golem CLI shell-out with the embedded runtime. **#164** 3-way merge UI, **#169** editable diff, #152 (LSP provisioning polish), #149 (nested gitignore), #146 (run-identity Phase 2), #142 (workspace-colored tabs), and #168 (Structure view from document symbols) have all since shipped and closed. Open Git follow-ups: **#166** richer branch/VCS menu plus the #164 merge backlog (#219, #220, #221, #223, #240, #241). Other open follow-ups: #148/#196, both benchmark-gated.
 
 Earlier: **Milestone 4 (Run Profiles) closed — #103 run execution identity merged via PR #144.** The overloaded `profileId` string (which carried saved-config, compound-aggregate, compound-step, process-key, and event-routing meanings) is replaced by a first-class `RunIdentity{runInstanceId, profileId, parentRunInstanceId?, stepIdx}` embedded in every run event. The executor keys processes/compounds by a per-`Executor` monotonic `runInstanceId` and tracks `activeByProfile` (retiring the old `processAliases`); the synthetic `compound:<base64>:<idx>` step keys and their reserved-namespace validation are deleted; the frontend stores route output by explicit fields with a `runInstanceId`-based stale-drop/rotate rule (no namespace parsing). Documented Stop/Restart/Status semantics: an idle/unknown id is an idempotent no-op, terminal status is retained only for top-level runs. Phase 1 only — **Phase 2** (single-profile output/tabs/history re-keyed to `runInstanceId`, per-run retained tabs, same-profile parallelism, persisted run history) is a separate follow-up ticket. With the #18/#71 UI epic and LANES (#107/#137) already shipped, **Milestone 4 is complete**.
 
@@ -270,10 +285,10 @@ The **P2 panel (PR #125)** is a four-section working set (Working Set / Pinned /
 
 Earlier: **#112 Phase 1 (Python LSP environment auto-wiring) shipped via PR #121** — pyright now resolves imports/types in a standard `src`-layout uv/venv project with zero per-project config. New pure `internal/lsp/pythonenv` interpreter/venv detector; the client answers pyright's `workspace/configuration` pull (was replying `-32601` to all server requests — the root cause) and advertises the capability + `didChangeConfiguration`; a Manager-owned, dialect-agnostic `WorkspaceConfigProvider` forwards `pythonPath`/`venvPath`/`analysis.extraPaths`; raw server errors are replaced by a typed setup status + non-blocking `LSPSetupCard`. Earlier shipped: **editor theme system + diagnostic tooltip (#113/#114, PR #117)** with #119 picker focus polish, **terminal PTY-exhaustion actionable error (#116)**, **file-tree / tab-bar scrollbar fixes (#118)**. Milestone 3 (Workspace Management) complete; file-tree virtualization shipped (#37/#38, PR #111). The #17 Run Profiles Execution Engine epic (#59-64) is complete; remaining Run Profiles work is the UI layer. Lazy-loading (#37 Phase 2) deferred to its own spec.
 
-1. **Git integration follow-ups (Milestone 7 shipped via PR #162)** — deepen the just-shipped feature. **#163** hunk-level staging (PR #173, hardened #174/#176) and **#167** intent-to-add (PR #177) shipped. Next highest value: **#166** richer branch/VCS menu, **#169** editable diff (edit the working-tree side in place), **#164** 3-way merge UI, and **#165** replacing the golem CLI shell-out with the go-llm library for the AI commit message (go-llm PR #262 is merged).
-2. **LSP managed provisioning follow-ups** (#112 Phase 2 shipped via PR #150) — **#151 Phase 3 provisioning for `gopls`, `tsserver`, and `rust-analyzer` shipped via PR #178**; remaining **#152:** polish — `configSource "override"` is never emitted so Reset-to-auto is dead UI; `RetryProvision` re-keys to the workspace root rather than the project root for nested monorepos; musllinux node wheels.
-3. **File-tree lazy-loading follow-ups** (#37 Phase 2 shipped via PR #147) — **#148:** lazy watcher reconcile; **#149:** nested `.gitignore` handling.
-4. **Run execution identity Phase 2** (#146; follow-up to #103) — re-key single-profile output/tabs/history by `runInstanceId`: per-run retained tabs, same-profile parallelism, persisted run history, and an internal execution-plan abstraction (`executionNode`) enabling retry/resume/parallel-group later. All five #103 acceptance criteria are already met by Phase 1; this is a capability upgrade, not a fix.
+1. **Git integration follow-ups (Milestone 7 shipped via PR #162)** — deepen the just-shipped feature. **#163** hunk-level staging (PR #173, hardened #174/#176) and **#167** intent-to-add (PR #177) shipped. **#165** replaced the golem CLI shell-out with the embedded go-llm library for the AI commit message. **#169** editable diff and **#164** 3-way merge UI have since shipped and closed. Next highest value: **#166** richer branch/VCS menu, then the #164 merge backlog (#219, #220, #221, #223, #240, #241).
+2. **LSP managed provisioning follow-ups** (#112 Phase 2 shipped via PR #150) — **#151 Phase 3 provisioning for `gopls`, `tsserver`, and `rust-analyzer` shipped via PR #178**; **#152** polish also shipped and closed — `configSource "override"` emission for Reset-to-auto, `RetryProvision` re-keyed to the project root for nested monorepos, and musllinux node wheels.
+3. **File-tree lazy-loading follow-ups** (#37 Phase 2 shipped via PR #147) — **#149** nested `.gitignore` handling shipped via PR #192; **#148:** lazy watcher reconcile remains, benchmark-gated.
+4. **Run execution identity Phase 2** (#146; follow-up to #103) — re-key single-profile output/tabs/history by `runInstanceId`: per-run retained tabs, same-profile parallelism, persisted run history, and an internal execution-plan abstraction (`executionNode`) enabling retry/resume/parallel-group later. All five #103 acceptance criteria are already met by Phase 1; this is a capability upgrade, not a fix. Complete and closed: **Phase 2A** shipped via PR #224, **2B** same-profile parallelism via PR #232, **2C** persisted history via PR #233, and **2D** owned execution plans via PR #237. The two bugs 2D surfaced are fixed in PRs #245 (#235) and #238 (#236).
 5. **#142: Workspace-colored open-file tabs** — surfaced while reviewing #117: open editor tabs should always carry their owning workspace's accent (tab/font) regardless of the active workspace, so files are instantly attributable; future stretch is filtering open tabs to the active workspace. Bundle the **button-in-button DOM fix** in the editor tab bar (close `<button>` nested inside the tab `<button role="tab">` → React hydration warning) since it touches the same component.
 6. **#143: File-level infra accent in the tree** — surfaced during #123 testing: infra files (`Dockerfile`, `docker-compose.y*ml`, `.dockerignore`, `*.tf`/`*.tfvars`) should render with the Docker (purple) / Terraform (amber) accent even when shown inside another workspace's tree, so deployment/infra files are spottable regardless of the active workspace. File-level decoration layered on the existing per-workspace tinting.
 
@@ -558,8 +573,20 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Hunk-level staging in the diff viewer (#163, PR #173; hardened PR #174/#176)
 - [x] Intent-to-add (`git add -N`) track-without-staging for new files (#167, PR #177)
 
-Follow-ups: #164 3-way merge, #165 go-llm library, #166 branch menu,
-#169 editable diff.
+### #164: Git - Conflict Resolution (phases 0-3 shipped)
+- [x] **Phase 0 (PR #208)** — backend conflict snapshots: per-region Base/Current/Incoming data sourced from the real merge state.
+- [x] **Phase 1 (PR #209)** — guarded merge-session store with close-without-write, stale-session, durable-write-before-stage, and zero-unresolved guards.
+- [x] **Phase 2 (PR #213)** — CodeMirror Result-spine merge editor with Current / Incoming / Both / Manual decisions, conflict rail, keyboard navigation, undo-safe region mapping, and accessible side labels.
+- [x] **Phase 3 (PR #239)** — confidence layer: exact targeted reopen (re-inserts the original marker bytes captured at session build; the header offers a jump back rather than moving the viewport), hover/focus preview of the exact resulting lines, word-level marks between the sides, provenance stripes on resolved lines, the common ancestor per region or as a lazy stage-`:1` strip, line numbers with per-card line ranges, and polite live-region announcements.
+- [ ] **Phase 4** — multi-file hardening and queue auto-advance (still suppressed via `suppressQueueAdvance: true` in the UI).
+
+Three design notes from Phase 3 worth preserving for Phase 4: store-level merge guards pair the workspace `epoch` with per-open `requestRevision`, while the component-local base-strip swap uses `requestRevision` as its prop identity; preview is deliberately DOM-only rather than a `StateEffect`, because any dispatch rebuilds the card and destroys keyboard focus; and the decorations builder declares `['doc', field]` explicitly so a future field memoization cannot silently stale the provenance stripes.
+
+Merge follow-ups surfaced by the Phase 2 MVP: #219 key-hold preview, #220 auto-merged region hints, #221 multi-file conflict rail, #222 per-side newline metadata, #223 bulk take-Current/Incoming.
+
+Further follow-ups surfaced by Phase 3: #240 pre-stage LSP diagnostics check (run once the buffer is marker-free, answering "does my resolution compile?" before staging), #241 base-relative word marks (diff each side against base when git recorded one, showing what each side *changed* rather than how they differ), #242 collapse conflicted-file diagnostics in the Problems panel (one actionable warning instead of one error per marker line).
+
+Other follow-ups: #165 go-llm library shipped; #166 branch menu remains open. #169 editable diff shipped via PR #181.
 
 ---
 
@@ -575,15 +602,15 @@ currentColor SVGs, sidebar active indicators, devicons light fills for dark back
 
 ## Performance
 
-### #37: File Tree Virtualization & Lazy Loading (IN PROGRESS)
+### #37: File Tree Virtualization & Lazy Loading ✅
 - [x] **Virtualization + memoization — shipped (PR #111).** Pure `flattenVisibleTree` lowers the expanded tree into a flat `FlatRow[]` (precomputed region accent + aria level/setsize/posinset); `@tanstack/react-virtual` mounts only the visible window; `TreeRow` is `React.memo` over primitive props. The region resolver runs once per visible row instead of per node per render. Off-screen rows do not mount (5k-node tree → bounded window, asserted by a regression test). WAI-ARIA single-tab-stop keyboard nav via `aria-activedescendant`. Selected/active rows inherit their region/workspace accent (consistent Project + Workspace views).
-- [ ] **Lazy loading — Phase 2 (remaining).** Load directory children on expand: backend `ReadDirectory`-per-dir, file-watcher reconcile, and reconciling #54 assumptions (scoped-tree lookup, region resolver, active-file ancestor-expand all currently assume the full eager tree). Deferred to its own spec.
+- [x] **Lazy loading — Phase 2 shipped (PR #147).** Directory reads occur on expansion with surgical reconcile rather than full-tree reloads; watcher-registration laziness remains benchmark-gated in #148.
 
 ### #38: TreeNode Memoization ✅
 Shipped in PR #111 (closed). Flattening lowers `expandedPaths` (a fresh `Set` each update) and the region resolver (a closure) into per-row primitives, so `React.memo` on the row actually holds; toggling/selecting re-renders only changed rows.
 
-### #39: Dynamic CodeMirror Language Loading
-Dynamic `import()` for language extensions per file type to reduce initial bundle.
+### #39: Dynamic CodeMirror Language Loading ✅ CLOSED
+Shipped via PR #200. CodeMirror languages load per filename with stale-result guards and a manifest regression gate; initial static JavaScript fell from 541,248 to 399,225 gzip bytes (26.24%).
 
 ---
 
@@ -610,6 +637,34 @@ Shipped as a **selectable syntax theme system**: `theme.ts` refactored into a pu
 
 ---
 
+## Workspace & Search UX (COMPLETE)
+
+### #202: Hybrid Workspace Tree Rails ✅ CLOSED
+Shipped via PR #211. Workspace view renders two distinct rails — active scope and per-file ownership — without changing Project view or introducing a third visual channel.
+
+### #207: Search Result Hierarchy ✅ CLOSED
+Shipped via PR #214. Result rows are anchored on the match itself, with file and directory hierarchy that stays legible when the panel is narrow.
+
+### #215: Dimmed Syntax-Token Highlighting ✅ CLOSED
+Shipped via PR #217. Match context carries real language tokens rendered at reduced emphasis, so the match remains the brightest element in the row. Lezer parses each context line standalone; token offsets merge through a single cursor pass that reconciles byte and UTF-16 indexing, and a WCAG guard keeps the dimmed palette above contrast minimums.
+
+---
+
+## Toolchain (COMPLETE)
+
+### #225: Upgrade Firn from Go 1.23 to Go 1.25 ✅ SHIPPED
+Shipped via PR #228 as the toolchain prerequisite for the embedded Golem consumers (#165, #226), which depend on a `go-llm` runtime that requires Go 1.25.
+- [x] `go.mod` declares `go 1.25`
+- [x] Every Build, Test, Lint, and Release job resolves its Go version from `go-version-file: 'go.mod'` instead of a repeated literal, so future upgrades change one line
+- [x] `README.md`, `CLAUDE.md`, and this roadmap state Go 1.25+
+- [x] Historical changelog entries left unchanged
+- [x] Verified with `go build`, `go vet`, `go test ./...`, `golangci-lint run ./...` (pinned v2.11.4, built with go1.26.1), and the frontend suite/build/lint/format gates
+- [x] No generated Wails binding changes
+
+Out of scope: adopting `go-llm` itself (#165/#226) and unrelated dependency bumps.
+
+---
+
 ## Dependency Upgrades (COMPLETE)
 
 ### #40: Upgrade TypeScript, Vite & Test Tooling ✅
@@ -620,7 +675,7 @@ TypeScript 5.7+, Vite 6.x, @swc/jest, path aliases, optimizeDeps.
 ## Code Quality
 
 ### #41: Split Zustand Store into Domain Slices
-Re-scope against the current architecture: `ideStore.ts` is 1,787 lines, while Git, LSP, and search already have dedicated stores. Incrementally extract workspace, file-tree, editor, terminal, UI, run-profile, and run-output domains while preserving the existing selector/action API during migration. Land after #142/#143 and before #146.
+Re-scope against the current architecture: Git, LSP, search, commands, and merge sessions already have dedicated seams. Do not schedule a standalone decomposition. Preserve the existing selector/action API and extract only the run domain if #146 proves that a focused extraction materially reduces its implementation.
 
 ### #42: Fix Hardcoded macOS Paths ✅ CLOSED
 Closed as completed on 2026-07-11. Production paths use `os.UserHomeDir`, `filepath`, platform-specific implementations, and cross-platform release builds rather than hard-coded macOS locations.
@@ -629,21 +684,26 @@ Closed as completed on 2026-07-11. Production paths use `os.UserHomeDir`, `filep
 
 ## Accessibility
 
-### #43: Accessibility Improvements (WCAG AA)
-Audit and re-scope before implementation. Already shipped: WAI-ARIA file-tree navigation with an active descendant, roving/single-tab-stop behavior, file-tree `aria-busy`, toast/search/LSP live regions, and several accessible tab/listbox patterns. Remaining evidence-driven work should cover contrast, skip-to-content, full keyboard traversal, focus restoration, dialog/menu semantics, and screen-reader verification.
+### #43: Accessibility Improvements (WCAG AA) ✅ CLOSED
+Shipped via PR #201. Bypass navigation, contrast corrections, APG keyboard/focus behavior, terminal focus restoration, ID-reference semantics, numeric WCAG guards, and interaction regressions are covered. A human VoiceOver/NVDA and 200% visual pass remains prudent release validation, not open implementation scope.
 
 ---
 
 ## Future Features
 
-### #44: Command Palette
-Cmd+Shift+P opens fuzzy-search command palette with keyboard shortcuts display.
+### #44: Command Palette ✅ IMPLEMENTED (PR #206; TRACKER OPEN)
+Cmd/Ctrl+Shift+P opens a native-dialog palette backed by the shared late-bound command registry, deterministic fuzzy matching, keyboard navigation, and shortcut display. The implementation is merged; the GitHub issue needs closure housekeeping.
 
 ### #45: Context Menus
 Right-click menus for file explorer (new/rename/delete/copy path) and editor tabs (close/close others).
 
 ### #46: Breadcrumb Navigation
 Clickable file path breadcrumbs above editor with sibling dropdown navigation.
+
+### #226: Golem - Read-Only Workspace Chat Panel — SHIPPED
+Shipped via PR #262 (squashed to develop `e56b28e`). The first AI surface: a consent-gated, read-only chat panel scoped to the active workspace, on the embedded `go-llm` runtime from #165. Assistant replies settle to sanitized Markdown once their run finishes, tool activity groups into expandable operation detail, and a per-run 128 KiB assistant-output cap stops a runaway model — the run fails rather than truncating, because Golem skips its thread save on a sink error and a manufactured success would persist a suffix the user never saw.
+
+Follow-ups: #263 settings UI, #264 durable multi-conversation, #265 token/context usage (blocked on go-llm usage emission).
 
 ### AI Chat Panel (v1.5)
 Claude integration with context-aware code assistance, diff preview, provider architecture.
@@ -658,8 +718,14 @@ Service Adapter Pattern for connecting to external backends.
 ### #33: Window Dragging Not Working ✅ CLOSED
 Fixed via Wails macOS titlebar configuration and `--wails-draggable: drag` on the header.
 
-### #34: Add Button Type Attributes
-Missing explicit `type` attributes on non-submit buttons.
+### #34: Add Button Type Attributes ✅ CLOSED
+Closed via PR #190 on 2026-07-13. All production buttons declare explicit literal `type` attributes, and a TypeScript AST regression test enforces valid literal values while guarding against a vacuous directory scan.
+
+### Editor navigation scroll ✅ FIXED (PRs #216, #218)
+Navigating to a line failed to scroll in two distinct cases: a file opened fresh by the navigation itself, and an already-open tab sitting in the background. Both now scroll the target line into view.
+
+### Run-profile card action row clipped ✅ FIXED (PR #227)
+The adopt button was clipped at narrow card widths; the action row now wraps.
 
 ---
 

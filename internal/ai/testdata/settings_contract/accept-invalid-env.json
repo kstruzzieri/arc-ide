@@ -1,0 +1,20 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "invalid",
+    "sourceOrigin": "env",
+    "routes": [],
+    "models": [],
+    "providers": [],
+    "diagnostics": [
+      {
+        "code": "json_invalid",
+        "subjectKind": "",
+        "subjectName": "",
+        "blocking": true
+      }
+    ],
+    "readOnly": false,
+    "editable": false
+  }
+}

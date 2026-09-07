@@ -33,26 +33,26 @@ Per design mockup (`docs/mockups/arc.html`):
 
 **Test Code (FileExplorer.test.tsx):**
 ```typescript
-import { OpenDirectoryDialog } from '../../../wailsjs/runtime/runtime';
+import { OpenFolderDialog } from '../../../wails/bindings';
 
-jest.mock('../../../wailsjs/runtime/runtime', () => ({
-  OpenDirectoryDialog: jest.fn(),
+jest.mock('../../../wails/bindings', () => ({
+  OpenFolderDialog: jest.fn(),
 }));
 
 describe('Open Folder', () => {
-  it('calls OpenDirectoryDialog when Open Folder button is clicked', async () => {
-    (OpenDirectoryDialog as jest.Mock).mockResolvedValue('/Users/test/project');
+  it('calls OpenFolderDialog when Open Folder button is clicked', async () => {
+    (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
 
     render(<FileExplorer />);
     fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
 
     await waitFor(() => {
-      expect(OpenDirectoryDialog).toHaveBeenCalled();
+      expect(OpenFolderDialog).toHaveBeenCalled();
     });
   });
 
   it('sets workspace when folder is selected', async () => {
-    (OpenDirectoryDialog as jest.Mock).mockResolvedValue('/Users/test/project');
+    (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
 
     render(<FileExplorer />);
     fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
@@ -67,7 +67,7 @@ describe('Open Folder', () => {
   });
 
   it('fetches directory tree after folder is opened', async () => {
-    (OpenDirectoryDialog as jest.Mock).mockResolvedValue('/Users/test/project');
+    (OpenFolderDialog as jest.Mock).mockResolvedValue('/Users/test/project');
     (ReadDirectory as jest.Mock).mockResolvedValue([
       { name: 'src', path: '/Users/test/project/src', isDir: true, size: 0, modTime: 0 },
     ]);
@@ -85,13 +85,13 @@ describe('Open Folder', () => {
   });
 
   it('does nothing when dialog is cancelled', async () => {
-    (OpenDirectoryDialog as jest.Mock).mockResolvedValue(''); // Empty string = cancelled
+    (OpenFolderDialog as jest.Mock).mockResolvedValue(''); // Empty string = cancelled
 
     render(<FileExplorer />);
     fireEvent.click(screen.getByRole('button', { name: /open folder/i }));
 
     await waitFor(() => {
-      expect(OpenDirectoryDialog).toHaveBeenCalled();
+      expect(OpenFolderDialog).toHaveBeenCalled();
     });
 
     const state = useIDEStore.getState();
@@ -588,9 +588,9 @@ Tests:       8 failed, 38 passed, 46 total
 ### Phase 1: Open Folder (Prerequisite)
 
 1. **Add Open Folder handler**
-   - Import `OpenDirectoryDialog` from Wails runtime
+   - Import `OpenFolderDialog` from the Wails bindings adapter
    - Add `onClick` to "Open Folder" button in FileExplorerEmpty
-   - Call `OpenDirectoryDialog()` to show native folder picker
+   - Call `OpenFolderDialog()` to show native folder picker
    - On selection: call `setWorkspace()` with folder name/path
    - Trigger `ReadDirectory` to load file tree
 

@@ -68,6 +68,26 @@ func TestService_Stage_DotDotInFilenameAllowed(t *testing.T) {
 	}
 }
 
+func TestService_Stage_TreatsPathspecMagicLiterally(t *testing.T) {
+	requireGit(t)
+	const name = "f[x].txt"
+	dir := makeConflictNamed(t, name)
+	writeFile(t, dir, name, "resolved\n")
+	writeFile(t, dir, "fx.txt", "unrelated\n")
+	svc := NewService()
+
+	if err := svc.Stage(context.Background(), dir, []string{name}); err != nil {
+		t.Fatalf("Stage(%s) error = %v", name, err)
+	}
+
+	if isUnmerged(t, dir, name) {
+		t.Fatalf("%q remains unmerged; Stage treated its name as pathspec magic", name)
+	}
+	if got := strings.TrimSpace(gitCmd(t, dir, "status", "--porcelain", "--", "fx.txt")); got != "?? fx.txt" {
+		t.Fatalf("unrelated path status = %q, want it left untracked", got)
+	}
+}
+
 func TestValidateRepoRelPaths_ErrorNamesOffender(t *testing.T) {
 	err := validateRepoRelPaths([]string{"ok.txt", "/abs/path"})
 	if err == nil || !strings.Contains(err.Error(), "/abs/path") {

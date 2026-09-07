@@ -1,0 +1,114 @@
+{
+  "verdict": "accept",
+  "projection": {
+    "state": "ready",
+    "sourceOrigin": "user_config",
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "readOnly": false,
+    "editable": true,
+    "routes": [
+      {
+        "useCase": "agent",
+        "role": "m-dense-auto"
+      }
+    ],
+    "models": [
+      {
+        "role": "m-dense-auto",
+        "modelName": "dense-model-a",
+        "provider": "hosted",
+        "type": "dense",
+        "effectiveCapabilities": ["chat", "stream", "tool_call"],
+        "capabilityFacts": {
+          "caps": ["chat", "stream", "tool_call"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": ["chat", "stream", "tool_call"],
+        "thinkMode": "auto",
+        "routedUseCases": ["agent"],
+        "hasThinkTags": false,
+        "hasSlots": false,
+        "removable": false
+      },
+      {
+        "role": "m-dense-toggle",
+        "modelName": "dense-model-b",
+        "provider": "hosted",
+        "type": "dense",
+        "effectiveCapabilities": ["chat", "stream"],
+        "capabilityFacts": {
+          "caps": ["chat", "stream"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": ["chat", "stream"],
+        "thinkMode": "toggle",
+        "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
+        "removable": true
+      },
+      {
+        "role": "m-embed-empty",
+        "modelName": "embed-model",
+        "provider": "hosted",
+        "type": "embedding",
+        "dimensions": 768,
+        "effectiveCapabilities": ["embed"],
+        "capabilityFacts": {
+          "caps": ["embed"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": ["embed"],
+        "thinkMode": "",
+        "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
+        "removable": true
+      },
+      {
+        "role": "m-moe-always",
+        "modelName": "moe-model-a",
+        "provider": "hosted",
+        "type": "moe",
+        "effectiveCapabilities": ["chat", "generate", "stream", "tool_call"],
+        "capabilityFacts": {
+          "caps": ["chat", "generate", "stream", "tool_call"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": ["chat", "generate", "stream", "tool_call"],
+        "thinkMode": "always",
+        "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
+        "removable": true
+      },
+      {
+        "role": "m-moe-none",
+        "modelName": "moe-model-b",
+        "provider": "hosted",
+        "type": "moe",
+        "effectiveCapabilities": ["chat"],
+        "capabilityFacts": {
+          "caps": ["chat"],
+          "knownCaps": ["chat", "generate", "stream", "embed", "tool_call", "thinking", "insert"]
+        },
+        "exposedCapabilities": ["chat"],
+        "thinkMode": "none",
+        "routedUseCases": [],
+        "hasThinkTags": false,
+        "hasSlots": false,
+        "removable": true
+      }
+    ],
+    "providers": [
+      {
+        "name": "hosted",
+        "endpoint": "https://api.example.com/v1",
+        "classification": "remote",
+        "apiFormat": "openai-compat",
+        "credentialState": "none"
+      }
+    ],
+    "diagnostics": []
+  }
+}

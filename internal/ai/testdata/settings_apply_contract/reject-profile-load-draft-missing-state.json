@@ -1,0 +1,70 @@
+{
+  "verdict": "reject",
+  "document": "profile_load_result",
+  "value": {
+    "status": "loaded",
+    "profileId": "curated/local",
+    "sourceRevision": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+    "projection": {
+      "readOnly": false,
+      "editable": true,
+      "routes": [
+        {
+          "useCase": "agent",
+          "role": "agent-m"
+        }
+      ],
+      "models": [
+        {
+          "role": "agent-m",
+          "modelName": "wire-model",
+          "provider": "hosted",
+          "type": "dense",
+          "effectiveCapabilities": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "capabilityFacts": {
+            "caps": [
+              "chat",
+              "stream",
+              "tool_call"
+            ],
+            "knownCaps": [
+              "chat",
+              "generate",
+              "stream",
+              "embed",
+              "tool_call",
+              "thinking",
+              "insert"
+            ]
+          },
+          "exposedCapabilities": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "thinkMode": "",
+          "routedUseCases": [
+            "agent"
+          ],
+          "hasThinkTags": false,
+          "hasSlots": false,
+          "removable": false
+        }
+      ],
+      "providers": [
+        {
+          "name": "hosted",
+          "endpoint": "https://api.example.com/v1",
+          "classification": "remote",
+          "apiFormat": "openai-compat",
+          "credentialState": "none"
+        }
+      ],
+      "diagnostics": []
+    }
+  }
+}
