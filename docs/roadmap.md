@@ -48,7 +48,7 @@ This section supersedes the archived delivery narrative below for current priori
 
 ### Repository health
 
-- `v0.12.0` is live from `main`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
+- `v0.12.0` is live from `main` at `02c6297`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
 - No planned stabilization sprint follows the release. Cut `v0.12.1` only for observed regressions; otherwise continue the parallel product tracks below.
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
