@@ -625,6 +625,7 @@ function finishRun(
   // `done` either way -- it is the backend's terminal, and rewriting it would
   // make the phase tombstone mean something the backend never said.
   const unanswered = notice !== null && !notice.answered;
+  if (unanswered) conversation.runs[runId] = { ...run, unanswered: true };
 
   if (conversation.activeRunId === runId) conversation.activeRunId = null;
 

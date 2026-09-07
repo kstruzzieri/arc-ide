@@ -126,6 +126,7 @@ export interface RunView {
   identity: RunIdentity;
   phase: RunPhase;
   lastSeq: number;
+  unanswered?: boolean; // finished without assistant text, independent of Retry eligibility
   request?: TurnDraft; // absent when reconstructed only from backend Status
   userEntryId?: string;
   error?: string;
