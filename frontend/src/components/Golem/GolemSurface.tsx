@@ -72,7 +72,11 @@ function phaseAnnouncement(
   if (!latest) return '';
   if (latest.phase === 'canceled') return 'Golem run canceled.';
   if (latest.phase === 'failed') return `Golem run failed. ${latest.error ?? ''}`.trim();
-  return completedReply(conversation, latest.identity.runId) || 'Golem finished its reply.';
+  // No fallback sentence for a run that produced no reply. The store appends a
+  // transcript row naming why one is missing -- a restraint cap, or a
+  // completion with no assistant text at all -- and that row is what the live
+  // region below announces. Claiming a reply here would contradict it.
+  return completedReply(conversation, latest.identity.runId);
 }
 
 /**
