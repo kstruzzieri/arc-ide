@@ -124,10 +124,10 @@ execution identity Phase 2, and the Go 1.25 toolchain.
 ### Security
 
 - On Windows, the no-follow open behind Firn's bounded reads now refuses
-  symlinks and junctions, matching what Unix already did, while leaving benign
-  reparse points such as OneDrive placeholders working. This covers the bounded
-  read paths, including run-history loading; ordinary editor reads and writes
-  are unchanged.
+  symlinks and junctions, matching the link refusal Unix already had. The check
+  rejects name-surrogate reparse points specifically rather than every reparse
+  point. This covers the bounded read paths, including run-history loading;
+  ordinary editor reads and writes are unchanged.
 
 ### Build and CI
 
