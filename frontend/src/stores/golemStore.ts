@@ -535,12 +535,28 @@ function dispatchQueued(
  * with no assistant text at all — a final message that was pure reasoning
  * content, or deltas the payload validator dropped whole. Both get a row, so
  * "ended silently" is not a state this panel can reach.
+ *
+ * `answered` reports whether any assistant text survived, because a cap that
+ * truncated a real reply is a different outcome from one that produced nothing:
+ * the first only annotates what is already on screen, the second leaves the
+ * user with a prompt they must be able to send again.
+ *
+ * This covers the streamed terminals that reach `finishRun`. A terminal for a
+ * conversation this window has never seen is cached in `unknownTerminals` and
+ * replayed against a conversation rebuilt from backend status, which has no
+ * transcript at all — no prompt, no tool rows — so there is no silence there to
+ * break.
  */
+interface DoneRunNotice {
+  text: string;
+  answered: boolean;
+}
+
 function doneRunNotice(
   conversation: ConversationView,
   runId: string,
   stopReason?: string
-): string | null {
+): DoneRunNotice | null {
   let toolCalls = 0;
   let answered = false;
   for (const entry of conversation.transcript) {
@@ -553,9 +569,9 @@ function doneRunNotice(
       STOP_REASON_CAUSE[stopReason] ?? `it stopped early (${boundedMessage(stopReason)})`;
     const calls = `${toolCalls} tool call${toolCalls === 1 ? '' : 's'}`;
     const tail = answered ? 'The answer above may be incomplete.' : 'It did not answer.';
-    return `Golem stopped after ${calls}: ${cause}. ${tail}`;
+    return { text: `Golem stopped after ${calls}: ${cause}. ${tail}`, answered };
   }
-  return answered ? null : NO_ANSWER_ERROR;
+  return answered ? null : { text: NO_ANSWER_ERROR, answered: false };
 }
 
 /**
@@ -585,10 +601,19 @@ function finishRun(
       : entry
   );
   if (message) appendError(conversation, runId, message, raw);
-  if (phase === 'done') {
-    const notice = doneRunNotice(conversation, runId, stopReason);
-    if (notice) appendError(conversation, runId, notice, raw);
-  }
+
+  const notice = phase === 'done' ? doneRunNotice(conversation, runId, stopReason) : null;
+  if (notice) appendError(conversation, runId, notice.text, raw);
+  // A run that ended with no answer at all is a failed outcome even though the
+  // backend reported a normal finish, so it earns everything a `failed` phase
+  // earns downstream: the Retry button (the draft is otherwise gone -- the
+  // user would have to retype the prompt) and the status bar's past-failure state
+  // (reporting Idle over a run that answered nothing is the reported symptom).
+  // A cap that truncated a real reply is not that: the answer is on screen and
+  // the row above only says it may be incomplete. The run's own `phase` stays
+  // `done` either way -- it is the backend's terminal, and rewriting it would
+  // make the phase tombstone mean something the backend never said.
+  const unanswered = notice !== null && !notice.answered;
 
   if (conversation.activeRunId === runId) conversation.activeRunId = null;
 
@@ -596,11 +621,11 @@ function finishRun(
   if (pending && pending.identity.runId === runId) {
     conversation.lastFailedTurn = { draft: pending.draft, userEntryId: pending.userEntryId };
     conversation.pendingConsentTurn = null;
-  } else if (phase === 'failed' && run.request && run.userEntryId) {
+  } else if ((phase === 'failed' || unanswered) && run.request && run.userEntryId) {
     conversation.lastFailedTurn = { draft: run.request, userEntryId: run.userEntryId };
   }
 
-  if (phase === 'failed') markFailure(mutation, conversationId);
+  if (phase === 'failed' || unanswered) markFailure(mutation, conversationId);
 
   return dispatchQueued(mutation, conversationId, context);
 }

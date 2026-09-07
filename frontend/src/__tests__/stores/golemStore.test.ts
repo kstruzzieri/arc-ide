@@ -1576,8 +1576,11 @@ describe('consent', () => {
     expect(conv().pendingConsentTurn).toBeNull();
 
     store().ingestEvent(
+      eventPayload({ seq: 2, type: 'message.delta', payload: { messageId: 'm1', text: 'ok' } })
+    );
+    store().ingestEvent(
       eventPayload({
-        seq: 2,
+        seq: 3,
         type: 'run.finished',
         payload: { stopReason: 'completed', model: 'm' },
       })
@@ -1948,6 +1951,57 @@ describe('failure and retry', () => {
     expect(uuidQueue).toEqual([RUN_B]);
     expect(mockRunGolemTurn).toHaveBeenCalledTimes(1);
     expect(store().lastFailureConversationId).toBe(CONV);
+  });
+
+  // "The status bar returns to Golem: Idle as if nothing happened" was part of
+  // the reported symptom, so a run that answered nothing has to reach the
+  // failure surfaces too -- Retry, and the status bar's past-failure state --
+  // not just gain a transcript row.
+  it('offers Retry and raises attention for a run that answered nothing', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'what is internal/runhistory responsible for?');
+    await flush();
+    const before = store().failureRevision;
+
+    store().ingestEvent(
+      eventPayload({
+        seq: 1,
+        type: 'tool.started',
+        payload: { toolCallId: 't1', name: 'list', preview: 'list()' },
+      })
+    );
+    store().ingestEvent(
+      eventPayload({ seq: 2, type: 'run.finished', payload: { stopReason: 'step_cap_reached' } })
+    );
+
+    expect(conv().runs[RUN_A].phase).toBe('done');
+    expect(conv().lastFailedTurn).toEqual({
+      draft: { message: 'what is internal/runhistory responsible for?', contextRefs: [] },
+      userEntryId: conv().runs[RUN_A].userEntryId,
+    });
+    expect(store().failureRevision).toBe(before + 1);
+    expect(store().lastFailureConversationId).toBe(CONV);
+  });
+
+  // A cap that truncated a real reply is a different outcome: the answer is on
+  // screen, so calling it a failure would overstate it.
+  it('leaves a truncated answer out of the failure surfaces', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'first');
+    await flush();
+    const before = store().failureRevision;
+
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'partial' } })
+    );
+    store().ingestEvent(
+      eventPayload({ seq: 2, type: 'run.finished', payload: { stopReason: 'step_cap_reached' } })
+    );
+
+    expect(conv().lastFailedTurn).toBeNull();
+    expect(store().failureRevision).toBe(before);
   });
 
   it('ignores a late or duplicate run-status for a run that already ended', async () => {
