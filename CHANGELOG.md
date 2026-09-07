@@ -123,8 +123,11 @@ execution identity Phase 2, and the Go 1.25 toolchain.
 
 ### Security
 
-- The Windows no-follow open path refuses symlinks, so a symlinked path cannot
-  redirect a workspace read or write outside its root.
+- On Windows, the no-follow open behind Firn's bounded reads now refuses
+  symlinks and junctions, matching what Unix already did, while leaving benign
+  reparse points such as OneDrive placeholders working. This covers the bounded
+  read paths, including run-history loading; ordinary editor reads and writes
+  are unchanged.
 
 ### Build and CI
 
@@ -293,7 +296,8 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kstruzzieri/firn-ide/releases/tag/v0.9.0
