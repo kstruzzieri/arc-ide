@@ -30,38 +30,75 @@ function writeExecutable(path: string, content: string) {
   chmodSync(path, 0o755);
 }
 
+// The release version is read from frontend/package.json, the same file the
+// extraction script gates on, so cutting a release does not require editing
+// these expectations. Cases that must pin a specific version use fixtures.
+const releaseVersion = JSON.parse(readFileSync(resolve(rootDir, 'frontend/package.json'), 'utf8'))
+  .version as string;
+
+function writeVersionFixtures(dir: string, version: string) {
+  const packageJson = join(dir, 'package.json');
+  const configYml = join(dir, 'config.yml');
+  writeFileSync(packageJson, `{"version":"${version}"}\n`);
+  writeFileSync(configYml, `version: '3'\ninfo:\n  version: '${version}'\n`);
+  return { packageJson, configYml };
+}
+
 describe('release changelog extraction', () => {
   const script = resolve(releaseScriptsDir, 'extract-changelog.sh');
   const changelog = resolve(rootDir, 'CHANGELOG.md');
   const packageJson = resolve(rootDir, 'frontend/package.json');
   const configYml = resolve(rootDir, 'build/config.yml');
 
-  it('extracts the requested stable section without bleeding into the prior release', () => {
+  it('extracts the live section for the current version without bleeding into the prior release', () => {
     withTempDir((dir) => {
       const output = join(dir, 'notes.md');
 
-      execFileSync('sh', [script, 'v0.11.0-rc.1', changelog, output, packageJson, configYml]);
+      // The rc form skips the Pending check, so this passes on a release
+      // branch whose entry is not dated yet and still exercises the live
+      // CHANGELOG, package.json, and config.yml against each other.
+      execFileSync('sh', [
+        script,
+        `v${releaseVersion}-rc.1`,
+        changelog,
+        output,
+        packageJson,
+        configYml,
+      ]);
 
       const notes = readFileSync(output, 'utf8');
       expect(notes.trim()).not.toBe('');
-      expect(notes).toContain('Stabilization release');
+      // Every curated section in this file groups its entries under `###`
+      // headings; asserting one proves the body was extracted, not just
+      // the lead paragraph.
+      expect(notes).toMatch(/^### /m);
       expect(notes).not.toMatch(/^## \[/m);
+      // Text that only ever appeared in earlier sections of the same file.
+      expect(notes).not.toContain('Stabilization release');
       expect(notes).not.toContain('Milestone 7: Git integration');
     });
   });
 
   it('rejects a final tag while its changelog date is Pending', () => {
     withTempDir((dir) => {
-      // Use a fixture rather than the live CHANGELOG so the test stays valid
-      // once a release dates its own entry.
+      // Fixtures rather than the live files, so this stays valid both before
+      // and after a release dates its own entry.
       const pendingChangelog = join(dir, 'CHANGELOG.md');
       writeFileSync(
         pendingChangelog,
-        '# Changelog\n\n## [0.11.0] - Pending\n\nFixture entry.\n\n## [0.10.0] - 2026-07-08\n\nPrior.\n'
+        '# Changelog\n\n## [9.9.9] - Pending\n\nFixture entry.\n\n## [9.9.8] - 2026-01-01\n\nPrior.\n'
       );
+      const fixtures = writeVersionFixtures(dir, '9.9.9');
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0', pendingChangelog, join(dir, 'notes.md'), packageJson, configYml],
+        [
+          script,
+          'v9.9.9',
+          pendingChangelog,
+          join(dir, 'notes.md'),
+          fixtures.packageJson,
+          fixtures.configYml,
+        ],
         { encoding: 'utf8' }
       );
 
@@ -72,28 +109,51 @@ describe('release changelog extraction', () => {
 
   it('accepts a final tag once the changelog entry is dated', () => {
     withTempDir((dir) => {
+      const datedChangelog = join(dir, 'CHANGELOG.md');
+      writeFileSync(
+        datedChangelog,
+        '# Changelog\n\n## [9.9.9] - 2026-01-02\n\nFixture entry.\n\n## [9.9.8] - 2026-01-01\n\nPrior.\n'
+      );
+      const fixtures = writeVersionFixtures(dir, '9.9.9');
       const output = join(dir, 'notes.md');
 
-      execFileSync('sh', [script, 'v0.11.0', changelog, output, packageJson, configYml]);
+      execFileSync('sh', [
+        script,
+        'v9.9.9',
+        datedChangelog,
+        output,
+        fixtures.packageJson,
+        fixtures.configYml,
+      ]);
 
       const notes = readFileSync(output, 'utf8');
       expect(notes.trim()).not.toBe('');
-      expect(notes).toContain('Stabilization release');
+      expect(notes).toContain('Fixture entry.');
+      expect(notes).not.toContain('Prior.');
     });
   });
 
   it('rejects release metadata that does not match the tag version', () => {
     withTempDir((dir) => {
       const stalePackage = join(dir, 'package.json');
-      writeFileSync(stalePackage, '{"version":"0.10.0"}\n');
+      writeFileSync(stalePackage, '{"version":"0.0.1"}\n');
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), stalePackage, configYml],
+        [
+          script,
+          `v${releaseVersion}-rc.1`,
+          changelog,
+          join(dir, 'notes.md'),
+          stalePackage,
+          configYml,
+        ],
         { encoding: 'utf8' }
       );
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain('package version 0.10.0 does not match tag v0.11.0-rc.1');
+      expect(result.stderr).toContain(
+        `package version 0.0.1 does not match tag v${releaseVersion}-rc.1`
+      );
     });
   });
 
@@ -103,13 +163,20 @@ describe('release changelog extraction', () => {
       writeFileSync(staleConfig, "version: '3'\ninfo:\n  version: '1.0.0'\n");
       const result = spawnSync(
         'sh',
-        [script, 'v0.11.0-rc.1', changelog, join(dir, 'notes.md'), packageJson, staleConfig],
+        [
+          script,
+          `v${releaseVersion}-rc.1`,
+          changelog,
+          join(dir, 'notes.md'),
+          packageJson,
+          staleConfig,
+        ],
         { encoding: 'utf8' }
       );
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(
-        'config.yml info.version 1.0.0 does not match tag v0.11.0-rc.1'
+        `config.yml info.version 1.0.0 does not match tag v${releaseVersion}-rc.1`
       );
     });
   });
