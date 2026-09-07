@@ -59,7 +59,37 @@ This section supersedes the archived delivery narrative below for current priori
 
 ### Latest delivery wave
 
-Six recent implementation tracks landed:
+**v0.12.0 (2026-09-06)** shipped the tracks below. The four that landed after
+the previous wave are listed first:
+
+1. **#273 — Wails v2.11 to v3.0.0-beta.16, via PRs #274/#280:** host access is
+   confined to a `frontend/src/wails/` adapter module (guard-tested), runtime
+   events carry a single payload, the macOS floor rose to 12 (Monterey), and
+   Linux stays on WebKit2GTK 4.1 behind the `gtk3` tag. Golem contract results
+   are validated on the raw wire payload through nine `Call.ByID` adapter
+   overrides, because v3 generated constructors default missing required fields
+   before the validators run. Linux must move to GTK4/WebKitGTK 6.0 (#281)
+   before v3.1, which drops the GTK3 path.
+2. **#263 — Golem configuration workspace, via PRs #269/#270/#272:** Phase 1
+   read-only projection and diagnostics, Slice A complete projection with typed
+   diagnostics, and Slice B transactional writes. Slices C (profiles UI,
+   add-use-case control) and D (inventory picker) remain, gated upstream.
+3. **#285 — go-llm phase routing and destination admission, via PR #287:**
+   consent-derived `DestinationPolicy`, `requiredAgentCaps` capability floors,
+   `NormalizeEndpoint` aligned with destination/v1, reachable-set admission
+   mirroring upstream, batch settings-apply consent with provenance, atomic
+   `GrantMany`, and the grant-only "Approve missing destinations" transaction.
+4. **#271 — Golem center panel and undocked window, via PR #288:** the chat
+   moved out of the right dock into a full-height center island beside Files,
+   with persisted per-repository order/width/collapse, command bars for both
+   panels, and drag/keyboard/palette reorder. It optionally undocks into a
+   second native window that shares the surface while the main window remains
+   the only executing owner, projecting a `GolemView` snapshot and admitting or
+   refusing every action the satellite posts. Mode and bounds persist in
+   `~/.firn/app.json`. Smoke-tested on macOS; the Windows and Linux rows of the
+   checklist are untested.
+
+Carried from the previous wave:
 
 1. **#44 — implemented via PR #206:** the native-dialog command palette, deterministic fuzzy matcher, late-bound command registry, and shared shortcuts shipped. The GitHub issue remains open because the PR used `Addresses #44`; close it after tracker housekeeping.
 2. **#164 — shipped in full and closed, phases 0-3 via PRs #208/#209/#213/#239 and phase 4 via PR #244:** backend conflict snapshots, the guarded merge-session store, the CodeMirror Result-spine merge editor, the confidence layer (preview, word marks, provenance stripes, targeted reopen, base display, line numbers, announcements), and multi-file hardening. What remains is the follow-up backlog, not the issue itself.
@@ -72,7 +102,7 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 
 ### Parallel development plan
 
-#### Current wave — three isolated worktrees
+#### Current wave — open after v0.12.0
 
 | Lane | Ticket | Primary ownership | Dependency and conflict rule |
 |------|--------|-------------------|------------------------------|
@@ -111,23 +141,27 @@ PR #227 additionally fixed a clipped adopt button in the run-profile card action
 | Delivered / tracker open | #44 Command Palette | PR #206 satisfies the issue requirements; verify and close the tracker without more implementation. |
 | Closed | #225 Go 1.25 toolchain | Module and every CI job resolve Go from `go-version-file: 'go.mod'`; shipped via PR #228. |
 | Closed | #164 Phase 3 merge confidence | Shipped via PR #239: preview, word marks, provenance stripes, targeted reopen, base display, line numbers, announcements. |
-| P0 | #164 Phase 4 multi-file hardening | Queue auto-advance (still suppressed in the UI) plus the watcher/external-change policy. The atomic single-snapshot swap is the risk: never apply a regions-only refetch to stale content. |
+| Closed | #164 Phase 4 multi-file hardening | Shipped via PR #244; queue auto-advance and the watcher/external-change policy landed with the atomic single-snapshot swap intact. #164 is closed. |
 | P1 | #45 Context menus | Reuse #44 commands now that #202 has released the File Explorer seams. |
 | P2 | #46 Breadcrumbs | Build on shared navigation commands and the lazy tree-loading contract after the merge editor stabilizes. |
 | P2 | #220 Auto-merged region hints | Indicate what Git already merged so reviewers can distinguish it from unresolved regions. |
 | P2 | #219 Key-hold resolution preview | Preview a side without committing the decision; must not mutate the Result document. |
 | P2 | #221 Multi-file conflict rail | Extend the conflict rail across files in the Git panel; keep per-file finalize guards intact. |
-| P2 | #222 Newline metadata | Preserve per-side no-trailing-newline metadata through resolution and write. |
+| Closed | #222 Newline metadata | Closed via PR #246; per-side no-trailing-newline metadata survives resolution and write. |
 | P2 | #223 Bulk conflict resolution | Add confirmed take-all-Current/Incoming actions; never silently overwrite manual decisions, never auto-write or stage. |
 | P2 | #240 Pre-stage diagnostics check | Once the buffer is marker-free, report whether the resolution compiles before it is staged. Needs a document handoff, not a refcounted lease. |
 | P2 | #241 Base-relative word marks | When git recorded a base, mark each side against it to show what that side changed rather than how the sides differ. |
-| P2 | #242 Conflicted-file diagnostics | Collapse per-marker errors into one actionable warning keyed on git's `UU` status; must clear the moment the file is written clean. |
+| Closed | #242 Conflicted-file diagnostics | Closed via PR #252; per-marker errors collapse into one warning keyed on git's `UU` status, with the status-bar summary aligned in PR #255. |
 | P2 | #166 Rich VCS menu | Start after #164; separate safe/read-only behavior from destructive branch operations. |
-| P2 | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics merged (PR #270); Slice B write phases merged (PR #272); Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain — Slice D no longer owns the go-llm pin bump, which the #285 phase-routing/destination-admission consumer slice satisfies. |
-| P2 | #271 Golem center panel (Plan A) | Golem moves out of the right dock into a full-height center island beside the Files column: persisted per-repository order/width/collapse, an effective-layout budget that rails the non-requested panel under window pressure, command bars for both panels, drag/keyboard/palette reorder, and Files reveal on every explicit editor, configuration, diff, merge and run-output intent. Implemented on `feature/issue-271-golem-center-panel` pending review; undock follows as Plan B. |
-| P2 | #271 Golem undocked window (Plan B) | The same chat, optionally hosted by a second native window. Go owns the lifecycle (open, ready, closing, closed) and persists mode plus last normal bounds in `~/.firn/app.json`; the main window stays the only executing owner, projecting a `GolemView` snapshot to the satellite and admitting or refusing every action it posts. Covers the bounded draft handoff in both directions, abort and re-dock recovery, restore on relaunch, delta ingest while the main window is minimized, the undocked Files/rail geometry, and the scoped window shortcuts. Implemented on `feature/issue-271-golem-center-panel` pending review; the supported-platform smoke pass (macOS first, then Windows/Linux) has not been run, so this is not shipped. |
+| Partly shipped | #263 Golem settings UI | Models, roles, and keys from the panel; project keys write-only so a stored secret never reads back. Phase 1 merged (PR #269); Slice A read-only diagnostics merged (PR #270); Slice B write phases merged (PR #272); Slice C (profiles UI, add-use-case control) and Slice D (inventory picker) remain — Slice D no longer owns the go-llm pin bump, which the #285 phase-routing/destination-admission consumer slice satisfies. |
+| Closed | #271 Golem center panel (Plan A) | Golem moves out of the right dock into a full-height center island beside the Files column: persisted per-repository order/width/collapse, an effective-layout budget that rails the non-requested panel under window pressure, command bars for both panels, drag/keyboard/palette reorder, and Files reveal on every explicit editor, configuration, diff, merge and run-output intent. Shipped via PR #288 in v0.12.0. |
+| Closed | #271 Golem undocked window (Plan B) | The same chat, optionally hosted by a second native window. Go owns the lifecycle (open, ready, closing, closed) and persists mode plus last normal bounds in `~/.firn/app.json`; the main window stays the only executing owner, projecting a `GolemView` snapshot to the satellite and admitting or refusing every action it posts. Covers the bounded draft handoff in both directions, abort and re-dock recovery, restore on relaunch, delta ingest while the main window is minimized, the undocked Files/rail geometry, and the scoped window shortcuts. Shipped via PR #288 in v0.12.0; smoke-tested on macOS, with the Windows and Linux rows of the checklist still untested. |
 | P2 | #264 Golem durable multi-conversation | Persist and switch between conversations; the New chat reset shipped with #226 is the in-memory slice of this. |
 | P3 | #265 Golem token and context usage | Blocked: needs go-llm to emit usage on its run events first. |
+| Closed | #273 Wails v3 migration | Shipped via PRs #274/#280 in v0.12.0; host access confined to the `frontend/src/wails/` adapter, macOS floor 12, Linux on WebKit2GTK 4.1 behind the `gtk3` tag. |
+| P1 | #281 Linux GTK4 + WebKitGTK 6.0 | Required before Wails v3.1, which removes the gtk3 path v0.12.0 targets. Do not adopt v3.1 first. |
+| P2 | #282 Wails v3 hygiene | The open items from the #273 review triage. |
+| Closed | #285 Phase routing and destination admission | Shipped via PR #287 in v0.12.0; consent-derived `DestinationPolicy`, capability floors, reachable-set admission, batch consent with provenance. Consumer follow-ups tracked in #286. |
 | Incremental | #41 Zustand slices | Extract only domains required by active feature work; do not schedule a standalone rewrite. |
 | Gated | #148 Lazy watcher registration | Benchmark first; implementation has meaningful lifecycle/race risk. |
 | Gated | #196 Ignore-rule cache | Benchmark lazy expansion first; if needed, cache per directory with watcher-based invalidation, never polling. |
@@ -573,7 +607,7 @@ Epic for Firn's production LSP foundation and TypeScript vertical slice.
 - [x] Hunk-level staging in the diff viewer (#163, PR #173; hardened PR #174/#176)
 - [x] Intent-to-add (`git add -N`) track-without-staging for new files (#167, PR #177)
 
-### #164: Git - Conflict Resolution (phases 0-3 shipped)
+### #164: Git - Conflict Resolution (COMPLETE — phases 0-4 shipped, issue closed)
 - [x] **Phase 0 (PR #208)** — backend conflict snapshots: per-region Base/Current/Incoming data sourced from the real merge state.
 - [x] **Phase 1 (PR #209)** — guarded merge-session store with close-without-write, stale-session, durable-write-before-stage, and zero-unresolved guards.
 - [x] **Phase 2 (PR #213)** — CodeMirror Result-spine merge editor with Current / Incoming / Both / Manual decisions, conflict rail, keyboard navigation, undo-safe region mapping, and accessible side labels.
@@ -705,8 +739,17 @@ Shipped via PR #262 (squashed to develop `e56b28e`). The first AI surface: a con
 
 Follow-ups: #263 settings UI, #264 durable multi-conversation, #265 token/context usage (blocked on go-llm usage emission).
 
-### AI Chat Panel (v1.5)
-Claude integration with context-aware code assistance, diff preview, provider architecture.
+### Golem AI — SHIPPED (v0.12.0)
+
+The assistant is no longer a future feature. #226 shipped the read-only chat
+panel on the embedded `go-llm` runtime, #165 moved commit messages onto it,
+#263 slices A and B added the configuration workspace, #285 added phase routing
+and destination admission, and #271 moved the chat into a center island that
+optionally undocks into a second native window.
+
+Remaining: #263 slices C and D (gated upstream), #264 durable
+multi-conversation, #265 token and context usage (blocked on `go-llm` emitting
+usage), and #261 guarded preview-and-apply.
 
 ### gRPC Service Integration (v2.0+)
 Service Adapter Pattern for connecting to external backends.
