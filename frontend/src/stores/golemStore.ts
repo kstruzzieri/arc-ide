@@ -57,16 +57,23 @@ const RUN_FAILED_ERROR = 'The Golem run failed.';
  * returns to idle, and the run looks hung.
  *
  * These name each cap in the transcript instead. The set mirrors
- * `agent.StopReason.String()`; an unrecognized reason is still named verbatim,
- * because an unmapped value must not collapse back into silence.
+ * `agent.StopReason.String()` and is pinned against it by
+ * `TestGolemStopReasonVocabulary`; an unrecognized reason is still named
+ * verbatim, because an unmapped value must not collapse back into silence.
+ *
+ * A Map, not an object literal: this key comes off the wire, and an object
+ * literal answers `constructor` (and every other Object.prototype name) with a
+ * function that `??` does not treat as absent, which would interpolate native
+ * code into the transcript. Nothing this store reads from the boundary is
+ * trusted, including a key it only expects to be one of five words.
  */
 const COMPLETED_STOP_REASON = 'completed';
-const STOP_REASON_CAUSE: Record<string, string> = {
-  step_cap_reached: 'it reached its tool-call limit',
-  budget_reached: 'it reached its token budget',
-  tool_error_cap_reached: 'too many tool calls failed',
-  repeat_limit_reached: 'it kept repeating the same tool call',
-};
+const STOP_REASON_CAUSE = new Map<string, string>([
+  ['step_cap_reached', 'it reached its tool-call limit'],
+  ['budget_reached', 'it reached its token budget'],
+  ['tool_error_cap_reached', 'too many tool calls failed'],
+  ['repeat_limit_reached', 'it kept repeating the same tool call'],
+]);
 const NO_ANSWER_ERROR = 'The Golem run ended without an answer.';
 const NO_SECURE_UUID_ERROR =
   'This window cannot generate a secure run ID, so the turn was not sent.';
@@ -536,7 +543,11 @@ function dispatchQueued(
  * content, or deltas the payload validator dropped whole. Both get a row, so
  * "ended silently" is not a state this panel can reach.
  *
- * `answered` reports whether any assistant text survived, because a cap that
+ * `answered` matches `completedReply` in `GolemSurface` exactly, whitespace
+ * trimming included: a reply the live region refuses to read out is not an
+ * answer here either, or a whitespace-only completion goes quiet on both.
+ *
+ * It reports whether any assistant text survived, because a cap that
  * truncated a real reply is a different outcome from one that produced nothing:
  * the first only annotates what is already on screen, the second leaves the
  * user with a prompt they must be able to send again.
@@ -562,11 +573,11 @@ function doneRunNotice(
   for (const entry of conversation.transcript) {
     if (entry.runId !== runId) continue;
     if (entry.kind === 'tool') toolCalls += 1;
-    else if (entry.kind === 'assistant' && entry.text !== '') answered = true;
+    else if (entry.kind === 'assistant' && entry.text.trim() !== '') answered = true;
   }
   if (stopReason !== undefined && stopReason !== COMPLETED_STOP_REASON) {
     const cause =
-      STOP_REASON_CAUSE[stopReason] ?? `it stopped early (${boundedMessage(stopReason)})`;
+      STOP_REASON_CAUSE.get(stopReason) ?? `it stopped early (${boundedMessage(stopReason)})`;
     const calls = `${toolCalls} tool call${toolCalls === 1 ? '' : 's'}`;
     const tail = answered ? 'The answer above may be incomplete.' : 'It did not answer.';
     return { text: `Golem stopped after ${calls}: ${cause}. ${tail}`, answered };

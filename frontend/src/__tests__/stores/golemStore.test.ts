@@ -687,6 +687,37 @@ describe('event reduction', () => {
     expect(conv().runs[RUN_A].phase).toBe('done');
   });
 
+  // The stop reason is a wire value. An object-literal lookup answers
+  // `constructor` with a function, which `??` does not treat as absent and
+  // which would interpolate native code into the transcript.
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'treats the Object.prototype name %s as an unrecognized stop reason',
+    (stopReason) => {
+      send({ seq: 1, type: 'run.finished', payload: { stopReason } });
+
+      expect(
+        conv()
+          .transcript.filter((e) => e.kind === 'error')
+          .map((e) => e.text)
+      ).toEqual([
+        `Golem stopped after 0 tool calls: it stopped early (${stopReason}). It did not answer.`,
+      ]);
+    }
+  );
+
+  // GolemSurface's live region already refuses to read out whitespace-only
+  // text, so counting it as an answer here would go quiet in both places.
+  it('does not count a whitespace-only reply as an answer', () => {
+    send({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: '   \n ' } });
+    send({ seq: 2, type: 'run.finished', payload: { stopReason: 'completed' } });
+
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .map((e) => e.text)
+    ).toEqual(['The Golem run ended without an answer.']);
+  });
+
   it('adds nothing to a completed run that answered', () => {
     send({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'Done.' } });
     send({ seq: 2, type: 'run.finished', payload: { stopReason: 'completed', model: 'm' } });

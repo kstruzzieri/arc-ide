@@ -8,9 +8,41 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
 )
+
+// TestGolemStopReasonVocabulary pins the exact strings golem puts in a
+// run.finished payload's stopReason. The frontend maps each one to the sentence
+// it shows the user (STOP_REASON_CAUSE in frontend/src/stores/golemStore.ts),
+// and go-llm is a pinned dependency that gets bumped: a renamed or added reason
+// must fail here rather than silently degrade every affected run to the generic
+// "it stopped early (...)" wording.
+//
+// StopReason values are NOT errors -- every one of these ends Orchestrator.Run
+// as (result, nil) -- which is why the frontend cannot infer them from an error
+// path and has to read this field.
+func TestGolemStopReasonVocabulary(t *testing.T) {
+	want := map[agent.StopReason]string{
+		agent.Completed:           "completed",
+		agent.StepCapReached:      "step_cap_reached",
+		agent.BudgetReached:       "budget_reached",
+		agent.ToolErrorCapReached: "tool_error_cap_reached",
+		agent.RepeatLimitReached:  "repeat_limit_reached",
+	}
+	for reason, text := range want {
+		if got := reason.String(); got != text {
+			t.Errorf("StopReason(%d).String() = %q, want %q", int(reason), got, text)
+		}
+	}
+	// A reason added upstream lands past the highest one mapped above and
+	// stringifies as "unknown"; the frontend would show it verbatim instead of
+	// its own sentence, so catch the addition here.
+	if next := agent.RepeatLimitReached + 1; next.String() != "unknown" {
+		t.Errorf("go-llm added StopReason %q: map it in golemStore.ts STOP_REASON_CAUSE", next)
+	}
+}
 
 // TestGolemRunnerStepCapEmitsFinishedWithoutAssistantText pins the wire shape a
 // capped tool loop produces, because that shape is the whole reason a run can
