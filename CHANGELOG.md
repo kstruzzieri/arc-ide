@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.0] - Pending
+## [0.12.0] - 2026-09-06
 
 Feature release covering the Wails v3 host migration, the Golem configuration
 and center-panel workspace, the completed 3-way merge resolution editor, run
