@@ -33,17 +33,17 @@ Each workspace has independent layout state, scoped language servers (only the a
 **Quick install** (macOS and Linux) — downloads the latest release and installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | sh
 ```
 
 Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
 
 ```bash
 # preview the resolved download URL and target dir without installing
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | FIRN_DRY_RUN=1 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | FIRN_DRY_RUN=1 sh
 
 # pin a specific release instead of the latest
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.11.0/install.sh | FIRN_VERSION=v0.11.0 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.12.0/install.sh | FIRN_VERSION=v0.12.0 sh
 ```
 
 Windows users: use the manual zip below.
@@ -370,13 +370,13 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.11.0` is live. Accessibility (#43), dynamic language loading (#39), the command palette (#44), hybrid tree rails (#202), search-result hierarchy (#207/#215), the merge-resolution editor and its confidence layer (#164 phases 0-3), and the Go 1.25 toolchain upgrade (#225) have all shipped since the release.
+`v0.12.0` is live. The Wails v3 host migration (#273), the Golem configuration workspace and its center panel with undocking (#263 slices A and B, #271), phase routing and destination admission from `go-llm` (#285), the embedded commit-message runtime (#165), the merge-resolution editor through phase 4 (#164, closed), run execution identity phase 2 (#146, closed), and the Go 1.25 toolchain upgrade (#225) have all shipped since v0.11.0.
 
 Active tracks:
 
-1. **Golem:** the read-only workspace chat panel shipped as #226 phase 1, on the embedded `go-llm` runtime that also replaced the commit-message CLI shell-out (#165). The settings UI (#263) is under way: phase 1 merged as PR #269, Slice A read-only diagnostics is open as PR #270, and Slice B — the write path, whose go-llm prerequisite landed upstream in #462 — is implemented and in review. Then durable multi-conversation history (#264); token and context usage (#265) waits on go-llm emitting usage. Phase 2 chat work (context attachments, mutating tools) comes after.
-2. **Git merge:** finish #164 phase 4 — multi-file queue advance and watcher/external-change hardening — then work the follow-up backlog: auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), and the diagnostics follow-ups surfaced by phase 3 (#240, #241, #242). Destructive VCS operations (#166) come after.
-3. **Run engine:** run execution identity Phase 2 (#146) is complete and the issue is closed — 2A retained tabs (#224), 2B same-profile parallelism (#232), 2C persisted history (#233), and 2D owned execution plans (#237), with the two bugs that work surfaced fixed in #238 and #245. No run-engine track is currently open.
+1. **Golem:** the configuration UI epic (#263) stays open for the write phases still gated on upstream `go-llm`. Next are durable multi-conversation history (#264) and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Readability and contrast follow-ups (#291, #293), the route-editor close affordance (#284), and the panel/undock follow-ups (#289) are queued behind them.
+2. **Platform:** Linux must move to GTK4 and WebKitGTK 6.0 (#281) before Wails v3.1 can be adopted, since v3.1 drops the GTK3 path this release still targets. Migration hygiene follow-ups are tracked in #282.
+3. **Git merge:** #164 is closed; the remaining backlog is auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), bulk take-Current/Incoming (#223), and the phase 3 diagnostics follow-ups (#240, #241). Destructive VCS operations (#166) come after.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
 
 Watcher and ignore-rule caching (#148/#196) stay benchmark-gated. Store extraction (#41) happens only when one of the tracks above needs it, not as a standalone rewrite.

@@ -36,7 +36,8 @@ Firn IDE brings the focused, keyboard-first productivity of JetBrains IDEs to a 
 | Dependency Upgrades | **COMPLETE** | #40 |
 | Code Quality | **IN PROGRESS** | #42 closed; #41 remains an incremental extraction constraint, not a standalone refactor project |
 | Accessibility | **COMPLETE** | #43 closed via PR #201 after the WCAG AA remainder and automated evidence landed; a human VoiceOver/NVDA pass remains prudent release validation |
-| Future Features | **IN PROGRESS** | #44 implementation shipped via PR #206 (tracker still open); #45/#46 are unlocked; #226 Golem chat panel shipped via PR #262 on the #165 embedded runtime, with follow-ups #263-#265 open |
+| Future Features | **IN PROGRESS** | #44 implementation shipped via PR #206 (tracker still open); #45/#46 are unlocked; #226 Golem chat panel shipped via PR #262 on the #165 embedded runtime; #263 slices A and B shipped via PRs #269/#270/#272 with the upstream-gated write phases still open, #285 phase routing shipped via PR #287, and #271 center panel and undock shipped via PR #288; #264/#265 and the polish follow-ups #284/#289/#291/#293 remain open |
+| Platform | **COMPLETE** | #273 Wails v3.0.0-beta.16 host migration shipped via PRs #274/#280; macOS floor raised to 12, Linux pinned to WebKit2GTK 4.1 (GTK3); #281 (GTK4 + WebKitGTK 6.0, gates v3.1) and #282 hygiene follow-ups open |
 | Bug Fixes | **COMPLETE** | #33, #34, #194, and #204 closed; linked-worktree Git isolation shipped via PR #197; editor nav-scroll (#216/#218) and clipped run-profile adopt button (#227) fixed |
 
 ---
@@ -47,11 +48,11 @@ This section supersedes the archived delivery narrative below for current priori
 
 ### Repository health
 
-- `v0.11.0` is live from `main` at `4707c59`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
-- No planned stabilization sprint follows the release. Cut `v0.11.1` only for observed regressions; otherwise continue the parallel product tracks below.
+- `v0.12.0` is live from `main`. The release workflow, Build, Tests, and Lint passed; macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published.
+- No planned stabilization sprint follows the release. Cut `v0.12.1` only for observed regressions; otherwise continue the parallel product tracks below.
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
-- Release documentation and install examples now target `v0.11.0`.
+- Release documentation and install examples now target `v0.12.0`.
 - PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs now pin `wails3` to the module's `v3.0.0-beta.16`; cross-platform PR verification remains a future release-engineering improvement.
 - #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
 - The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — and the Phase 3 confidence layer added #240-#242, rather than any observed regression. Treat those as scoped enhancements, not defects.

@@ -13,7 +13,7 @@ info:
   description: "A lightweight, workspace-focused IDE for macOS, Linux, and Windows"
   copyright: "(c) 2026, Keith Struzzieri"
   comments: "Firn IDE"
-  version: "0.11.0"
+  version: "0.12.0"
 
 # Dev mode configuration
 dev_mode:
