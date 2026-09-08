@@ -28,9 +28,9 @@ func touch(t *testing.T, path string) {
 
 func TestResolveProjectRoot_NearestTsconfigWins(t *testing.T) {
 	ws := t.TempDir()
-	touch(t, filepath.Join(ws, "package.json"))               // repo-root package
-	touch(t, filepath.Join(ws, "frontend", "tsconfig.json"))  // package-local config
-	touch(t, filepath.Join(ws, "frontend", "package.json"))   // package-local manifest
+	touch(t, filepath.Join(ws, "package.json"))              // repo-root package
+	touch(t, filepath.Join(ws, "frontend", "tsconfig.json")) // package-local config
+	touch(t, filepath.Join(ws, "frontend", "package.json"))  // package-local manifest
 	file := filepath.Join(ws, "frontend", "src", "App.tsx")
 	touch(t, file)
 
