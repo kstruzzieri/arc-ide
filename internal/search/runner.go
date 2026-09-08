@@ -17,7 +17,11 @@ import (
 // caller receives StatusMissingTool.
 var rgLookup = exec.LookPath
 
-// rgBinaryName is the program name we resolve via rgLookup. Tests override.
+// rgBinaryName is the program name we resolve via rgLookup. Like rgLookup it
+// is a package variable so a test can point the runner at a different program
+// name. No test does today, but the tests that stub rgLookup save and restore
+// this alongside it: Go runs a package's tests in a single process, so an
+// override left behind would follow every later test in the package.
 var rgBinaryName = "rg"
 
 // runnerConfig holds per-run knobs. We keep it tiny so tests can construct

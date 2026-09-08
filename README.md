@@ -98,13 +98,22 @@ Firn uses [Wails](https://wails.io) (Go backend + system WebView) instead of Ele
 
 The trade-off: Fewer npm packages that rely on Node.js APIs work out-of-the-box. Worth it for a lightweight, fast IDE.
 
-### Future AI Integration
+### Golem, the built-in assistant
 
-The roadmap includes a built-in AI assistant panel with:
-- Context-aware code assistance (current file, selection, workspace)
-- Multiple provider support (Claude, OpenAI, local Ollama)
-- Diff preview before applying suggested changes
-- Multi-panel broadcast mode for comparing AI responses
+Firn ships an assistant rather than integrating an external one. Golem runs on
+the embedded [`go-llm`](https://github.com/kstruzzieri/go-llm) runtime in the Go
+process — there is no CLI shell-out and no separate service — and it is scoped
+to the bound repository with a sensitive-path floor.
+
+Remote egress is consent-gated per destination and durable: nothing leaves the
+machine until a destination is approved, and the approval is recorded so it is
+not asked again. Providers, models, roles and destinations are configured from
+the Golem configuration workspace inside the app, and the same runtime writes
+commit messages.
+
+Still ahead: durable multi-conversation history (#264), token and context usage
+once `go-llm` emits it (#265), and a guarded preview-and-apply mode for
+mutating edits (#261).
 
 ## Architecture
 
@@ -119,11 +128,22 @@ The roadmap includes a built-in AI assistant panel with:
 │  │  • File System  │              │  • CodeMirror 6 Editor  │   │
 │  │  • FS Watcher   │              │  • Zustand State        │   │
 │  │  • Run Profiles │              │  • Run Profile Cards    │   │
+│  │  • Run History  │              │  • Run Output Views     │   │
 │  │  • PTY Terminal │              │  • Panel System         │   │
-│  │  • Workspace    │              │  • Run Output Views     │   │
-│  │  • LSP Client   │              │  • LSP Editor UX        │   │
-│  │  • ripgrep      │              │  • Search UI            │   │
+│  │  • Workspace    │              │  • LSP Editor UX        │   │
+│  │  • Git          │              │  • Git + Merge Views    │   │
+│  │  • LSP Client   │              │  • Search UI            │   │
+│  │  • ripgrep      │              │  • Golem Chat + Config  │   │
+│  │  • Golem/go-llm │              │                         │   │
 │  └─────────────────┘              └─────────────────────────┘   │
+│                                          ▲                      │
+│                                          │ window relay         │
+│                                          ▼                      │
+│                              ┌─────────────────────────┐        │
+│                              │  Undocked Golem Window  │        │
+│                              │  (passive view; the     │        │
+│                              │   main window executes) │        │
+│                              └─────────────────────────┘        │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -266,16 +286,19 @@ there — those stay with the repository-scoped Golem state.
 **AI (Golem)**
 - [x] Workspace chat panel (#226 phase 1) — read-only assistant on the embedded `go-llm` runtime, scoped to the bound repository with a sensitive-path floor, consent-gated remote egress with durable per-destination approval, streamed conversations that survive workspace switches, and a persistent status-bar segment (`Cmd/Ctrl+Shift+I`)
 - [x] Git commit messages on the embedded `go-llm` runtime (#165) — the CLI shell-out is gone
+- [x] Configuration workspace (#263 slices A and B) — models, roles, profiles and provider destinations as a complete projection with typed diagnostics, applied through transactional writes that never leave settings half-written, with project keys write-only so a stored secret never reads back
+- [x] Phase routing and destination admission from `go-llm` (#285) — consent-derived destination policy, capability floors for chat and commit-message routing, reachable-set admission mirroring upstream, and batch settings-apply consent with provenance, so a fallback destination cannot silently widen the granted scope
+- [x] Center panel and undocked window (#271) — a full-height center island beside the Files column with persisted per-repository order, width and collapse, command bars for both panels, drag/keyboard/palette reorder, and an optional second native window that shares the surface while the main window stays the only executing owner
 
 If the Golem consent store becomes unavailable — a banner appears, and remote egress is blocked — remove or hand-repair `~/.firn/golem-consent.json`, restart Firn, then re-consent through the chat panel, the settings surface, or the "Approve missing destinations" flow to write a fresh record. The store is opened only at startup, so refreshing configuration or approving again cannot recover it until Firn restarts with the repaired or removed file.
 
 ### Planned
 
-- [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), newline metadata (#222), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241), collapsed conflicted-file diagnostics (#242)
+- [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
-- [ ] Golem center panel and undocked window (#271) — the center island and the second-window chat are implemented on `feature/issue-271-golem-center-panel`; pending review and the supported-platform smoke pass
-- [ ] Golem follow-ups — settings UI for models, roles, and keys (#263, phase 1 merged and the write phases in review), durable multi-conversation history (#264), token and context usage (#265)
+- [ ] Golem — configuration slices C and D (#263, gated on upstream `go-llm`), durable multi-conversation history (#264), token and context usage (#265), guarded preview-and-apply mode (#261)
+- [ ] Linux — GTK4 and WebKitGTK 6.0 (#281), required before Wails v3.1, which drops the GTK3 path this release targets
 
 ## Project Structure
 
@@ -284,6 +307,8 @@ firn-ide/
 ├── main.go                     # Application entry
 ├── app.go                      # Wails bindings
 ├── internal/
+│   ├── ai/                     # Golem service, settings, consent, go-llm runtime
+│   ├── appstate/               # Machine-scoped app state (~/.firn/app.json)
 │   ├── filesystem/             # File read/write/watch
 │   ├── git/                    # Status, diff, hunk staging, merge conflict data
 │   ├── lsp/                    # LSP client, registry, transports, managed provisioning
@@ -301,13 +326,16 @@ firn-ide/
 │   │   │   ├── Editor/         # CodeMirror 6 editor + merge resolution view
 │   │   │   ├── FileExplorer/   # File tree navigation
 │   │   │   ├── GitPanel/       # Commit/stage panel and diff surfaces
+│   │   │   ├── Golem/          # Golem chat panel and center island
+│   │   │   ├── GolemConfig/    # Golem configuration workspace
+│   │   │   ├── GolemWindow/    # Undocked Golem window shell
 │   │   │   ├── RunProfiles/    # Run profile cards and panels
 │   │   │   ├── RunOutput/      # Output display (merged, lanes, diff, timeline)
 │   │   │   ├── Search/         # Workspace-wide search
 │   │   │   ├── Structure/      # Current-file symbol outline
 │   │   │   ├── Terminal/       # xterm.js terminal
 │   │   │   └── layout/         # Panel system, sidebar, header
-│   │   ├── stores/             # Zustand state (ide, git, lsp, search)
+│   │   ├── stores/             # Zustand state (ide, git, lsp, search, golem)
 │   │   ├── hooks/              # Custom React hooks
 │   │   ├── utils/              # Shared utilities
 │   │   ├── types/              # TypeScript type definitions

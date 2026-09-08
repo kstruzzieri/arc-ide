@@ -424,6 +424,45 @@ describe('GolemPanel live indicator', () => {
     }
   });
 
+  // The silent-run regression, end to end: a capped tool loop reaches the panel
+  // as a plain run.finished whose only distinguishing mark is `stopReason`.
+  // Nothing else in the run produces a rendered row, so if the notice does not
+  // land here the user is left with a prompt, some tool chips, and an idle
+  // status bar.
+  it('shows and announces a run that stopped at a cap instead of going quiet', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel visible />);
+
+    type('what is internal/runhistory responsible for?');
+    pressEnter();
+    await flush();
+
+    act(() => {
+      store().ingestEvent(
+        eventPayload({
+          seq: 1,
+          type: 'tool.started',
+          payload: { toolCallId: 't1', name: 'read_file', preview: 'read_file(a)' },
+        })
+      );
+      store().ingestEvent(
+        eventPayload({
+          seq: 2,
+          type: 'run.finished',
+          payload: { stopReason: 'step_cap_reached', model: 'qwen3.6-35b-a3b' },
+        })
+      );
+    });
+    await flush();
+
+    const notice =
+      'Golem stopped after 1 tool call: it reached its tool-call limit. It did not answer.';
+    expect(screen.getByText(notice)).toBeInTheDocument();
+    expect(liveRegion()).toHaveTextContent(`Golem error. ${notice}`);
+    expect(store().conversations[CONV].activeRunId).toBeNull();
+  });
+
   it('announces a terminal run before the queued run working state', async () => {
     hydrate();
     selectFocused();
@@ -438,11 +477,16 @@ describe('GolemPanel live indicator', () => {
 
     mockRunGolemTurn.mockResolvedValueOnce(acceptedAdmission(RUN_B));
     act(() => {
-      store().ingestEvent(eventPayload({ seq: 2, type: 'run.finished', payload: {} }));
+      store().ingestEvent(
+        eventPayload({ seq: 2, type: 'message.delta', payload: { messageId: 'm1', text: 'ok' } })
+      );
+      store().ingestEvent(
+        eventPayload({ seq: 3, type: 'run.finished', payload: { stopReason: 'completed' } })
+      );
     });
     await flush();
 
-    expect(liveRegion()).toHaveTextContent('Golem finished its reply. Golem is working.');
+    expect(liveRegion()).toHaveTextContent('ok Golem is working.');
     expect(within(liveRegion()).getByText('Golem is working.')).not.toBe(firstWorkingAnnouncement);
   });
 

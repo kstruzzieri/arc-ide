@@ -139,7 +139,7 @@ function GolemIndicator() {
         !conversation.available ||
         conversation.initError !== null ||
         conversation.lastFailedTurn ||
-        Object.values(conversation.runs).some((run) => run.phase === 'failed')
+        Object.values(conversation.runs).some((run) => run.phase === 'failed' || run.unanswered)
       ) {
         failureOwner = failureOwner ?? id;
         failureOwners.add(id);

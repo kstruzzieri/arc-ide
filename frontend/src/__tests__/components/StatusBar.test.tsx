@@ -396,6 +396,45 @@ describe('StatusBar Golem segment', () => {
     expect(golemSegment()).toHaveTextContent('Golem: Attention');
   });
 
+  it.each([
+    ['step_cap_reached', '', 'Attention'],
+    ['completed', '', 'Attention'],
+    ['step_cap_reached', 'Partial answer', 'Idle'],
+    ['completed', 'Answer', 'Idle'],
+  ])('reports %s with %j from an adopted run as %s', (stopReason, text, label) => {
+    render(<StatusBar />);
+    hydrateGolem({
+      activeRuns: [golemRun('frontend', 'conv-frontend', 'run-1', 'running', 'Frontend')],
+    });
+    expect(golemSegment()).toHaveTextContent('Golem: 1 running');
+
+    act(() => {
+      const envelope = { protocol: 1, threadId: 'conv-frontend', runId: 'run-1', raw: '{}' };
+      useGolemStore.getState().ingestEvent({
+        ...envelope,
+        seq: 1,
+        type: 'message.delta',
+        payload: { messageId: 'm1', text },
+      });
+      useGolemStore.getState().ingestEvent({
+        ...envelope,
+        seq: 2,
+        type: 'run.finished',
+        payload: { stopReason },
+      });
+    });
+
+    const conversation = useGolemStore.getState().conversations['conv-frontend'];
+    expect(conversation.runs['run-1'].phase).toBe('done');
+    expect(conversation.lastFailedTurn).toBeNull();
+    expect(golemSegment()).toHaveTextContent(`Golem: ${label}`);
+
+    act(() => {
+      useGolemStore.getState().clearConversation('conv-frontend');
+    });
+    expect(golemSegment()).toHaveTextContent('Golem: Idle');
+  });
+
   it('reports attention when a background run dies with no request to retry', () => {
     render(<StatusBar />);
     hydrateGolem({
