@@ -48,7 +48,65 @@ func NewGolemRunner(
 	if err != nil {
 		return nil, err
 	}
-	return newGolemRunner(ctx, root, target, guard, sessions, backend, transport)
+	// The zero tuning is production: 16 steps from go-llm, and an input budget
+	// derived from the model's declared context window. See golemTuning.
+	return newGolemRunner(ctx, root, target, guard, sessions, backend, transport, golemTuning{})
+}
+
+const (
+	// maxAssumedWindow is the largest context window this host acts on, whatever
+	// a model declares. Two reasons it is not simply the declared number:
+	// filling a 256k window costs a local server minutes of prompt processing
+	// per step for no measured benefit (no probed repo question needed more than
+	// ~16k of input), and a declared window is unverified config -- it describes
+	// the model, not the server actually in front of it. llama-server is
+	// commonly started with -c 32768, so treating a declared 256k as 32k keeps
+	// the budget inside what such a server really offers.
+	maxAssumedWindow = 32768
+
+	// replyHeadroomDivisor reserves one part in N of the declared window for the
+	// model's own reply. The window is TOTAL capacity, shared by the prompt and
+	// the answer, so budgeting the whole of it for input leaves the model no
+	// room to respond.
+	replyHeadroomDivisor = 4
+)
+
+// deriveInputCeiling turns a model's declared context window into a per-turn
+// input budget: clamp the window to maxAssumedWindow, then hold back
+// replyHeadroomDivisor's share of what remains for the answer.
+//
+// The order matters. Reserving first and clamping second would let a large
+// declared window come out at exactly maxAssumedWindow, which is the whole
+// context of a server started with -c 32768 -- an input budget with no room
+// left to reply.
+//
+// It returns 0 -- deferring to go-llm's own default rather than inventing a
+// number -- for an undeclared or negative window, and for a window so small that
+// the reserve rounds away to nothing. That last case is the point: rather than
+// return a budget whose headroom guarantee it cannot actually honor, it declines
+// to answer at all.
+func deriveInputCeiling(window int) int {
+	if window <= 0 {
+		return 0
+	}
+	if window > maxAssumedWindow {
+		window = maxAssumedWindow
+	}
+	reserve := window / replyHeadroomDivisor
+	if reserve == 0 {
+		return 0
+	}
+	return window - reserve
+}
+
+// golemTuning carries the loop-restraint knobs the step-budget probe varies.
+// The zero value is production: MaxSteps stays 0, so the orchestrator applies
+// its own 16-step default, and InputCeiling 0 means "derive it from the model's
+// declared context window" rather than "no budget". A probe measuring some
+// other value sets these explicitly.
+type golemTuning struct {
+	MaxSteps     int
+	InputCeiling int
 }
 
 // newGolemRunner is the backend injection seam shared by NewGolemRunner and
@@ -61,11 +119,26 @@ func newGolemRunner(
 	sessions golem.SessionStore,
 	backend provider.Provider,
 	transport *http.Transport,
+	tuning golemTuning,
 ) (Runner, error) {
 	orchestrator := agent.New(
 		&fixedModelCaller{backend: backend, target: target},
 		agent.ContextManager{},
 	)
+	// Without a budget the assembler works against go-llm's 8192-token default,
+	// which evicts a turn's own tool results on any real repo question: the run
+	// then re-reads what it already read until it hits the step cap. Only the
+	// step-budget probe passes an explicit ceiling, to measure other values.
+	inputCeiling := tuning.InputCeiling
+	if inputCeiling == 0 {
+		inputCeiling = deriveInputCeiling(target.model.ContextWindow)
+	}
+	modelOptions := provider.ModelOptions{}
+	if target.apiFormat == "ollama" && target.model.ContextWindow >= replyHeadroomDivisor {
+		// Ollama allocates context independently of model metadata. Request the
+		// same total window used to derive the input budget, including reply room.
+		modelOptions.NumCtx = min(target.model.ContextWindow, maxAssumedWindow)
+	}
 	runtime, err := golem.New(ctx, golem.Options{
 		Root:               root,
 		ScopeGuard:         guard,
@@ -73,8 +146,13 @@ func newGolemRunner(
 		SessionStore:       sessions,
 		DisableCompression: true,
 		RetainReasoning:    false,
-		MaxMessageBytes:    MaxTurnMessageBytes,
-		FailureMessage:     publicRunFailureMessage,
+		MaxSteps:           tuning.MaxSteps,
+		// OutputReserve stays zero: go-llm forwards it as NumPredict, capping how
+		// long an answer may be, and no measurement here justifies a cap.
+		Budget:          agent.Budget{InputCeiling: inputCeiling},
+		ModelOptions:    modelOptions,
+		MaxMessageBytes: MaxTurnMessageBytes,
+		FailureMessage:  publicRunFailureMessage,
 	})
 	if err != nil {
 		return nil, err

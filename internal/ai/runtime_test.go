@@ -296,7 +296,7 @@ func TestGolemRuntimeToolSchemaAndNoSessionDB(t *testing.T) {
 
 	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{{Content: "done"}}}
 	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), nil,
-		NewMemorySessionStore(), backend, nil)
+		NewMemorySessionStore(), backend, nil, golemTuning{})
 	if err != nil {
 		t.Fatalf("newGolemRunner: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 		{Content: "done"},
 	}}
 	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), guard,
-		NewMemorySessionStore(), backend, nil)
+		NewMemorySessionStore(), backend, nil, golemTuning{})
 	if err != nil {
 		t.Fatalf("newGolemRunner: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestGolemRuntimeRunFailedRedactsProviderFailure(t *testing.T) {
 	target := testTarget("hosted", "big-coder")
 	target.apiKey = keyMarker
 	backend := &scriptedProvider{name: "hosted", err: provErr}
-	runner, err := newGolemRunner(context.Background(), root, target, nil, NewMemorySessionStore(), backend, nil)
+	runner, err := newGolemRunner(context.Background(), root, target, nil, NewMemorySessionStore(), backend, nil, golemTuning{})
 	if err != nil {
 		t.Fatalf("newGolemRunner: %v", err)
 	}

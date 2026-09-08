@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Golem now sizes its per-turn context budget from the configured model's
+  declared context window instead of leaving go-llm's conservative 8192-token
+  default in place. Under the old default a single repo question could evict its
+  own file reads between steps, so the run re-read the same files until it hit
+  the step cap and returned no answer at all. A declared window is treated as at
+  most 32768 tokens, and a quarter of that is then reserved for the reply, so a
+  model declaring a 256k window gets a 24576-token input budget and still has
+  room to answer on a server started with `-c 32768`. A model that declares no
+  window, or one too small to reserve reply room from, keeps go-llm's default.
+- Ollama requests now allocate the same context window used for Golem's
+  input budget. The optional budget probe applies Firn's protected-file policy
+  and resolves reasoning settings from the selected model when overriding it.
+
 ## [0.12.0] - 2026-09-06
 
 Feature release covering the Wails v3 host migration, the Golem configuration
