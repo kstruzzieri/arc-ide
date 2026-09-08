@@ -44,6 +44,37 @@ import type { GolemWindowState } from '../types/golemWindow';
  */
 
 const RUN_FAILED_ERROR = 'The Golem run failed.';
+
+/**
+ * A `run.finished` is not proof the user got an answer.
+ *
+ * go-llm ends its tool loop with a *non-error* return whenever a restraint cap
+ * trips — the step cap, the token budget, consecutive tool errors, or a tool
+ * call repeating with no progress — leaving `Answer` empty. Golem reports that
+ * as an ordinary `run.finished` and puts the whole outcome in `stopReason`, so
+ * a consumer that reads only the event type sees a clean completion and renders
+ * nothing: the panel keeps the user turn and the tool chips, the status bar
+ * returns to idle, and the run looks hung.
+ *
+ * These name each cap in the transcript instead. The set mirrors
+ * `agent.StopReason.String()` and is pinned against it by
+ * `TestGolemStopReasonVocabulary`; an unrecognized reason is still named
+ * verbatim, because an unmapped value must not collapse back into silence.
+ *
+ * A Map, not an object literal: this key comes off the wire, and an object
+ * literal answers `constructor` (and every other Object.prototype name) with a
+ * function that `??` does not treat as absent, which would interpolate native
+ * code into the transcript. Nothing this store reads from the boundary is
+ * trusted, including a key it only expects to be one of five words.
+ */
+const COMPLETED_STOP_REASON = 'completed';
+const STOP_REASON_CAUSE = new Map<string, string>([
+  ['step_cap_reached', 'it reached its tool-call limit'],
+  ['budget_reached', 'it reached its token budget'],
+  ['tool_error_cap_reached', 'too many tool calls failed'],
+  ['repeat_limit_reached', 'it kept repeating the same tool call'],
+]);
+const NO_ANSWER_ERROR = 'The Golem run ended without an answer.';
 const NO_SECURE_UUID_ERROR =
   'This window cannot generate a secure run ID, so the turn was not sent.';
 const STALE_BINDING_ERROR = 'The workspace changed before this turn started.';
@@ -302,7 +333,7 @@ type Projection =
   | { kind: 'delta'; messageId: string; text: string }
   | { kind: 'tool-start'; toolCallId: string; name: string; preview: string }
   | { kind: 'tool-finish'; toolCallId: string; name: string; preview: string; isError: boolean }
-  | { kind: 'terminal'; phase: TerminalPhase; message?: string };
+  | { kind: 'terminal'; phase: TerminalPhase; message?: string; stopReason?: string };
 
 /**
  * Classifies one already-validated envelope. `null` means the payload does not
@@ -339,8 +370,15 @@ function classifyEvent(event: GolemEvent): Projection | null {
         isError: payload.isError === true,
       };
     }
-    case 'run.finished':
-      return isRecord(payload) ? { kind: 'terminal', phase: 'done' } : null;
+    case 'run.finished': {
+      if (!isRecord(payload)) return null;
+      const terminal: Extract<Projection, { kind: 'terminal' }> = {
+        kind: 'terminal',
+        phase: 'done',
+      };
+      if (isNonEmptyString(payload.stopReason)) terminal.stopReason = payload.stopReason;
+      return terminal;
+    }
     case 'run.canceled':
       return isRecord(payload) ? { kind: 'terminal', phase: 'canceled' } : null;
     case 'run.failed': {
@@ -496,6 +534,58 @@ function dispatchQueued(
 }
 
 /**
+ * What a finished run still owes the user, or `null` when the transcript
+ * already shows the outcome.
+ *
+ * Two shapes end a run with nothing on screen. A cap trips and `stopReason`
+ * carries the only evidence (see `STOP_REASON_CAUSE`), or the loop completes
+ * with no assistant text at all — a final message that was pure reasoning
+ * content, or deltas the payload validator dropped whole. Both get a row, so
+ * "ended silently" is not a state this panel can reach.
+ *
+ * `answered` matches `completedReply` in `GolemSurface` exactly, whitespace
+ * trimming included: a reply the live region refuses to read out is not an
+ * answer here either, or a whitespace-only completion goes quiet on both.
+ *
+ * It reports whether any assistant text survived, because a cap that
+ * truncated a real reply is a different outcome from one that produced nothing:
+ * the first only annotates what is already on screen, the second leaves the
+ * user with a prompt they must be able to send again.
+ *
+ * This covers the streamed terminals that reach `finishRun`. A terminal for a
+ * conversation this window has never seen is cached in `unknownTerminals` and
+ * replayed against a conversation rebuilt from backend status, which has no
+ * transcript at all — no prompt, no tool rows — so there is no silence there to
+ * break.
+ */
+interface DoneRunNotice {
+  text: string;
+  answered: boolean;
+}
+
+function doneRunNotice(
+  conversation: ConversationView,
+  runId: string,
+  stopReason?: string
+): DoneRunNotice | null {
+  let toolCalls = 0;
+  let answered = false;
+  for (const entry of conversation.transcript) {
+    if (entry.runId !== runId) continue;
+    if (entry.kind === 'tool') toolCalls += 1;
+    else if (entry.kind === 'assistant' && entry.text.trim() !== '') answered = true;
+  }
+  if (stopReason !== undefined && stopReason !== COMPLETED_STOP_REASON) {
+    const cause =
+      STOP_REASON_CAUSE.get(stopReason) ?? `it stopped early (${boundedMessage(stopReason)})`;
+    const calls = `${toolCalls} tool call${toolCalls === 1 ? '' : 's'}`;
+    const tail = answered ? 'The answer above may be incomplete.' : 'It did not answer.';
+    return { text: `Golem stopped after ${calls}: ${cause}. ${tail}`, answered };
+  }
+  return answered ? null : { text: NO_ANSWER_ERROR, answered: false };
+}
+
+/**
  * Applies one terminal exactly once. A run already in a terminal phase is a
  * tombstone: it never re-enters the active slot and never re-dispatches.
  */
@@ -506,7 +596,8 @@ function finishRun(
   phase: RunPhase,
   context: DispatchContext,
   message?: string,
-  raw?: GolemEvent
+  raw?: GolemEvent,
+  stopReason?: string
 ): PendingDispatch | null {
   const conversation = draftConversation(mutation, conversationId);
   if (!conversation) return null;
@@ -522,17 +613,31 @@ function finishRun(
   );
   if (message) appendError(conversation, runId, message, raw);
 
+  const notice = phase === 'done' ? doneRunNotice(conversation, runId, stopReason) : null;
+  if (notice) appendError(conversation, runId, notice.text, raw);
+  // A run that ended with no answer at all is a failed outcome even though the
+  // backend reported a normal finish, so it earns everything a `failed` phase
+  // earns downstream: the Retry button (the draft is otherwise gone -- the
+  // user would have to retype the prompt) and the status bar's past-failure state
+  // (reporting Idle over a run that answered nothing is the reported symptom).
+  // A cap that truncated a real reply is not that: the answer is on screen and
+  // the row above only says it may be incomplete. The run's own `phase` stays
+  // `done` either way -- it is the backend's terminal, and rewriting it would
+  // make the phase tombstone mean something the backend never said.
+  const unanswered = notice !== null && !notice.answered;
+  if (unanswered) conversation.runs[runId] = { ...run, unanswered: true };
+
   if (conversation.activeRunId === runId) conversation.activeRunId = null;
 
   const pending = conversation.pendingConsentTurn;
   if (pending && pending.identity.runId === runId) {
     conversation.lastFailedTurn = { draft: pending.draft, userEntryId: pending.userEntryId };
     conversation.pendingConsentTurn = null;
-  } else if (phase === 'failed' && run.request && run.userEntryId) {
+  } else if ((phase === 'failed' || unanswered) && run.request && run.userEntryId) {
     conversation.lastFailedTurn = { draft: run.request, userEntryId: run.userEntryId };
   }
 
-  if (phase === 'failed') markFailure(mutation, conversationId);
+  if (phase === 'failed' || unanswered) markFailure(mutation, conversationId);
 
   return dispatchQueued(mutation, conversationId, context);
 }
@@ -593,7 +698,8 @@ function reduceEvent(
           projection.phase,
           context,
           projection.message,
-          event
+          event,
+          projection.stopReason
         ),
       };
     case 'none':

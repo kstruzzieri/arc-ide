@@ -376,7 +376,7 @@ describe('boundary validators', () => {
     ['message.delta', { messageId: 'm1', text: 'hi' }],
     ['tool.started', { toolCallId: 't1', name: 'read', preview: 'read(a)' }],
     ['tool.finished', { toolCallId: 't1', name: 'read', preview: 'ok', isError: false }],
-    ['run.finished', { stopReason: 'end_turn', model: 'claude' }],
+    ['run.finished', { stopReason: 'completed', model: 'claude' }],
     ['run.failed', { code: 'run_failed', message: 'The Golem run failed.' }],
     ['run.canceled', {}],
   ])('accepts the %s envelope', (type, payload) => {
@@ -581,6 +581,155 @@ describe('event reduction', () => {
     }
   );
 
+  // ── silent-run regression (#silent-golem-run) ──────────────────────────────
+  // A capped tool loop is a NON-error return in go-llm: the orchestrator gives
+  // up with StopReason != completed and an empty answer, golem reports it as an
+  // ordinary run.finished carrying `stopReason`, and the run's whole outcome
+  // lives in that one field. Dropping it left the panel showing a user turn,
+  // some tool chips, and nothing else.
+  it('reports a run that stopped at a cap instead of ending it silently', () => {
+    send({
+      seq: 1,
+      type: 'tool.started',
+      payload: { toolCallId: 't1', name: 'read_file', preview: 'read_file(a)' },
+    });
+    send({
+      seq: 2,
+      type: 'tool.finished',
+      payload: { toolCallId: 't1', name: 'read_file', preview: 'ok', isError: false },
+    });
+    send({
+      seq: 3,
+      type: 'tool.started',
+      payload: { toolCallId: 't2', name: 'glob', preview: 'glob(**)' },
+    });
+    send({
+      seq: 4,
+      type: 'tool.finished',
+      payload: { toolCallId: 't2', name: 'glob', preview: 'ok', isError: false },
+    });
+    send({
+      seq: 5,
+      type: 'run.finished',
+      payload: { stopReason: 'step_cap_reached', model: 'qwen3.6-35b-a3b' },
+    });
+
+    const errors = conv().transcript.filter((entry) => entry.kind === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].text).toBe(
+      'Golem stopped after 2 tool calls: it reached its tool-call limit. It did not answer.'
+    );
+    expect(errors[0].runId).toBe(RUN_A);
+    expect(conv().runs[RUN_A].phase).toBe('done');
+    expect(conv().activeRunId).toBeNull();
+  });
+
+  it.each([
+    ['budget_reached', 'it reached its token budget'],
+    ['tool_error_cap_reached', 'too many tool calls failed'],
+    ['repeat_limit_reached', 'it kept repeating the same tool call'],
+  ])('names the %s cap in the transcript', (stopReason, cause) => {
+    send({
+      seq: 1,
+      type: 'tool.started',
+      payload: { toolCallId: 't1', name: 'list', preview: 'list()' },
+    });
+    send({ seq: 2, type: 'run.finished', payload: { stopReason } });
+
+    const errors = conv().transcript.filter((entry) => entry.kind === 'error');
+    expect(errors.map((entry) => entry.text)).toEqual([
+      `Golem stopped after 1 tool call: ${cause}. It did not answer.`,
+    ]);
+  });
+
+  it('keeps a partial answer and still says the run stopped early', () => {
+    send({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'Looking at ' } });
+    send({
+      seq: 2,
+      type: 'tool.started',
+      payload: { toolCallId: 't1', name: 'list', preview: 'list()' },
+    });
+    send({ seq: 3, type: 'run.finished', payload: { stopReason: 'step_cap_reached' } });
+
+    expect(conv().transcript.filter((e) => e.kind === 'assistant')[0].text).toBe('Looking at ');
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .map((e) => e.text)
+    ).toEqual([
+      'Golem stopped after 1 tool call: it reached its tool-call limit. The answer above may be incomplete.',
+    ]);
+  });
+
+  it('names an unrecognized stop reason rather than dropping it', () => {
+    send({ seq: 1, type: 'run.finished', payload: { stopReason: 'moon_phase_wrong' } });
+
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .map((e) => e.text)
+    ).toEqual([
+      'Golem stopped after 0 tool calls: it stopped early (moon_phase_wrong). It did not answer.',
+    ]);
+  });
+
+  // The other silent shape: the provider answered, the loop completed, and the
+  // assistant text was empty anyway -- a final message carrying only reasoning
+  // content, or deltas the payload validator dropped whole.
+  it('surfaces a completed run that produced no assistant text', () => {
+    send({ seq: 1, type: 'run.finished', payload: { stopReason: 'completed', model: 'm' } });
+
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .map((e) => e.text)
+    ).toEqual(['The Golem run ended without an answer.']);
+    expect(conv().runs[RUN_A].phase).toBe('done');
+  });
+
+  // The stop reason is a wire value. An object-literal lookup answers
+  // `constructor` with a function, which `??` does not treat as absent and
+  // which would interpolate native code into the transcript.
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'treats the Object.prototype name %s as an unrecognized stop reason',
+    (stopReason) => {
+      send({ seq: 1, type: 'run.finished', payload: { stopReason } });
+
+      expect(
+        conv()
+          .transcript.filter((e) => e.kind === 'error')
+          .map((e) => e.text)
+      ).toEqual([
+        `Golem stopped after 0 tool calls: it stopped early (${stopReason}). It did not answer.`,
+      ]);
+    }
+  );
+
+  // GolemSurface's live region already refuses to read out whitespace-only
+  // text, so counting it as an answer here would go quiet in both places.
+  it('does not count a whitespace-only reply as an answer', () => {
+    send({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: '   \n ' } });
+    send({ seq: 2, type: 'run.finished', payload: { stopReason: 'completed' } });
+
+    expect(
+      conv()
+        .transcript.filter((e) => e.kind === 'error')
+        .map((e) => e.text)
+    ).toEqual(['The Golem run ended without an answer.']);
+  });
+
+  it('adds nothing to a completed run that answered', () => {
+    send({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'Done.' } });
+    send({ seq: 2, type: 'run.finished', payload: { stopReason: 'completed', model: 'm' } });
+
+    expect(conv().transcript.map((e) => e.kind)).toEqual(['assistant']);
+  });
+
+  it('does not second-guess a failed or canceled terminal', () => {
+    send({ seq: 1, type: 'run.canceled', payload: {} });
+    expect(conv().transcript).toHaveLength(0);
+  });
+
   it('keeps unknown but valid events in rawEvents without projecting a row', () => {
     send({ seq: 1, type: 'plan.updated', payload: { steps: 2 } });
     expect(conv().rawEvents.map((e) => e.type)).toEqual(['plan.updated']);
@@ -691,7 +840,7 @@ describe('bridge lifecycle and hydration', () => {
       eventPayload({
         seq: 2,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
 
@@ -748,7 +897,7 @@ describe('bridge lifecycle and hydration', () => {
       eventPayload({
         seq: 2,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     store().hydrateStatus(parseGolemStatus(statusPayload()));
@@ -1203,7 +1352,7 @@ describe('queueing', () => {
       eventPayload({
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     await flush();
@@ -1245,7 +1394,7 @@ describe('queueing', () => {
       eventPayload({
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     await flush();
@@ -1281,7 +1430,7 @@ describe('queueing', () => {
       eventPayload({
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     await flush();
@@ -1458,10 +1607,13 @@ describe('consent', () => {
     expect(conv().pendingConsentTurn).toBeNull();
 
     store().ingestEvent(
+      eventPayload({ seq: 2, type: 'message.delta', payload: { messageId: 'm1', text: 'ok' } })
+    );
+    store().ingestEvent(
       eventPayload({
-        seq: 2,
+        seq: 3,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     expect(conv().runs[RUN_A].phase).toBe('done');
@@ -1832,16 +1984,70 @@ describe('failure and retry', () => {
     expect(store().lastFailureConversationId).toBe(CONV);
   });
 
+  // "The status bar returns to Golem: Idle as if nothing happened" was part of
+  // the reported symptom, so a run that answered nothing has to reach the
+  // failure surfaces too -- Retry, and the status bar's past-failure state --
+  // not just gain a transcript row.
+  it('offers Retry and raises attention for a run that answered nothing', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'what is internal/runhistory responsible for?');
+    await flush();
+    const before = store().failureRevision;
+
+    store().ingestEvent(
+      eventPayload({
+        seq: 1,
+        type: 'tool.started',
+        payload: { toolCallId: 't1', name: 'list', preview: 'list()' },
+      })
+    );
+    store().ingestEvent(
+      eventPayload({ seq: 2, type: 'run.finished', payload: { stopReason: 'step_cap_reached' } })
+    );
+
+    expect(conv().runs[RUN_A].phase).toBe('done');
+    expect(conv().lastFailedTurn).toEqual({
+      draft: { message: 'what is internal/runhistory responsible for?', contextRefs: [] },
+      userEntryId: conv().runs[RUN_A].userEntryId,
+    });
+    expect(store().failureRevision).toBe(before + 1);
+    expect(store().lastFailureConversationId).toBe(CONV);
+  });
+
+  // A cap that truncated a real reply is a different outcome: the answer is on
+  // screen, so calling it a failure would overstate it.
+  it('leaves a truncated answer out of the failure surfaces', async () => {
+    hydrateReady();
+    uuidQueue = [RUN_A];
+    store().submitTurn(CONV, 'first');
+    await flush();
+    const before = store().failureRevision;
+
+    store().ingestEvent(
+      eventPayload({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'partial' } })
+    );
+    store().ingestEvent(
+      eventPayload({ seq: 2, type: 'run.finished', payload: { stopReason: 'step_cap_reached' } })
+    );
+
+    expect(conv().lastFailedTurn).toBeNull();
+    expect(store().failureRevision).toBe(before);
+  });
+
   it('ignores a late or duplicate run-status for a run that already ended', async () => {
     hydrateReady();
     uuidQueue = [RUN_A];
     store().submitTurn(CONV, 'first');
     await flush();
     store().ingestEvent(
+      eventPayload({ seq: 1, type: 'message.delta', payload: { messageId: 'm1', text: 'ok' } })
+    );
+    store().ingestEvent(
       eventPayload({
-        seq: 1,
+        seq: 2,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     const settledRows = conv().transcript.length;
@@ -1898,7 +2104,7 @@ describe('failure and retry', () => {
         runId: RUN_A,
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     await flush();
@@ -2102,7 +2308,7 @@ describe('cancel', () => {
       eventPayload({
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     store().cancelRun(RUN_A);
@@ -2660,7 +2866,7 @@ describe('monotonicity under deferred promises', () => {
       eventPayload({
         seq: 2,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     await flush();
@@ -2689,7 +2895,7 @@ describe('monotonicity under deferred promises', () => {
       eventPayload({
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     await flush();

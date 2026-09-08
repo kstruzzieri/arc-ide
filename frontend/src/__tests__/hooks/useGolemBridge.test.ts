@@ -534,7 +534,7 @@ describe('golem:status-changed', () => {
       eventPayload({
         seq: 1,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
     expect(conversation().runs[RUN].phase).toBe('done');
@@ -628,7 +628,7 @@ describe('delta batching', () => {
       eventPayload({
         seq: 5,
         type: 'run.finished',
-        payload: { stopReason: 'end_turn', model: 'm' },
+        payload: { stopReason: 'completed', model: 'm' },
       })
     );
 
