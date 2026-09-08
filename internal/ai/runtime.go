@@ -48,7 +48,58 @@ func NewGolemRunner(
 	if err != nil {
 		return nil, err
 	}
-	return newGolemRunner(ctx, root, target, guard, sessions, backend, transport)
+	// The zero tuning is production: 16 steps from go-llm, and an input budget
+	// derived from the model's declared context window. See golemTuning.
+	return newGolemRunner(ctx, root, target, guard, sessions, backend, transport, golemTuning{})
+}
+
+const (
+	// maxInputCeiling caps the derived per-turn input budget. A model may
+	// declare a far larger window than it is worth filling: assembling 256k
+	// tokens costs a local server minutes of prompt processing per step, and no
+	// probed repo question needed more than ~16k of input. 32768 is roughly
+	// double that.
+	maxInputCeiling = 32768
+
+	// replyHeadroomDivisor reserves one part in N of the declared window for the
+	// model's own reply. The window is TOTAL capacity, shared by the prompt and
+	// the answer, so budgeting the whole of it for input leaves the model no
+	// room to respond.
+	replyHeadroomDivisor = 4
+)
+
+// deriveInputCeiling turns a model's declared context window into a per-turn
+// input budget, holding back replyHeadroomDivisor's share for the answer and
+// capping the result at maxInputCeiling.
+//
+// It returns 0 -- deferring to go-llm's own default rather than inventing a
+// number -- for an undeclared or negative window, and for a window so small that
+// the reserve rounds away to nothing. That last case is the point: rather than
+// return a budget whose headroom guarantee it cannot actually honor, it declines
+// to answer at all.
+func deriveInputCeiling(window int) int {
+	if window <= 0 {
+		return 0
+	}
+	reserve := window / replyHeadroomDivisor
+	if reserve == 0 {
+		return 0
+	}
+	if ceiling := window - reserve; ceiling < maxInputCeiling {
+		return ceiling
+	}
+	return maxInputCeiling
+}
+
+// golemTuning carries the loop-restraint knobs the step-budget probe varies.
+// The zero value is production: MaxSteps stays 0, so the orchestrator applies
+// its own 16-step default, and InputCeiling 0 means "derive it from the model's
+// declared context window" rather than "no budget". A probe measuring some
+// other value sets these explicitly.
+type golemTuning struct {
+	MaxSteps      int
+	InputCeiling  int
+	OutputReserve int
 }
 
 // newGolemRunner is the backend injection seam shared by NewGolemRunner and
@@ -61,11 +112,20 @@ func newGolemRunner(
 	sessions golem.SessionStore,
 	backend provider.Provider,
 	transport *http.Transport,
+	tuning golemTuning,
 ) (Runner, error) {
 	orchestrator := agent.New(
 		&fixedModelCaller{backend: backend, target: target},
 		agent.ContextManager{},
 	)
+	// Without a budget the assembler works against go-llm's 8192-token default,
+	// which evicts a turn's own tool results on any real repo question: the run
+	// then re-reads what it already read until it hits the step cap. Only the
+	// step-budget probe passes an explicit ceiling, to measure other values.
+	inputCeiling := tuning.InputCeiling
+	if inputCeiling == 0 {
+		inputCeiling = deriveInputCeiling(target.model.ContextWindow)
+	}
 	runtime, err := golem.New(ctx, golem.Options{
 		Root:               root,
 		ScopeGuard:         guard,
@@ -73,6 +133,8 @@ func newGolemRunner(
 		SessionStore:       sessions,
 		DisableCompression: true,
 		RetainReasoning:    false,
+		MaxSteps:           tuning.MaxSteps,
+		Budget:             agent.Budget{InputCeiling: inputCeiling, OutputReserve: tuning.OutputReserve},
 		MaxMessageBytes:    MaxTurnMessageBytes,
 		FailureMessage:     publicRunFailureMessage,
 	})

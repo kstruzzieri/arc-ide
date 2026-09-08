@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Golem now sizes its per-turn context budget from the configured model's
+  declared context window instead of leaving go-llm's conservative 8192-token
+  default in place. Under the old default a single repo question could evict its
+  own file reads between steps, so the run re-read the same files until it hit
+  the step cap and returned no answer at all. A window is capped at 32768 tokens
+  and always reserves a quarter of itself for the reply; a model that declares no
+  window keeps go-llm's default.
+
 ## [0.12.0] - 2026-09-06
 
 Feature release covering the Wails v3 host migration, the Golem configuration

@@ -524,7 +524,7 @@ func assertBuiltinToolsProtectConfig(t *testing.T, what, root string, guard agen
 		{Content: "done"},
 	}}
 	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), guard,
-		NewMemorySessionStore(), backend, nil)
+		NewMemorySessionStore(), backend, nil, golemTuning{})
 	if err != nil {
 		t.Fatalf("%s: newGolemRunner: %v", what, err)
 	}
