@@ -68,8 +68,12 @@ func TestGolemRunnerStepCapEmitsFinishedWithoutAssistantText(t *testing.T) {
 	}
 
 	backend := &scriptedProvider{name: "hosted", steps: script}
+	// The zero tuning is production. testTarget declares no context window, so
+	// the derived budget is 0 and go-llm applies its own default -- which is
+	// what this test wants: it is about the STEP cap, and a run that never
+	// evicts is the one that reaches it for the reason under test.
 	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), nil,
-		NewMemorySessionStore(), backend, nil)
+		NewMemorySessionStore(), backend, nil, golemTuning{})
 	if err != nil {
 		t.Fatalf("newGolemRunner: %v", err)
 	}
