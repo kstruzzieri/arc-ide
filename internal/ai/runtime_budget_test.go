@@ -21,8 +21,9 @@ import (
 //
 // Two edge cases matter as much as the ordinary one: an undeclared window must
 // fall back to go-llm's own default rather than to a number invented here, and a
-// very large declared window must be capped, because filling a 256k-token window
-// costs minutes of prompt processing on a local server for no measured benefit.
+// very large declared window must be clamped, because filling a 256k-token
+// window costs minutes of prompt processing on a local server for no measured
+// benefit -- and the clamp must not itself consume the reply's room.
 func TestDeriveInputCeiling(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -32,9 +33,13 @@ func TestDeriveInputCeiling(t *testing.T) {
 		{"undeclared window defers to go-llm's default", 0, 0},
 		{"negative window defers to go-llm's default", -1, 0},
 		{"a small window still reserves room for the reply", 4096, 3072},
-		{"a mid window still reserves room for the reply", 40960, 30720},
-		{"a large window is capped", 256000, maxInputCeiling},
-		{"a window whose share exceeds the cap is capped", 65536, maxInputCeiling},
+		{"a window at the assumed maximum reserves room too", maxAssumedWindow, 24576},
+		// The reply reserve must survive clamping. A declared window far above
+		// the assumed maximum must NOT yield the whole assumed window as input:
+		// local llama-server instances here are started with -c 32768 TOTAL, so
+		// an input ceiling of 32768 would leave the model nothing to answer with.
+		{"a huge window is clamped and still reserves", 256000, 24576},
+		{"a window just over the maximum is clamped and still reserves", 65536, 24576},
 		// A window so small that the reserve rounds it to nothing must not
 		// hand the assembler a zero-or-negative budget.
 		{"a degenerate window defers to go-llm's default", 1, 0},

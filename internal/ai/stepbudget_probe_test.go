@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kstruzzieri/go-llm/agent"
+	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
 )
@@ -175,8 +176,22 @@ func TestStepBudgetProbe(t *testing.T) {
 		t.Fatalf("ResolveAgentTarget: %v", err)
 	}
 	if override := os.Getenv("FIRN_STEP_PROBE_MODEL"); override != "" {
-		target.model.Name = override
-		target.destination.Model = override
+		// Swapping only the NAME would leave ContextWindow describing the
+		// originally configured model, so the derived-budget arm would size
+		// itself from the wrong window and the log would attribute that stale
+		// window to the override. Adopt the whole ModelConfig instead, and
+		// refuse an override this probe cannot honestly run.
+		model, err := probeModelConfig(loaded.Config, override)
+		if err != nil {
+			t.Fatalf("FIRN_STEP_PROBE_MODEL: %v", err)
+		}
+		if model.Provider != target.model.Provider {
+			t.Fatalf("FIRN_STEP_PROBE_MODEL: %q is served by provider %q, but the probe "+
+				"builds a single backend for %q; consent to that destination instead",
+				override, model.Provider, target.model.Provider)
+		}
+		target.model = *model
+		target.destination.Model = model.Name
 	}
 	// A capped run makes many model calls; the configured per-request timeout
 	// still applies per call, but a long probe needs room for all of them.
@@ -368,6 +383,7 @@ func summarize(t *testing.T, samples []runSample, maxSteps int) {
 	}
 	steps := make([]int, 0, len(samples))
 	tools := make([]int, 0, len(samples))
+	completedSteps := make([]int, 0, len(samples))
 	stops := map[string]int{}
 	answered, capped, peakRepeat2, peakErr2 := 0, 0, 0, 0
 	evicting, budget, evictTotal := 0, 0, 0
@@ -378,6 +394,9 @@ func summarize(t *testing.T, samples []runSample, maxSteps int) {
 		}
 		steps = append(steps, s.Steps)
 		tools = append(tools, s.ToolCalls)
+		if s.StopReason == "completed" && s.AnswerBytes > 0 {
+			completedSteps = append(completedSteps, s.Steps)
+		}
 		stops[s.StopReason]++
 		if s.AnswerBytes > 0 {
 			answered++
@@ -421,16 +440,53 @@ func summarize(t *testing.T, samples []runSample, maxSteps int) {
 		t.Logf("stop %-22s %d", reason, n)
 	}
 	// How many runs would each candidate MaxSteps have completed?
-	t.Logf("--- completion vs candidate MaxSteps ---")
+	// Only runs that actually produced an answer can be said to "finish" under a
+	// candidate cap. A run censored at the probe's own cap is an unknown, not a
+	// success: counting its step total here would report it as completing under
+	// every candidate at or above that total and overstate the cap's success
+	// rate -- the very censoring this probe lifts its cap to avoid.
+	if len(completedSteps) == 0 {
+		t.Logf("--- completion vs candidate MaxSteps: no run completed, nothing to project ---")
+		return
+	}
+	sort.Ints(completedSteps)
+	t.Logf("--- completion vs candidate MaxSteps (%d completed run(s); %d censored run(s) excluded) ---",
+		len(completedSteps), len(steps)-len(completedSteps))
 	for _, cand := range []int{8, 12, 16, 20, 24, 32, 40, 48} {
 		fits := 0
-		for _, n := range steps {
+		for _, n := range completedSteps {
 			if n <= cand {
 				fits++
 			}
 		}
-		t.Logf("MaxSteps=%-3d would finish %d/%d runs (%.0f%%)",
-			cand, fits, len(steps), 100*float64(fits)/float64(len(steps)))
+		t.Logf("MaxSteps=%-3d would finish %d/%d completed runs (%.0f%%)",
+			cand, fits, len(completedSteps), 100*float64(fits)/float64(len(completedSteps)))
+	}
+}
+
+// probeModelConfig resolves an override naming either a configured role or a
+// configured model name, so the probe always carries that model's real
+// metadata. An unknown or ambiguous name is an error rather than a silent
+// fallback to the previously resolved model.
+func probeModelConfig(cfg *config.Config, override string) (*config.ModelConfig, error) {
+	if m := cfg.RoleConfig(override); m != nil {
+		return m, nil
+	}
+	var found []string
+	for role, m := range cfg.Models {
+		if m.Name == override {
+			found = append(found, role)
+		}
+	}
+	sort.Strings(found)
+	switch len(found) {
+	case 0:
+		return nil, fmt.Errorf("%q names no configured role or model", override)
+	case 1:
+		return cfg.RoleConfig(found[0]), nil
+	default:
+		return nil, fmt.Errorf("%q is the model for several roles (%s); name the role instead",
+			override, strings.Join(found, ", "))
 	}
 }
 
@@ -471,4 +527,58 @@ func TestGovernorPeaksMatchesRestraintGovernor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProbeModelConfigCarriesContextWindow covers the override path that made
+// the probe measure the wrong thing: resolving only a model NAME left
+// ContextWindow describing the previously resolved model, so the derived-budget
+// arm sized itself from a window the override does not have. Resolution must
+// carry the whole ModelConfig, and must refuse rather than guess.
+func TestProbeModelConfigCarriesContextWindow(t *testing.T) {
+	cfg := &config.Config{Models: map[string]config.ModelConfig{
+		"fast":   {Name: "qwen3.6:35b-a3b", Provider: "llamacpp", ContextWindow: 256000},
+		"small":  {Name: "qwen3.5:9b-mtp", Provider: "llamacpp", ContextWindow: 4096},
+		"twin-a": {Name: "shared-name", Provider: "llamacpp", ContextWindow: 1000},
+		"twin-b": {Name: "shared-name", Provider: "llamacpp", ContextWindow: 2000},
+	}}
+
+	t.Run("a role name resolves to that role's full config", func(t *testing.T) {
+		got, err := probeModelConfig(cfg, "small")
+		if err != nil {
+			t.Fatalf("probeModelConfig: %v", err)
+		}
+		if got.ContextWindow != 4096 || got.Name != "qwen3.5:9b-mtp" {
+			t.Fatalf("got %q/%d, want qwen3.5:9b-mtp/4096", got.Name, got.ContextWindow)
+		}
+	})
+
+	t.Run("a model name resolves to its own context window", func(t *testing.T) {
+		got, err := probeModelConfig(cfg, "qwen3.5:9b-mtp")
+		if err != nil {
+			t.Fatalf("probeModelConfig: %v", err)
+		}
+		// The bug this pins: carrying the name across without the window would
+		// leave 256000 here, and the probe would size itself for a model that
+		// cannot hold it.
+		if got.ContextWindow != 4096 {
+			t.Fatalf("ContextWindow = %d, want 4096: the override kept a stale window",
+				got.ContextWindow)
+		}
+	})
+
+	t.Run("an unknown name is refused, not silently ignored", func(t *testing.T) {
+		if _, err := probeModelConfig(cfg, "not-configured"); err == nil {
+			t.Fatal("want an error naming the unknown model")
+		}
+	})
+
+	t.Run("an ambiguous model name is refused", func(t *testing.T) {
+		_, err := probeModelConfig(cfg, "shared-name")
+		if err == nil {
+			t.Fatal("want an error: the name maps to two roles with different windows")
+		}
+		if !strings.Contains(err.Error(), "twin-a") || !strings.Contains(err.Error(), "twin-b") {
+			t.Fatalf("error should name both roles so the operator can pick: %v", err)
+		}
+	})
 }

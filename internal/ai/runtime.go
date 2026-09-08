@@ -54,12 +54,15 @@ func NewGolemRunner(
 }
 
 const (
-	// maxInputCeiling caps the derived per-turn input budget. A model may
-	// declare a far larger window than it is worth filling: assembling 256k
-	// tokens costs a local server minutes of prompt processing per step, and no
-	// probed repo question needed more than ~16k of input. 32768 is roughly
-	// double that.
-	maxInputCeiling = 32768
+	// maxAssumedWindow is the largest context window this host acts on, whatever
+	// a model declares. Two reasons it is not simply the declared number:
+	// filling a 256k window costs a local server minutes of prompt processing
+	// per step for no measured benefit (no probed repo question needed more than
+	// ~16k of input), and a declared window is unverified config -- it describes
+	// the model, not the server actually in front of it. llama-server is
+	// commonly started with -c 32768, so treating a declared 256k as 32k keeps
+	// the budget inside what such a server really offers.
+	maxAssumedWindow = 32768
 
 	// replyHeadroomDivisor reserves one part in N of the declared window for the
 	// model's own reply. The window is TOTAL capacity, shared by the prompt and
@@ -69,8 +72,13 @@ const (
 )
 
 // deriveInputCeiling turns a model's declared context window into a per-turn
-// input budget, holding back replyHeadroomDivisor's share for the answer and
-// capping the result at maxInputCeiling.
+// input budget: clamp the window to maxAssumedWindow, then hold back
+// replyHeadroomDivisor's share of what remains for the answer.
+//
+// The order matters. Reserving first and clamping second would let a large
+// declared window come out at exactly maxAssumedWindow, which is the whole
+// context of a server started with -c 32768 -- an input budget with no room
+// left to reply.
 //
 // It returns 0 -- deferring to go-llm's own default rather than inventing a
 // number -- for an undeclared or negative window, and for a window so small that
@@ -81,14 +89,14 @@ func deriveInputCeiling(window int) int {
 	if window <= 0 {
 		return 0
 	}
+	if window > maxAssumedWindow {
+		window = maxAssumedWindow
+	}
 	reserve := window / replyHeadroomDivisor
 	if reserve == 0 {
 		return 0
 	}
-	if ceiling := window - reserve; ceiling < maxInputCeiling {
-		return ceiling
-	}
-	return maxInputCeiling
+	return window - reserve
 }
 
 // golemTuning carries the loop-restraint knobs the step-budget probe varies.
@@ -97,9 +105,8 @@ func deriveInputCeiling(window int) int {
 // declared context window" rather than "no budget". A probe measuring some
 // other value sets these explicitly.
 type golemTuning struct {
-	MaxSteps      int
-	InputCeiling  int
-	OutputReserve int
+	MaxSteps     int
+	InputCeiling int
 }
 
 // newGolemRunner is the backend injection seam shared by NewGolemRunner and
@@ -134,9 +141,11 @@ func newGolemRunner(
 		DisableCompression: true,
 		RetainReasoning:    false,
 		MaxSteps:           tuning.MaxSteps,
-		Budget:             agent.Budget{InputCeiling: inputCeiling, OutputReserve: tuning.OutputReserve},
-		MaxMessageBytes:    MaxTurnMessageBytes,
-		FailureMessage:     publicRunFailureMessage,
+		// OutputReserve stays zero: go-llm forwards it as NumPredict, capping how
+		// long an answer may be, and no measurement here justifies a cap.
+		Budget:          agent.Budget{InputCeiling: inputCeiling},
+		MaxMessageBytes: MaxTurnMessageBytes,
+		FailureMessage:  publicRunFailureMessage,
 	})
 	if err != nil {
 		return nil, err
