@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model declaring a 256k window gets a 24576-token input budget and still has
   room to answer on a server started with `-c 32768`. A model that declares no
   window, or one too small to reserve reply room from, keeps go-llm's default.
+- Ollama requests now allocate the same context window used for Golem's
+  input budget. The optional budget probe applies Firn's protected-file policy
+  and resolves reasoning settings from the selected model when overriding it.
 
 ## [0.12.0] - 2026-09-06
 

@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"firn/internal/filesystem"
 	"github.com/kstruzzieri/go-llm/agent"
+	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
@@ -112,7 +114,7 @@ type runSample struct {
 	TotalTokens   int     `json:"totalTokens"`
 	WallSeconds   float64 `json:"wallSeconds"`
 	// Context-budget telemetry. InputBudget is the ceiling the assembler worked
-	// against; Firn sets no golem Budget, so it is go-llm's DefaultInputCeiling.
+	// against, after resolving the probe arm's explicit or derived ceiling.
 	// Evicted counts whole GROUPS (a conversation span or a completed tool
 	// chain) the assembler DROPPED to fit -- findings the run already paid for
 	// and then stopped being able to see.
@@ -171,27 +173,9 @@ func TestStepBudgetProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadDefaultAgentConfig: %v", err)
 	}
-	target, err := ResolveAgentTarget(loaded.Config)
+	target, err := probeTarget(loaded.Config, os.Getenv("FIRN_STEP_PROBE_MODEL"))
 	if err != nil {
-		t.Fatalf("ResolveAgentTarget: %v", err)
-	}
-	if override := os.Getenv("FIRN_STEP_PROBE_MODEL"); override != "" {
-		// Swapping only the NAME would leave ContextWindow describing the
-		// originally configured model, so the derived-budget arm would size
-		// itself from the wrong window and the log would attribute that stale
-		// window to the override. Adopt the whole ModelConfig instead, and
-		// refuse an override this probe cannot honestly run.
-		model, err := probeModelConfig(loaded.Config, override)
-		if err != nil {
-			t.Fatalf("FIRN_STEP_PROBE_MODEL: %v", err)
-		}
-		if model.Provider != target.model.Provider {
-			t.Fatalf("FIRN_STEP_PROBE_MODEL: %q is served by provider %q, but the probe "+
-				"builds a single backend for %q; consent to that destination instead",
-				override, model.Provider, target.model.Provider)
-		}
-		target.model = *model
-		target.destination.Model = model.Name
+		t.Fatalf("probe target: %v", err)
 	}
 	// A capped run makes many model calls; the configured per-request timeout
 	// still applies per call, but a long probe needs room for all of them.
@@ -207,9 +191,9 @@ func TestStepBudgetProbe(t *testing.T) {
 		}
 		root = filepath.Dir(filepath.Dir(wd)) // internal/ai -> repo root
 	}
-	root, err = filepath.EvalSymlinks(root)
+	root, guard, err := probeWorkspace(root, loaded.SourcePath)
 	if err != nil {
-		t.Fatalf("EvalSymlinks(%q): %v", root, err)
+		t.Fatalf("probe workspace: %v", err)
 	}
 
 	maxSteps := envInt("FIRN_STEP_PROBE_MAXSTEPS", 48)
@@ -270,7 +254,7 @@ func TestStepBudgetProbe(t *testing.T) {
 		for attempt := 1; attempt <= repeats; attempt++ {
 			for _, ceiling := range ceilings {
 				tuning := golemTuning{MaxSteps: maxSteps, InputCeiling: ceiling}
-				s := probeOnce(t, root, target, backend, tuning, q, attempt)
+				s := probeOnce(t, root, guard, target, backend, tuning, q, attempt)
 				samples = append(samples, s)
 				if out != nil {
 					raw, _ := json.Marshal(s)
@@ -303,7 +287,7 @@ func TestStepBudgetProbe(t *testing.T) {
 // probeOnce builds a fresh runtime per turn so no session history leaks between
 // samples: every measurement is a cold first turn, which is the shape of the
 // question that hit the cap.
-func probeOnce(t *testing.T, root string, target providerTarget, backend provider.Provider,
+func probeOnce(t *testing.T, root string, guard agenttools.ScopeGuard, target providerTarget, backend provider.Provider,
 	tuning golemTuning, question string, attempt int) runSample {
 	t.Helper()
 
@@ -313,7 +297,7 @@ func probeOnce(t *testing.T, root string, target providerTarget, backend provide
 		ToolCounts: map[string]int{},
 	}
 
-	runner, err := newGolemRunner(context.Background(), root, target, nil,
+	runner, err := newGolemRunner(context.Background(), root, target, guard,
 		NewMemorySessionStore(), backend, nil, tuning)
 	if err != nil {
 		s.Err = err.Error()
@@ -464,6 +448,37 @@ func summarize(t *testing.T, samples []runSample, maxSteps int) {
 	}
 }
 
+// probeWorkspace applies the same read policy and config-source protection as
+// ordinary Golem runs before any live provider request is made.
+func probeWorkspace(root, configSource string) (string, agenttools.ScopeGuard, error) {
+	root, err := agenttools.CanonicalWorkspaceRoot(root)
+	if err != nil {
+		return "", nil, err
+	}
+	policy := LoadScopePolicy(filesystem.NewOS(), root)
+	if err := policy.ProtectConfigSource(configSource); err != nil {
+		return "", nil, fmt.Errorf("protect probe config source: %w", err)
+	}
+	return root, policy.Guard(""), nil
+}
+
+func probeTarget(cfg *config.Config, override string) (providerTarget, error) {
+	target, err := ResolveAgentTarget(cfg)
+	if err != nil || override == "" {
+		return target, err
+	}
+	model, err := probeModelConfig(cfg, override)
+	if err != nil {
+		return providerTarget{}, err
+	}
+	if model.Provider != target.model.Provider {
+		return providerTarget{}, fmt.Errorf("FIRN_STEP_PROBE_MODEL: %q is served by provider %q, but the probe "+
+			"builds a single backend for %q; consent to that destination instead",
+			override, model.Provider, target.model.Provider)
+	}
+	return resolveModelTarget(cfg, model)
+}
+
 // probeModelConfig resolves an override naming either a configured role or a
 // configured model name, so the probe always carries that model's real
 // metadata. An unknown or ambiguous name is an error rather than a silent
@@ -581,4 +596,94 @@ func TestProbeModelConfigCarriesContextWindow(t *testing.T) {
 			t.Fatalf("error should name both roles so the operator can pick: %v", err)
 		}
 	})
+}
+
+func TestProbeTargetUsesOverrideReasoningSettings(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"local": {BaseURL: "http://localhost:11434", APIFormat: "ollama"},
+		},
+		Models: map[string]config.ModelConfig{
+			"original": {Name: "first", Provider: "local", Capabilities: []string{"chat", "stream", "tool_call"},
+				ThinkMode: "none", ThinkTags: &config.ThinkTagsConfig{Open: "<old>", Close: "</old>"}},
+			"override": {Name: "second", Provider: "local", Capabilities: []string{"chat", "stream", "tool_call"},
+				ThinkMode: "always", ThinkTags: &config.ThinkTagsConfig{Open: "<reason>", Close: "</reason>"}},
+			"defaults": {Name: "third", Provider: "local", Capabilities: []string{"chat", "stream", "tool_call"}},
+		},
+		Defaults: map[string]string{"agent": "original"},
+	}
+	for _, override := range []string{"override", "defaults"} {
+		t.Run(override, func(t *testing.T) {
+			target, err := probeTarget(cfg, override)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := &scriptedProvider{name: "local", steps: []provider.ChatResponse{{Content: "done"}}}
+			caller := fixedModelCaller{backend: backend, target: target}
+			if _, err := caller.Chat(t.Context(), provider.ChatRequest{}, func(provider.ChatResponse) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			req := backend.recorded()[0]
+			if override == "defaults" {
+				if req.ParseThinkMode != nil || req.ParseThinkTags != nil {
+					t.Fatal("default model inherited reasoning overrides from original model")
+				}
+			} else if req.ParseThinkMode == nil || *req.ParseThinkMode != provider.ThinkAlways ||
+				req.ParseThinkTags == nil || req.ParseThinkTags.Open != "<reason>" || req.ParseThinkTags.Close != "</reason>" {
+				t.Fatalf("override request reasoning settings = %v/%v, want always and <reason> tags", req.ParseThinkMode, req.ParseThinkTags)
+			}
+		})
+	}
+}
+
+func TestProbeWorkspacePreservesReadPolicy(t *testing.T) {
+	root := canonicalTempDir(t)
+	for name, body := range map[string]string{
+		"ai-kit.yaml": "sensitive_paths:\n  - private.txt\n",
+		"public.go":   "package example\n",
+		"config.json": "{}",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := filepath.Join(root, "config.json")
+	t.Chdir(filepath.Dir(root))
+	gotRoot, guard, err := probeWorkspace(filepath.Base(root), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRoot != root {
+		t.Fatalf("probe root = %q, want canonical %q", gotRoot, root)
+	}
+	for _, name := range []string{".env", "private.txt", "config.json"} {
+		if err := guard(name, false); err == nil {
+			t.Errorf("probe policy allowed protected path %q", name)
+		}
+	}
+	if err := guard("public.go", false); err != nil {
+		t.Fatalf("probe policy denied ordinary source: %v", err)
+	}
+
+	// A harmless read proves probeOnce forwards the guard into the real tools.
+	checked := false
+	observedGuard := func(path string, write bool) error {
+		if path == "public.go" {
+			checked = true
+		}
+		return guard(path, write)
+	}
+	backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{
+		scriptedToolCall("read", "read_file", `{"path":"public.go"}`),
+		{Content: "done"},
+	}}
+	sample := probeOnce(t, gotRoot, observedGuard, testTarget("hosted", "big-coder"), backend,
+		golemTuning{}, "read public.go", 1)
+	if sample.Err != "" || sample.ErrorCalls != 0 || !checked || sample.AnswerBytes == 0 {
+		t.Fatalf("probe read: error=%q tool errors=%d policy checked=%t answer bytes=%d",
+			sample.Err, sample.ErrorCalls, checked, sample.AnswerBytes)
+	}
+	if _, _, err := probeWorkspace(root, "relative-config.json"); err == nil {
+		t.Fatal("probe accepted an unprotectable config source")
+	}
 }

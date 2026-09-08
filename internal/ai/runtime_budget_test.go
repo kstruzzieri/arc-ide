@@ -62,6 +62,46 @@ func bigContextTarget(window int) providerTarget {
 	return target
 }
 
+func TestRunnerRequestsMatchingOllamaContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, format string
+		window, want int
+	}{
+		{"large ollama window", "ollama", 256000, 32768},
+		{"small ollama window", "ollama", 4096, 4096},
+		{"undeclared ollama window", "ollama", 0, 0},
+		{"degenerate ollama window", "ollama", 1, 0},
+		{"openai compatible window", "openai-compat", 256000, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := bigContextTarget(tc.window)
+			target.apiFormat = tc.format
+			backend := &scriptedProvider{name: "hosted", steps: []provider.ChatResponse{{Content: "done"}}}
+			runner, err := newGolemRunner(t.Context(), canonicalTempDir(t), target, nil,
+				NewMemorySessionStore(), backend, nil, golemTuning{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := runner.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if _, err := runner.Run(t.Context(), golem.Turn{RunID: "context", Message: "hello"},
+				func(golem.Event) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			reqs := backend.recorded()
+			if len(reqs) != 1 {
+				t.Fatalf("provider requests = %d, want 1", len(reqs))
+			}
+			if got := reqs[0].Options.NumCtx; got != tc.want {
+				t.Errorf("NumCtx for %s window %d = %d, want %d", tc.format, tc.window, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRunnerKeepsToolResultsWithinTheModelsContextWindow is the behavior the
 // budget exists for. A turn reads one large file and then answers. What the
 // model can see on the SECOND call is the whole question: if the tool result was

@@ -217,7 +217,11 @@ func ResolveAgentTarget(cfg *config.Config) (providerTarget, error) {
 	if !ok {
 		return providerTarget{}, fmt.Errorf("%w: no agent use-case configured", ErrAgentConfigInvalid)
 	}
-	model := cfg.RoleConfig(role)
+	return resolveModelTarget(cfg, cfg.RoleConfig(role))
+}
+
+// resolveModelTarget validates and resolves all metadata for one fixed model.
+func resolveModelTarget(cfg *config.Config, model *config.ModelConfig) (providerTarget, error) {
 	if model == nil {
 		return providerTarget{}, fmt.Errorf("%w: agent role has no model", ErrAgentConfigInvalid)
 	}

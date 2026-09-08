@@ -133,6 +133,12 @@ func newGolemRunner(
 	if inputCeiling == 0 {
 		inputCeiling = deriveInputCeiling(target.model.ContextWindow)
 	}
+	modelOptions := provider.ModelOptions{}
+	if target.apiFormat == "ollama" && target.model.ContextWindow >= replyHeadroomDivisor {
+		// Ollama allocates context independently of model metadata. Request the
+		// same total window used to derive the input budget, including reply room.
+		modelOptions.NumCtx = min(target.model.ContextWindow, maxAssumedWindow)
+	}
 	runtime, err := golem.New(ctx, golem.Options{
 		Root:               root,
 		ScopeGuard:         guard,
@@ -144,6 +150,7 @@ func newGolemRunner(
 		// OutputReserve stays zero: go-llm forwards it as NumPredict, capping how
 		// long an answer may be, and no measurement here justifies a cap.
 		Budget:          agent.Budget{InputCeiling: inputCeiling},
+		ModelOptions:    modelOptions,
 		MaxMessageBytes: MaxTurnMessageBytes,
 		FailureMessage:  publicRunFailureMessage,
 	})
