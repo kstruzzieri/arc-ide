@@ -3,7 +3,7 @@
  * selection guard, loading affordance, and the visible description.
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 
@@ -223,7 +223,18 @@ describe('masthead profile select', () => {
     expect(select).toHaveAttribute('aria-describedby', 'golem-profile-select-desc');
   });
 
-  it('an unavailable list keeps the masthead usable and the source applied', async () => {
+  // Review finding 1 (Task 6): `buildProfileSelectModel` renders `{kind:
+  // 'unloaded'}` and `{kind:'unavailable'}` identically — both yield zero
+  // optgroup rows, an 'applied' value, and an empty description
+  // (profileSelect.ts `rows`/`listed` derivation) — so a rejected fetch
+  // cannot be told apart from one that simply hasn't resolved yet by
+  // anything this test can observe. It does NOT prove the state reached
+  // `unavailable`; it proves only that a rejected list fetch never crashes
+  // the masthead and never disturbs the selected source. The assertion that
+  // actually discriminates `unavailable` (the curated notice text) belongs
+  // to Task 7, once the Configuration menu renders
+  // `profileList.kind === 'unavailable' ? profileList.message : …`.
+  it('a rejected list fetch leaves the masthead usable and the source applied', async () => {
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: false,
       projection: readyProjection,
@@ -251,5 +262,71 @@ describe('masthead profile select', () => {
     expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
       'applied'
     );
+  });
+
+  // Review finding 2 (Task 6): `refreshProfileList` fires on mount AND from
+  // both branches of `refresh()`, so overlapping fetches are reachable in
+  // normal use. Without the generation guard, a slow first response that
+  // lands after a faster, newer one would repaint the options with stale
+  // data.
+  it('drops a stale list response that lands after a newer one already repainted', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: readyProjection,
+    });
+    let resolveFirst!: (value: unknown) => void;
+    (ListGolemProfiles as jest.Mock)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+      )
+      .mockResolvedValueOnce(listResult({ profiles: [{ id: 'user/second', curated: false }] }));
+
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    // Wait for the ready state so Refresh is enabled, then confirm the first
+    // (mount) list fetch is the one still in flight.
+    await screen.findByTestId('provider-row-llama-swap');
+    await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalledTimes(1));
+
+    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+    const user = userEvent.setup();
+    // Refresh triggers a second, overlapping `refreshProfileList` call while
+    // the first is still pending.
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalledTimes(2));
+    // The second (newer) call resolves on its own and repaints the options.
+    await waitFor(() =>
+      expect(within(select).queryByRole('option', { name: 'second' })).toBeInTheDocument()
+    );
+
+    // Now the FIRST (older, superseded) call resolves with a DIFFERENT list.
+    // The generation guard must drop it.
+    await act(async () => {
+      resolveFirst(listResult({ profiles: [{ id: 'user/first', curated: false }] }));
+      await Promise.resolve();
+    });
+
+    expect(within(select).queryByRole('option', { name: 'second' })).toBeInTheDocument();
+    expect(within(select).queryByRole('option', { name: 'first' })).not.toBeInTheDocument();
+  });
+
+  // Review finding 3 (Task 6): `selectSource`'s `current` and
+  // `buildProfileSelectModel`'s `value` must derive from the same
+  // `sourceSelectValue` mapping. If they ever diverged, re-selecting the
+  // ALREADY active profile source would stop no-opping and would re-issue
+  // `LoadGolemProfile` on every reselection of the current value.
+  it('re-selecting the already active profile source is a no-op', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    await mountReady();
+    const user = userEvent.setup();
+    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+    await user.selectOptions(select, 'user/mine');
+    await waitFor(() => expect(select.value).toBe('user/mine'));
+    expect(LoadGolemProfile).toHaveBeenCalledTimes(1);
+
+    await user.selectOptions(select, 'user/mine');
+    expect(LoadGolemProfile).toHaveBeenCalledTimes(1);
   });
 });

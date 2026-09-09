@@ -47,15 +47,24 @@ export interface BuildProfileSelectArgs {
 
 const slugOf = (id: string): string => id.slice(id.indexOf('/') + 1);
 
+/**
+ * §4.8: the select's value is a pure function of the source alone. Shared by
+ * the model below and by the workspace's `selectSource` handler so the two
+ * can never hand-copy this mapping out of sync with each other (review
+ * finding 3 on Task 6 — the duplicate ternary was a divergence hazard).
+ */
+export function sourceSelectValue(source: ApplySource): string {
+  return source.kind === 'applied'
+    ? APPLIED_SOURCE_VALUE
+    : source.kind === 'blank'
+      ? BLANK_SOURCE_VALUE
+      : source.profileId;
+}
+
 export function buildProfileSelectModel(args: BuildProfileSelectArgs): ProfileSelectModel {
   const { source, list, provenance, appliedRevision, state } = args;
 
-  const value =
-    source.kind === 'applied'
-      ? APPLIED_SOURCE_VALUE
-      : source.kind === 'blank'
-        ? BLANK_SOURCE_VALUE
-        : source.profileId;
+  const value = sourceSelectValue(source);
 
   // §4.8: ancestry renders on the Applied option, never as a separate control.
   // The modified marker needs BOTH revisions to compare honestly.

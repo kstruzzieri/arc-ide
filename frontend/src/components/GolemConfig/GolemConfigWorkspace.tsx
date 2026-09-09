@@ -87,6 +87,7 @@ import {
   BLANK_SOURCE_VALUE,
   TRANSPORT_UNAVAILABLE_COPY,
   buildProfileSelectModel,
+  sourceSelectValue,
   type ProfileListState,
 } from './profileSelect';
 import { ProvidersCard } from './ProvidersCard';
@@ -760,12 +761,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    *  refused guard or failed load never moves it — React re-renders the prior
    *  value and the transient native choice is discarded. */
   const selectSource = async (value: string): Promise<void> => {
-    const current =
-      draft.source.kind === 'applied'
-        ? APPLIED_SOURCE_VALUE
-        : draft.source.kind === 'blank'
-          ? BLANK_SOURCE_VALUE
-          : draft.source.profileId;
+    const current = sourceSelectValue(draft.source);
     if (value === current || value === BLANK_SOURCE_VALUE) return;
     if (
       unsavedRef.current &&
