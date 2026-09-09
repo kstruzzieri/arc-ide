@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"firn/internal/filesystem"
 
@@ -63,11 +64,22 @@ func TestProjectProfileInfos(t *testing.T) {
 }
 
 func TestProjectProfileInfosSanitizesAndBounds(t *testing.T) {
+	// The oversized description is NOT a plain ASCII repeat: a 3-byte rune
+	// (U+4E16) is placed straddling the maxProjectionEndpointLen byte
+	// boundary. An ASCII-only fixture would pass even if the trim split a
+	// rune mid-byte — every ASCII byte is already a rune boundary — so it
+	// proves nothing about the rune-boundary claim below. Layout: an 11-byte
+	// sanitized prefix ("bad\uFFFDdesc "), 1011 ASCII filler bytes (reaching
+	// byte offset 1022), then the 3-byte rune occupying bytes [1022,1025) —
+	// which straddles the 1024-byte limit — plus trailing content so the
+	// string exceeds the bound and trimming actually runs.
+	const prefix = "bad\u202edesc " // sanitizes to "bad\uFFFDdesc " (11 bytes)
+	oversized := prefix + strings.Repeat("x", 1011) + "\u4e16" + "tail"
 	rows := []profiles.Info{
-		// A control rune is scrubbed, an oversized description is trimmed at a
-		// rune boundary, and a malformed revision never crosses.
-		{ID: "curated/local", Curated: true,
-			Description: "bad\u202edesc " + strings.Repeat("x", 2000), Revision: "not-a-revision"},
+		// A control/bidi rune is scrubbed, the oversized description is
+		// trimmed at a rune boundary (never splitting the straddling rune
+		// above), and a malformed revision never crosses.
+		{ID: "curated/local", Curated: true, Description: oversized, Revision: "not-a-revision"},
 		{ID: "user/clean", Description: "\u0007"},
 	}
 	infos := projectProfileInfos(rows)
@@ -76,6 +88,19 @@ func TestProjectProfileInfosSanitizesAndBounds(t *testing.T) {
 	}
 	if len(infos[0].Description) > maxProjectionEndpointLen {
 		t.Fatalf("description = %d bytes", len(infos[0].Description))
+	}
+	// The trim landed on a rune boundary: a naive byte slice at exactly
+	// maxProjectionEndpointLen would land inside the straddling rune's UTF-8
+	// encoding and produce invalid UTF-8 here.
+	if !utf8.ValidString(infos[0].Description) {
+		t.Fatalf("description split a rune at the trim boundary: %q", infos[0].Description)
+	}
+	// The straddling rune is entirely excluded (never emitted partially): the
+	// trimmed description is exactly the sanitized prefix plus filler, ending
+	// before byte offset 1022.
+	if want := len(prefix) + 1011; len(infos[0].Description) != want {
+		t.Fatalf("trimmed description = %d bytes, want %d (prefix+filler, rune excluded)",
+			len(infos[0].Description), want)
 	}
 	if infos[0].Revision != "" {
 		t.Fatalf("malformed revision crossed: %q", infos[0].Revision)
@@ -86,6 +111,9 @@ func TestProjectProfileInfosSanitizesAndBounds(t *testing.T) {
 	// beyond the documented scrub.
 	if infos[1].ID != "user/clean" {
 		t.Fatalf("row identity changed: %+v", infos[1])
+	}
+	if infos[1].Description != "\ufffd" {
+		t.Fatalf("control-only description = %q, want U+FFFD", infos[1].Description)
 	}
 }
 
@@ -365,6 +393,19 @@ func TestSaveGolemProfileAsOverwriteCAS(t *testing.T) {
 	}
 	if !strings.Contains(string(saved), "target-model") {
 		t.Fatal("overwrite did not replace the profile with the applied configuration")
+	}
+	// §4.8 mutation scan, mirroring TestSaveGolemProfileAsCreatesScrubbedProfile:
+	// overwrite is the DESTRUCTIVE direction and the only credential-guarantee
+	// path that previously had no mutation scan at all. The collider this
+	// replaces (keyedProfileJSON) itself carries every one of these forbidden
+	// strings, so this scan also proves the OLD collider bytes are gone, not
+	// merely that the new bytes happen to lack them.
+	for _, forbidden := range []string{
+		profileLiteralSecret, profileAmbientSecret, profileSetEnvName, "${", "api_key",
+	} {
+		if strings.Contains(string(saved), forbidden) {
+			t.Fatalf("overwritten profile carries %q:\n%s", forbidden, saved)
+		}
 	}
 }
 

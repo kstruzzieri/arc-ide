@@ -233,7 +233,12 @@ func profileSaveResult(id string, outcome profiles.SaveOutcome, err error) Golem
 // saveDestinationPath mirrors how the upstream DefaultStore computes the file
 // a SaveAs would write: UserConfigDir()/go-llm/profiles/<slug>.json. The store
 // does not expose its root, so this is a deliberate mirror — the active-alias
-// tests stand as the drift gate against the upstream layout.
+// tests stand as the drift gate against the upstream layout. Named exactly so
+// a drift can be verified in one hop: it mirrors go-llm's profiles/store.go —
+// DefaultStore's root (UserConfigDir()/go-llm) and SaveAs's own destination
+// join, filepath.Join(s.root, "profiles", slug+".json"). If upstream ever
+// changes either half, this function silently stops matching the file
+// Store.SaveAs actually writes.
 func saveDestinationPath(id string) (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
