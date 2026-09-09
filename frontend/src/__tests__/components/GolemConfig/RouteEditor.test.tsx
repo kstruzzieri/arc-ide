@@ -1015,6 +1015,9 @@ describe('GolemConfigWorkspace route editing', () => {
       screen.queryByText(/Apply is unavailable while an editor has unstaged changes/)
     ).not.toBeInTheDocument();
 
+    // #284: Done on success now closes the editor, so making a further edit
+    // on the same route means reopening it first.
+    await openRoute('chat');
     // An edit made after staging is what closes the global Apply gate (§4.2).
     await userEvent.click(screen.getByLabelText('insert'));
     expect(
@@ -1048,8 +1051,9 @@ describe('GolemConfigWorkspace route editing', () => {
     // The override reaches `summarize`, which has no Firn floor, so the
     // acknowledgement is what unlocks the stage.
     await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // #284: a successful Done closes the editor itself now — no Cancel
+    // needed to collapse it back to its row.
     await stage();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(within(screen.getByTestId('route-row-chat')).getByText('Modified')).toBeInTheDocument();
     expect(
@@ -1082,11 +1086,12 @@ describe('GolemConfigWorkspace route editing', () => {
     await screen.findByTestId('route-row-chat');
 
     // Stage chat onto the summarize selector, keeping `thinking` and Auto.
+    // #284: a successful Done closes the editor itself now — no Cancel
+    // needed to collapse it back to its row.
     await openRoute('chat');
     await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(within(screen.getByTestId('route-row-chat')).getByText('auto')).toBeInTheDocument();
 
     // Now narrow the SAME selector from the summarize row. That staging becomes
@@ -1096,7 +1101,6 @@ describe('GolemConfigWorkspace route editing', () => {
     await userEvent.click(screen.getByLabelText('thinking'));
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(
       within(screen.getByTestId('route-row-chat')).queryByText('auto')

@@ -702,8 +702,8 @@ describe('nonterminal apply results', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    // #284: Done on success closes the route editor itself now.
     await stage();
-    await cancelEditor();
     await clickApply();
 
     expect(await screen.findByText(/slots/)).toBeVisible();
@@ -1021,8 +1021,8 @@ describe('grant-only destination approval', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    // #284: Done on success closes the route editor itself now.
     await stage();
-    await cancelEditor();
     await clickApply();
 
     expect(await screen.findByText(/slots/)).toBeVisible();
@@ -1703,8 +1703,8 @@ describe('bootstrap CTAs', () => {
     // No model exists on a brand-new provider: the declare card is the path.
     await declareModel('qwen3');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    // #284: Done on success closes the route editor itself now.
     await stage();
-    await cancelEditor();
 
     await clickApply();
     await waitFor(() => expect(CreateGolemSettings).toHaveBeenCalledTimes(1));

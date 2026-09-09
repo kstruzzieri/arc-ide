@@ -137,12 +137,18 @@ export function RoutingCard({
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   /** A fresh object per request, so a repeated chip click focuses again. */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
+  /**
+   * #284: the staging announcement must outlive the editor that produced it,
+   * so the live region is the card's, mounted for the card's whole life.
+   */
+  const [announcement, setAnnouncement] = useState('');
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
   const openEditor = (useCase: string, elementId: string) => {
     setOpen((current) => (current.has(useCase) ? current : new Set(current).add(useCase)));
     setPendingFocus({ elementId });
+    setAnnouncement('');
   };
 
   const close = (useCase: string) =>
@@ -152,6 +158,15 @@ export function RoutingCard({
       next.delete(useCase);
       return next;
     });
+
+  // Named `announceStaged`, not `staged`: the row map below already binds
+  // `staged` to the row's Change (`stagedFor(useCase)`), and that shadow
+  // would silently turn the handler call into a call on a Change object.
+  const announceStaged = (useCase: string, editorId: string, message: string) => {
+    setAnnouncement(message);
+    close(useCase);
+    setPendingFocus({ elementId: `${editorId}-edit` });
+  };
 
   // Two effects, because the editor does not exist until the open state has
   // committed: the first expands the row, the second focuses what that commit
@@ -169,8 +184,7 @@ export function RoutingCard({
     if (namespace !== 'route') return;
     const index = routeUseCases(routes).indexOf(name);
     if (index < 0) return;
-    setOpen((current) => (current.has(name) ? current : new Set(current).add(name)));
-    setPendingFocus({ elementId: `golem-route-editor-${index}` });
+    openEditor(name, `golem-route-editor-${index}`);
     // Routes are stable for the life of one card mount (the workspace remounts
     // it when the document moves), so the request alone drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -320,6 +334,7 @@ export function RoutingCard({
                     {editable && (
                       <button
                         type="button"
+                        id={`${editorId}-edit`}
                         className={styles.button}
                         aria-expanded={expanded}
                         aria-controls={editorId}
@@ -363,12 +378,17 @@ export function RoutingCard({
                     onStage={onStage}
                     onClose={() => close(useCase)}
                     onUnstagedChange={onUnstagedChange}
+                    onStaged={(message) => announceStaged(useCase, editorId, message)}
                   />
                 )}
               </li>
             );
           })}
         </ul>
+
+        <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+          {announcement}
+        </span>
 
         {unrouted.length > 0 && (
           <>

@@ -411,9 +411,12 @@ describe('GolemConfigWorkspace', () => {
   it('announces the state verdict in a live region', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByTestId('provider-row-llama-swap');
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'Configuration Ready. Source User configuration directory.'
-    );
+    // #284 gave RoutingCard its own persistent `role="status"` region, so a
+    // plain `getByRole('status')` is ambiguous here — matched by content
+    // instead, the way the neighboring "Golem is busy" assertion above does.
+    expect(
+      screen.getByText('Configuration Ready. Source User configuration directory.')
+    ).toHaveAttribute('role', 'status');
   });
 
   it('disables Refresh while a load is in flight', async () => {

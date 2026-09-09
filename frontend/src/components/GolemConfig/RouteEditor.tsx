@@ -116,6 +116,12 @@ export interface RouteEditorProps {
   onStage: (changes: Change[], drop: string[]) => void;
   onClose: () => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
+  /**
+   * #284: called exactly once per successful Done staging with the finished
+   * announcement. The OWNER announces, closes this editor, and restores
+   * focus — the editor cannot, because it unmounts with the message.
+   */
+  onStaged: (announcement: string) => void;
 }
 
 interface Seed {
@@ -199,6 +205,7 @@ export function RouteEditor({
   onStage,
   onClose,
   onUnstagedChange,
+  onStaged,
 }: RouteEditorProps) {
   const floor = USE_CASE_FLOORS.get(useCase) ?? [];
   const seed = useMemo(
@@ -216,7 +223,6 @@ export function RouteEditor({
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
   const [refusal, setRefusal] = useState('');
-  const [announcement, setAnnouncement] = useState('');
 
   // The facts the picker currently yields. `null` means "not choosable yet";
   // submit() names which half is missing.
@@ -334,7 +340,7 @@ export function RouteEditor({
     ackUnknown,
     ackDrops,
   });
-  const [committed, setCommitted] = useState(snapshot);
+  const [committed] = useState(snapshot);
   const unstaged = snapshot !== committed;
 
   useEffect(() => {
@@ -396,9 +402,8 @@ export function RouteEditor({
       ],
       []
     );
-    setCommitted(snapshot);
     setRefusal('');
-    setAnnouncement(`${useCase} model staged: ${candidate.modelFacts.model}`);
+    onStaged(`${useCase} model staged: ${candidate.modelFacts.model}`);
   };
 
   const unassign = () => {
@@ -605,10 +610,6 @@ export function RouteEditor({
           </label>
         </div>
       )}
-
-      <span className={styles.srOnly} role="status" aria-live="polite">
-        {announcement}
-      </span>
 
       <div className={styles.editorFooter}>
         {/* Always enabled: this button IS the validator's entry point, and the
