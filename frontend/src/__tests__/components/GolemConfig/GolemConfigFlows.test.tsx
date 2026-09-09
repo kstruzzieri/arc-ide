@@ -1544,7 +1544,16 @@ describe('bootstrap CTAs', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    // §4.8: the failed reload above restored the PRIOR source — still
+    // curated/local, since this was a reload of the same profile — with its
+    // clean preview. A profile source is inherently unsaved (draftChangeCount
+    // counts a non-applied source as one change), so the guard intercepts
+    // this next switch too.
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Discard & switch',
+      })
+    );
     await screen.findByRole('button', { name: 'source → curated/local' });
     (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({ status: 'busy' });
     await clickApply();

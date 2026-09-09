@@ -32,6 +32,7 @@ import {
   ConfirmGolemDestinationGrants,
   ConfirmGolemSettingsApply,
   CreateGolemSettings,
+  ListGolemProfiles,
   LoadGolemProfile,
   PrepareGolemDestinationGrants,
   ReloadGolemSettings,
@@ -54,9 +55,11 @@ import {
   meetsUseCaseFloor,
   parseCancelSettingsApplyResult,
   parseDestinationGrantsResult,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
   parseSettingsApplyResult,
   projectDraft,
+  readActiveProfile,
   recordApplyProvenance,
   retainsKeys,
   setTargetRevision,
@@ -79,6 +82,13 @@ import { formatProfileDiagnostic, formatSettingsDiagnostic } from '../../utils/s
 import { ApplyBar, type EditorFocusRequest } from './ApplyBar';
 import { registerConfigCloseHandler, type ConfigCloseIntent } from './configCloseGuard';
 import styles from './GolemConfig.module.css';
+import {
+  APPLIED_SOURCE_VALUE,
+  BLANK_SOURCE_VALUE,
+  TRANSPORT_UNAVAILABLE_COPY,
+  buildProfileSelectModel,
+  type ProfileListState,
+} from './profileSelect';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard, routingOwnsDiagnostic } from './RoutingCard';
 import { StatusText, type StatusTone } from './StatusText';
@@ -394,6 +404,40 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     };
   }, [load]);
 
+  const [profileList, setProfileList] = useState<ProfileListState>({ kind: 'unloaded' });
+  const listGeneration = useRef(0);
+
+  /**
+   * §4.8: a list refresh never changes the selected source — it only repaints
+   * the options. Failures are bounded and leave the masthead fully usable
+   * (the retained-option rule keeps the current source visible regardless).
+   */
+  const refreshProfileList = useCallback(async (): Promise<void> => {
+    const gen = ++listGeneration.current;
+    try {
+      const result = parseGolemProfileListResult(await ListGolemProfiles());
+      if (gen !== listGeneration.current) return;
+      if (result.status === 'diagnostics') {
+        setProfileList({
+          kind: 'unavailable',
+          message: formatProfileDiagnostic(result.diagnostics[0]),
+        });
+        return;
+      }
+      setProfileList({ kind: result.status, profiles: result.profiles });
+    } catch {
+      if (gen !== listGeneration.current) return;
+      setProfileList({ kind: 'unavailable', message: TRANSPORT_UNAVAILABLE_COPY });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProfileList();
+    return () => {
+      listGeneration.current += 1;
+    };
+  }, [refreshProfileList]);
+
   // The tab mounts when it is opened and focused, so this lands the caret on the
   // surface the user just asked for rather than leaving it on the palette.
   useEffect(() => {
@@ -616,6 +660,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const refresh = async () => {
     if (!unsavedRef.current) {
       await load(true);
+      void refreshProfileList();
       return;
     }
     if (!(await clearForTransition('Discard your staged changes and reload?', 'Discard & reload')))
@@ -623,6 +668,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     settle({ kind: 'discard' });
     setPreview(null);
     await load(true);
+    void refreshProfileList();
   };
 
   // -------------------------------------------------------------------------
@@ -631,6 +677,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** Resolves true only when the preview actually landed. */
   const adoptProfile = async (profileId: string, keepDraft: boolean): Promise<boolean> => {
+    // §4.8: a failed selection returns to the PRIOR source, not Applied. The
+    // settle below is the authorized §4.6a discard (edits and keys stay
+    // dropped); only the source identity and its clean preview are restored.
+    const priorSource = draftRef.current.source;
+    const priorPreview = preview;
     if (!keepDraft) {
       settle({ kind: 'discard' });
       setPreview(null);
@@ -640,11 +691,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setFocusRequest(null);
     setSourceLoading(true);
     setSourceError('');
+    const restorePriorSource = (): void => {
+      if (keepDraft) return; // the conflict-reload path never discarded anything
+      setPreview(priorPreview);
+      setDraft((current) => ({ ...current, source: priorSource }));
+      resetCards();
+    };
     try {
       const result = parseGolemProfileLoadResult(await LoadGolemProfile(profileId));
       if (gen !== generation.current) return false;
       if (result.status === 'diagnostics') {
         setSourceError(formatProfileDiagnostic(result.diagnostics[0]));
+        restorePriorSource();
         return false;
       }
       const source = {
@@ -664,6 +722,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     } catch (err) {
       if (gen !== generation.current) return false;
       setSourceError(boundedGolemMessage(err));
+      restorePriorSource();
       return false;
     } finally {
       if (gen === generation.current) setSourceLoading(false);
@@ -695,6 +754,32 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setSourceError('');
     setPreview(BLANK_PREVIEW);
     setDraft((current) => ({ ...current, source: { kind: 'blank' } }));
+  };
+
+  /** §4.8 source switching. The select's value derives from draft.source, so a
+   *  refused guard or failed load never moves it — React re-renders the prior
+   *  value and the transient native choice is discarded. */
+  const selectSource = async (value: string): Promise<void> => {
+    const current =
+      draft.source.kind === 'applied'
+        ? APPLIED_SOURCE_VALUE
+        : draft.source.kind === 'blank'
+          ? BLANK_SOURCE_VALUE
+          : draft.source.profileId;
+    if (value === current || value === BLANK_SOURCE_VALUE) return;
+    if (
+      unsavedRef.current &&
+      !(await clearForTransition(
+        'Discard your staged changes and switch source?',
+        'Discard & switch'
+      ))
+    )
+      return;
+    if (value === APPLIED_SOURCE_VALUE) {
+      await discard();
+      return;
+    }
+    await adoptProfile(value, false);
   };
 
   // -------------------------------------------------------------------------
@@ -1061,6 +1146,70 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             </>
           )}
           <span className={styles.grow} />
+          {(() => {
+            const selectModel = buildProfileSelectModel({
+              source: draft.source,
+              list: profileList,
+              provenance: readActiveProfile(),
+              appliedRevision: projection?.revision,
+              state: projection?.state ?? null,
+            });
+            return (
+              <span className={styles.profileSource}>
+                <label className={styles.srOnly} htmlFor="golem-profile-select">
+                  Configuration source
+                </label>
+                <select
+                  id="golem-profile-select"
+                  className={styles.profileSelect}
+                  value={selectModel.value}
+                  disabled={projection === null || sourceLocked}
+                  aria-describedby={
+                    selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
+                  }
+                  onChange={(event) => void selectSource(event.target.value)}
+                >
+                  <option value={selectModel.applied.value}>{selectModel.applied.label}</option>
+                  {selectModel.blank !== null && (
+                    <option value={selectModel.blank.value}>{selectModel.blank.label}</option>
+                  )}
+                  {selectModel.retained !== null && (
+                    <option value={selectModel.retained.value} disabled>
+                      {selectModel.retained.label}
+                    </option>
+                  )}
+                  {selectModel.curated.length > 0 && (
+                    <optgroup label="Curated">
+                      {selectModel.curated.map((option) => (
+                        <option key={option.value} value={option.value} disabled={option.disabled}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {selectModel.yours.length > 0 && (
+                    <optgroup label="Yours">
+                      {selectModel.yours.map((option) => (
+                        <option key={option.value} value={option.value} disabled={option.disabled}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                {sourceLoading && (
+                  <span className={styles.selectDescription} role="status">
+                    Loading profile…
+                  </span>
+                )}
+                {selectModel.description !== '' && (
+                  <span id="golem-profile-select-desc" className={styles.selectDescription}>
+                    {selectModel.description}
+                  </span>
+                )}
+              </span>
+            );
+          })()}
           {/* §4.1: profile management is absent, not disabled, in Slice B. The
               fixed bootstrap CTAs are the sole exception (§4.6). */}
           {projection?.state === 'missing' && !recovery && (

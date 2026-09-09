@@ -85,6 +85,28 @@
   color: var(--text-muted);
 }
 
+.profileSource {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* §4.1: auto-width to the longest id, capped at 280px AND the available pane
+   width; overflow ellipsizes rather than widening the masthead. */
+.profileSelect {
+  max-width: min(280px, 100%);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.selectDescription {
+  color: var(--text-muted);
+  font-size: 12px;
+  max-width: min(280px, 100%);
+}
+
 /* ── buttons: the only filled elements on the page ──────────────────────── */
 
 .button {
