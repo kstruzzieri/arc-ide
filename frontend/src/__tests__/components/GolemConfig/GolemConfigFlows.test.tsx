@@ -1443,6 +1443,10 @@ describe('bootstrap through the Configuration menu', () => {
       within(masthead).getByRole('button', { name: 'Save applied as profile…' })
     ).toBeDisabled();
     expect(screen.getByText('Save needs a Ready applied configuration.')).toBeVisible();
+    // Restored: the mount wait above only proves the notice is present, not
+    // visible — this is the pre-existing assertion the re-route must not
+    // weaken.
+    expect(screen.getByText(/nothing is written until you Apply/)).toBeVisible();
   });
 
   it('loads the curated profile as the draft source and paints its rows as pending', async () => {

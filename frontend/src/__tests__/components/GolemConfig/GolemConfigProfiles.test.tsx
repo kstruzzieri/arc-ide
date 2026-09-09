@@ -873,6 +873,72 @@ describe('Configuration menu', () => {
     await expect(close).resolves.toBe(true);
   });
 
+  it('registerWrite composes: an EARLIER write still holds the close even after a LATER write settles first', async () => {
+    // Review finding on Task 7: the drain-until-stable loop above re-awaits
+    // whenever writeRef.current changes identity DURING its await, so a
+    // single-slot (non-composing) writeRef also passes that test — the loop
+    // notices the Save→grant overwrite mid-wait and re-awaits the grant. That
+    // masks whether registerWrite's Promise.all composition is doing
+    // anything. This test inverts the settle order so composition is the
+    // ONLY thing that can hold the close: the LATER-registered write (the
+    // grant approval) settles FIRST, before the close handshake ever starts.
+    // A non-composing assignment would leave writeRef.current pointing only
+    // at the already-resolved grant by the time confirmConfigClose captures
+    // it, so the drain loop's first await resolves immediately and the close
+    // acknowledges with the EARLIER write (Save) still in flight — the exact
+    // §5.5 violation registerWrite exists to prevent.
+    let resolveSave: (value: unknown) => void = () => undefined;
+    (SaveGolemProfileAs as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      })
+    );
+    let resolveGrants: (value: unknown) => void = () => undefined;
+    (PrepareGolemDestinationGrants as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveGrants = resolve;
+      })
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    // The LATER write registers while the EARLIER (Save) write is still
+    // pending — same as the drain test above.
+    await user.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+    await waitFor(() => expect(PrepareGolemDestinationGrants).toHaveBeenCalled());
+
+    // Unlike the drain test above: the LATER write settles FIRST, and the
+    // microtask queue is flushed, BEFORE the close handshake starts at all.
+    await act(async () => {
+      resolveGrants({ status: 'none' });
+      await Promise.resolve();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Only now does the close handshake begin — it captures whatever
+    // writeRef.current holds at THIS moment.
+    let closed = false;
+    const close = confirmConfigClose('close').then((ok) => {
+      closed = true;
+      return ok;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // With composition, the captured slot still depends on the unresolved
+    // Save. Without it, the slot holds only the already-resolved grant and
+    // this assertion fails.
+    expect(closed).toBe(false);
+
+    await act(async () => {
+      resolveSave({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+      await Promise.resolve();
+    });
+    await expect(close).resolves.toBe(true);
+  });
+
   it('closes on Escape and restores focus to the trigger', async () => {
     await mountReady();
     const user = userEvent.setup();
