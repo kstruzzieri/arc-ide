@@ -1,0 +1,9 @@
+{
+  "verdict": "reject",
+  "document": "profile_save_result",
+  "value": {
+    "status": "conflict",
+    "conflict": "profile_target",
+    "retried": false
+  }
+}

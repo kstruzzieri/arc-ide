@@ -1,0 +1,12 @@
+{
+  "verdict": "reject",
+  "document": "profile_save_result",
+  "value": {
+    "status": "saved",
+    "profile": {
+      "id": "user/mine",
+      "revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "conflict": "profile_target"
+  }
+}

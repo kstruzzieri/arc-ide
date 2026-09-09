@@ -890,6 +890,156 @@ export function parseGolemProfileLoadResult(value: unknown): GolemProfileLoadRes
 }
 
 // ---------------------------------------------------------------------------
+// Slice C profile transport (§5.6): the list projection and the SaveAs
+// request/result behind ListGolemProfiles / SaveGolemProfileAs.
+// ---------------------------------------------------------------------------
+
+const USER_PROFILE_ID = /^user\/[a-z0-9][a-z0-9-]{0,63}$/;
+/** The §5.6 user-profile grammar; the save flow writes only this namespace. */
+export const isUserProfileID = (value: unknown): value is string =>
+  typeof value === 'string' && USER_PROFILE_ID.test(value);
+/** The slug half of the grammar, for the inline name field ('user/' is fixed). */
+export const PROFILE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export interface ProfileInfo {
+  id: string;
+  description?: string;
+  curated: boolean;
+  revision?: string;
+}
+
+export type GolemProfileListResult =
+  | { status: 'loaded'; profiles: ProfileInfo[] }
+  | { status: 'limited'; profiles: ProfileInfo[] }
+  | { status: 'diagnostics'; diagnostics: ProfileDiagnostic[] };
+
+export interface SaveGolemProfileAsRequest {
+  id: string;
+  expectedRevision?: string;
+  appliedRevision: string;
+}
+
+export type GolemProfileSaveResult =
+  | {
+      status: 'saved';
+      profile: { id: string; revision: string };
+      warning?: 'durability_uncertain';
+    }
+  | { status: 'conflict'; conflict: 'active_revision' | 'profile_target' }
+  | { status: 'diagnostics'; diagnostics: ProfileDiagnostic[] };
+
+function readProfileInfo(value: unknown): ProfileInfo | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['id', 'description', 'curated', 'revision']))
+    return null;
+  if (!isProfileID(value.id) || typeof value.curated !== 'boolean') return null;
+  // §4.8: the curated flag must agree with the namespace.
+  if (value.curated !== value.id.startsWith('curated/')) return null;
+  const description = readOptional(value, 'description', (entry) =>
+    isBoundedString(entry, MAX_ENDPOINT_BYTES) && entry !== '' ? entry : null
+  );
+  if (description === null) return null;
+  const revision = readOptional(value, 'revision', (entry) => (isRevision(entry) ? entry : null));
+  if (revision === null) return null;
+  return {
+    id: value.id,
+    curated: value.curated,
+    ...(description.present ? { description: description.value } : {}),
+    ...(revision.present ? { revision: revision.value } : {}),
+  };
+}
+
+function readProfileInfos(value: unknown): ProfileInfo[] | null {
+  const profiles = readCappedArray(value, MAX_PROJECTION_ENTRIES, readProfileInfo);
+  if (profiles === null) return null;
+  // §5.6: ascending UTF-8 byte order and duplicate-free — which also puts the
+  // curated block before the user block ('c' < 'u').
+  return isStrictlyOrdered(
+    profiles.map((profile) => profile.id),
+    compareString
+  )
+    ? profiles
+    : null;
+}
+
+export function parseGolemProfileListResult(value: unknown): GolemProfileListResult {
+  if (!isRecord(value)) return contractError();
+  switch (value.status) {
+    case 'loaded':
+    case 'limited': {
+      if (!hasOnlyKeys(value, ['status', 'profiles'])) return contractError();
+      const profiles = readProfileInfos(value.profiles);
+      if (profiles === null) return contractError();
+      return { status: value.status, profiles };
+    }
+    case 'diagnostics': {
+      if (!hasOnlyKeys(value, ['status', 'diagnostics'])) return contractError();
+      const diagnostics = readProfileDiagnostics(value.diagnostics);
+      if (diagnostics === null) return contractError();
+      return { status: 'diagnostics', diagnostics };
+    }
+    default:
+      return contractError();
+  }
+}
+
+/**
+ * Validated on the way OUT as well as in: buildSaveRequest callers route
+ * through this parser so a drafting bug fails at the boundary that produced
+ * it. Absent expectedRevision is create-only; §5.3 forbids the empty-string
+ * sentinel, so present-and-invalid (including '') is a contract break.
+ */
+export function parseSaveGolemProfileAsRequest(value: unknown): SaveGolemProfileAsRequest {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['id', 'expectedRevision', 'appliedRevision']))
+    return contractError();
+  if (!isUserProfileID(value.id) || !isRevision(value.appliedRevision)) return contractError();
+  const expected = readOptional(value, 'expectedRevision', (entry) =>
+    isRevision(entry) ? entry : null
+  );
+  if (expected === null) return contractError();
+  return {
+    id: value.id,
+    appliedRevision: value.appliedRevision,
+    ...(expected.present ? { expectedRevision: expected.value } : {}),
+  };
+}
+
+const SAVE_CONFLICT_KINDS = ['active_revision', 'profile_target'] as const;
+
+export function parseGolemProfileSaveResult(value: unknown): GolemProfileSaveResult {
+  if (!isRecord(value)) return contractError();
+  switch (value.status) {
+    case 'saved': {
+      if (!hasOnlyKeys(value, ['status', 'profile', 'warning'])) return contractError();
+      const profile = value.profile;
+      if (!isRecord(profile) || !hasOnlyKeys(profile, ['id', 'revision'])) return contractError();
+      if (!isUserProfileID(profile.id) || !isRevision(profile.revision)) return contractError();
+      const warning = readOptional(value, 'warning', (entry) =>
+        entry === 'durability_uncertain' ? entry : null
+      );
+      if (warning === null) return contractError();
+      return {
+        status: 'saved',
+        profile: { id: profile.id, revision: profile.revision },
+        ...(warning.present ? { warning: warning.value } : {}),
+      };
+    }
+    case 'conflict': {
+      if (!hasOnlyKeys(value, ['status', 'conflict'])) return contractError();
+      if (!isOneOf(value.conflict, SAVE_CONFLICT_KINDS)) return contractError();
+      return { status: 'conflict', conflict: value.conflict };
+    }
+    case 'diagnostics': {
+      if (!hasOnlyKeys(value, ['status', 'diagnostics'])) return contractError();
+      const diagnostics = readProfileDiagnostics(value.diagnostics);
+      if (diagnostics === null) return contractError();
+      return { status: 'diagnostics', diagnostics };
+    }
+    default:
+      return contractError();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Draft model (§3.3)
 //
 // The draft is the request-in-progress: a source, the staged changes keyed by

@@ -1,0 +1,8 @@
+{
+  "verdict": "accept",
+  "document": "profile_save_result",
+  "value": {
+    "status": "conflict",
+    "conflict": "profile_target"
+  }
+}

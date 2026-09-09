@@ -1,0 +1,11 @@
+{
+  "verdict": "reject",
+  "document": "profile_save_result",
+  "value": {
+    "status": "saved",
+    "profile": {
+      "id": "curated/local",
+      "revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}

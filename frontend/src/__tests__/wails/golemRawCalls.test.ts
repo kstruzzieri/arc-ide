@@ -6,7 +6,10 @@ import { GolemContractError, parseSettingsProjection } from '../../types/golem';
 import {
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
   type ApplyMode,
@@ -203,6 +206,15 @@ const replay = async (document: string, fixture: ApplyFixture, payload: unknown)
       return;
     case 'profile_load_result':
       parseGolemProfileLoadResult(await bindings.LoadGolemProfile('profile'));
+      return;
+    case 'profile_list_result':
+      parseGolemProfileListResult(payload);
+      return;
+    case 'profile_save_request':
+      parseSaveGolemProfileAsRequest(payload);
+      return;
+    case 'profile_save_result':
+      parseGolemProfileSaveResult(payload);
       return;
     default:
       throw new Error(`unknown document ${document}`);

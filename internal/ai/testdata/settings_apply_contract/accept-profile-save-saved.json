@@ -1,0 +1,11 @@
+{
+  "verdict": "accept",
+  "document": "profile_save_result",
+  "value": {
+    "status": "saved",
+    "profile": {
+      "id": "user/mine",
+      "revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}

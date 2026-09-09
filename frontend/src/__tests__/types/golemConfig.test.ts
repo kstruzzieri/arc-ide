@@ -19,7 +19,10 @@ import {
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
   parseDestinationGrantsResult,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
   projectDraft,
@@ -79,6 +82,15 @@ const checkFixture = (fixture: ApplyFixture): void => {
       return;
     case 'profile_load_result':
       parseGolemProfileLoadResult(fixture.value);
+      return;
+    case 'profile_list_result':
+      parseGolemProfileListResult(fixture.value);
+      return;
+    case 'profile_save_request':
+      parseSaveGolemProfileAsRequest(fixture.value);
+      return;
+    case 'profile_save_result':
+      parseGolemProfileSaveResult(fixture.value);
       return;
     default:
       throw new Error(`unknown document ${fixture.document}`);

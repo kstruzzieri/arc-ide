@@ -60,6 +60,22 @@ const fixtureMode = (fixture: ApplyFixture): ApplyMode => {
   return fixture.mode;
 };
 
+// The Slice C profile documents (profile_list_result, profile_save_request,
+// profile_save_result) have no generated v3 class yet -- their bindings land
+// in later tasks once ListGolemProfiles/SaveGolemProfileAs exist -- so this
+// regression pin, which is specifically about generated CLASS instances,
+// covers only the documents below until then. The shared-corpus contract
+// itself (byte-identical accept/reject across Go and TS) is proven elsewhere
+// by golemConfig.test.ts and golemRawCalls.test.ts, which do walk every
+// fixture.
+const KNOWN_APPLY_DOCUMENTS = new Set([
+  'apply_request',
+  'confirm_request',
+  'apply_result',
+  'cancel_result',
+  'profile_load_result',
+]);
+
 const parseDocument = (fixture: ApplyFixture, value: unknown): unknown => {
   switch (fixture.document) {
     case 'apply_request':
@@ -122,7 +138,9 @@ describe('v3 generated class instances at the Golem boundary', () => {
   });
 
   describe('settings apply corpus', () => {
-    const files = acceptFiles(applyCorpus);
+    const files = acceptFiles(applyCorpus).filter((file) =>
+      KNOWN_APPLY_DOCUMENTS.has(readFixture<ApplyFixture>(applyCorpus, file).document)
+    );
 
     it('has accept fixtures', () => {
       expect(files.length).toBeGreaterThan(0);

@@ -1,0 +1,13 @@
+{
+  "verdict": "reject",
+  "document": "profile_list_result",
+  "value": {
+    "status": "partial",
+    "profiles": [
+      {
+        "id": "user/mine",
+        "curated": false
+      }
+    ]
+  }
+}
