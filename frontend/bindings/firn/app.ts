@@ -937,12 +937,27 @@ export function RunGolemTurn(req: ai$0.TurnRequest): $CancellablePromise<ai$0.Tu
 }
 
 /**
+ * SaveGolemProfileAs duplicates the applied configuration into the user
+ * profile store as a credential-scrubbed named profile (§5.3). Absent
+ * expectedRevision is create-only; present is compare-and-replace against the
+ * stored profile's revision. It never touches the staged draft, the active
+ * publication, or the run barrier. Every outcome is a closed §5.6 domain
+ * result; only a missing service is an error.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function SaveGolemProfileAs(req: ai$0.SaveGolemProfileAsRequest): $CancellablePromise<ai$0.GolemProfileSaveResult> {
+    return $Call.ByID(354391537, req).then(($result: any) => {
+        return $$createType51($result);
+    });
+}
+
+/**
  * SaveRunProfile validates and saves a run profile, emitting runprofiles:changed
  * on a successful, valid save. This is exposed to the frontend via Wails bindings.
  */
 export function SaveRunProfile(profile: runprofile$0.RunProfile): $CancellablePromise<runprofile$0.ValidationResult> {
     return $Call.ByID(2441820046, profile).then(($result: any) => {
-        return $$createType51($result);
+        return $$createType52($result);
     });
 }
 
@@ -964,7 +979,7 @@ export function SaveWorkspaceState(state: workspace$0.State): $CancellablePromis
  */
 export function SearchWorkspace(request: search$0.SearchRequest): $CancellablePromise<search$0.SearchResponse> {
     return $Call.ByID(99753730, request).then(($result: any) => {
-        return $$createType52($result);
+        return $$createType53($result);
     });
 }
 
@@ -1061,7 +1076,7 @@ export function UnpinRunProfile(id: string): $CancellablePromise<void> {
  */
 export function ValidateRunProfile(profile: runprofile$0.RunProfile): $CancellablePromise<runprofile$0.ValidationResult> {
     return $Call.ByID(162550721, profile).then(($result: any) => {
-        return $$createType51($result);
+        return $$createType52($result);
     });
 }
 
@@ -1133,5 +1148,6 @@ const $$createType47 = filesystem$0.FileContent.createFrom;
 const $$createType48 = $Create.Nullable($$createType47);
 const $$createType49 = ai$0.SettingsReloadResult.createFrom;
 const $$createType50 = ai$0.TurnAdmission.createFrom;
-const $$createType51 = runprofile$0.ValidationResult.createFrom;
-const $$createType52 = search$0.SearchResponse.createFrom;
+const $$createType51 = ai$0.GolemProfileSaveResult.createFrom;
+const $$createType52 = runprofile$0.ValidationResult.createFrom;
+const $$createType53 = search$0.SearchResponse.createFrom;

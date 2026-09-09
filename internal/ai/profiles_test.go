@@ -227,3 +227,440 @@ func TestListGolemProfilesClosing(t *testing.T) {
 		t.Fatal("a closing service must refuse the list with an error")
 	}
 }
+
+// keyedTargetJSON is an ACTIVE target carrying both authored key forms Firn
+// recognizes (a literal and a set-env reference) plus one unknown member with
+// secret-looking content. §4.8's scrub guarantee is scoped to RECOGNIZED
+// api_key members: both key forms must vanish from a saved profile, and the
+// unknown member must SURVIVE — profiles are key-scrubbed, not certified
+// secret-free.
+const keyedTargetJSON = `{
+  "providers": {
+    "literal": {"base_url": "https://api.example.com/v1", "api_format": "openai-compat",
+      "api_key": "sk-profile-literal"},
+    "resolved": {"base_url": "https://api.example.net/v1", "api_format": "openai-compat",
+      "api_key": "${FIRN_PROFILE_SET_KEY}"},
+    "local": {"base_url": "http://localhost:11434"}
+  },
+  "models": {"agent-m": {"name": "target-model", "provider": "local", "type": "dense",
+    "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"},
+  "x_note": {"token": "sk-unknown-member"}
+}`
+
+func stageKeyedSaveTarget(t *testing.T) (revision string) {
+	t.Helper()
+	stageApplyTarget(t, keyedTargetJSON)
+	t.Setenv(profileSetEnvName, profileAmbientSecret)
+	return stagedTargetRevision(t)
+}
+
+func TestSaveGolemProfileAsCreatesScrubbedProfile(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	svc := newProfilesTestService(t)
+
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "saved" || result.Profile == nil || result.Profile.ID != "user/mine" {
+		t.Fatalf("save = %+v", result)
+	}
+	if err := validateGolemProfileSaveResult(result); err != nil {
+		t.Fatalf("save violates the §5.6 oracle: %v", err)
+	}
+
+	saved, readErr := os.ReadFile(filepath.Join(userProfileStoreRoot(t), "profiles", "mine.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	// §4.8 mutation scan, scoped to the recognized-key guarantee: every
+	// literal AND ${ENV} api_key form is gone from the saved bytes…
+	for _, forbidden := range []string{
+		profileLiteralSecret, profileAmbientSecret, profileSetEnvName, "${", "api_key",
+	} {
+		if strings.Contains(string(saved), forbidden) {
+			t.Fatalf("saved profile carries %q:\n%s", forbidden, saved)
+		}
+	}
+	// …while the unknown member survives canonical save by design.
+	if !strings.Contains(string(saved), "sk-unknown-member") {
+		t.Fatal("unknown member did not survive the canonical save; the honesty scope moved")
+	}
+	// The reported revision is the revision OF THE SAVED BYTES.
+	if result.Profile.Revision != profileBodyRevision(string(saved)) {
+		t.Fatalf("saved revision %q does not hash the written bytes", result.Profile.Revision)
+	}
+	// The ACTIVE target was not mutated: the fresh-parse rule means the
+	// runtime document and the on-disk target keep their keys.
+	target, _ := os.ReadFile(os.Getenv("GO_LLM_CONFIG"))
+	if !strings.Contains(string(target), profileLiteralSecret) {
+		t.Fatal("the active target lost its literal key: the runtime document was handed to the store")
+	}
+}
+
+func TestSaveGolemProfileAsActiveRevisionConflict(t *testing.T) {
+	stageKeyedSaveTarget(t)
+	svc := newProfilesTestService(t)
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: strings.Repeat("f", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "conflict" || result.Conflict != "active_revision" {
+		t.Fatalf("stale-revision save = %+v", result)
+	}
+}
+
+func TestSaveGolemProfileAsCreateCollision(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	stageUserProfile(t, "mine", keyedProfileJSON)
+	svc := newProfilesTestService(t)
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "conflict" || result.Conflict != "profile_target" {
+		t.Fatalf("create collision = %+v", result)
+	}
+}
+
+func TestSaveGolemProfileAsOverwriteCAS(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	stageUserProfile(t, "mine", keyedProfileJSON)
+	svc := newProfilesTestService(t)
+
+	// The §4.8 acquisition step captures the collider's RAW revision — the
+	// same value loadProfileDocument reports before the scrub.
+	colliderRevision := profileBodyRevision(keyedProfileJSON)
+
+	stale := strings.Repeat("e", 64)
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", ExpectedRevision: stringPtr(stale), AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "conflict" || result.Conflict != "profile_target" {
+		t.Fatalf("stale overwrite = %+v", result)
+	}
+
+	result, err = svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", ExpectedRevision: stringPtr(colliderRevision), AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "saved" {
+		t.Fatalf("CAS overwrite = %+v", result)
+	}
+	saved, readErr := os.ReadFile(filepath.Join(userProfileStoreRoot(t), "profiles", "mine.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(saved), "target-model") {
+		t.Fatal("overwrite did not replace the profile with the applied configuration")
+	}
+}
+
+// stageAliasedActiveTarget makes the ACTIVE configuration source the store's
+// own destination file for user/mine — directly, or through a symlinked
+// GO_LLM_CONFIG. Because a Document's revision is the sha256 of its loaded
+// bytes, the destination revision and the applied revision are the SAME value
+// here, which is exactly what makes a confirmed overwrite reach the store
+// without the alias gate. With caseVaried, GO_LLM_CONFIG spells the SAME file
+// as MINE.JSON: EvalSymlinks preserves that spelling, so the resolved active
+// path and the resolved destination are UNEQUAL strings naming one file — the
+// alias only os.SameFile catches (skipped where the filesystem does not fold
+// case; the deterministic fold leg has its own test below).
+func stageAliasedActiveTarget(t *testing.T, viaSymlink, caseVaried bool) (revision string) {
+	t.Helper()
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	profilesDir := filepath.Join(userProfileStoreRoot(t), "profiles")
+	if err := os.MkdirAll(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(profilesDir, "mine.json")
+	if err := os.WriteFile(destination, []byte(keyedTargetJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spelled := destination
+	if caseVaried {
+		spelled = filepath.Join(profilesDir, "MINE.JSON")
+		if _, err := os.Stat(spelled); err != nil {
+			t.Skip("case-sensitive filesystem: MINE.JSON does not open mine.json here")
+		}
+	}
+	target := spelled
+	if viaSymlink {
+		target = filepath.Join(t.TempDir(), "models.json")
+		if err := os.Symlink(spelled, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GO_LLM_CONFIG", target)
+	t.Setenv(profileSetEnvName, profileAmbientSecret)
+	return stagedTargetRevision(t)
+}
+
+func assertActiveAliasRefused(t *testing.T, revision string) {
+	t.Helper()
+	svc := newProfilesTestService(t)
+	activePath := filepath.Join(userProfileStoreRoot(t), "profiles", "mine.json")
+	before, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The dangerous form: a confirmed overwrite whose expectedRevision matches
+	// the destination — without the gate, Store.SaveAs would replace the
+	// ACTIVE file with its scrubbed copy under the read gate.
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", ExpectedRevision: stringPtr(revision), AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+		result.Diagnostics[0].Code != "store_unsafe" || result.Diagnostics[0].ProfileID != "user/mine" {
+		t.Fatalf("aliased save = %+v, want the bounded store_unsafe refusal", result)
+	}
+	after, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("the refusal touched the active configuration bytes")
+	}
+	if !strings.Contains(string(after), profileLiteralSecret) {
+		t.Fatal("the active target lost its literal key: the scrubbed copy reached the store")
+	}
+}
+
+// TestSaveGolemProfileAsRefusesActiveAlias: a destination that IS the
+// active configuration source is refused with store_unsafe (controller ruling,
+// header block) — never scrubbed-and-replaced under the read gate.
+func TestSaveGolemProfileAsRefusesActiveAlias(t *testing.T) {
+	revision := stageAliasedActiveTarget(t, false, false)
+	assertActiveAliasRefused(t, revision)
+}
+
+func TestSaveGolemProfileAsRefusesActiveAliasSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink staging needs privileges on Windows")
+	}
+	revision := stageAliasedActiveTarget(t, true, false)
+	assertActiveAliasRefused(t, revision)
+}
+
+// The case alias: the active source discovered through a case-varied
+// GO_LLM_CONFIG (profiles/MINE.JSON) IS user/mine's destination on macOS's
+// default case-insensitive filesystems, while every resolved-path string
+// comparison says otherwise. Only file identity refuses it.
+func TestSaveGolemProfileAsRefusesActiveAliasCaseVaried(t *testing.T) {
+	revision := stageAliasedActiveTarget(t, false, true)
+	assertActiveAliasRefused(t, revision)
+}
+
+func TestSaveGolemProfileAsRefusesActiveAliasCaseVariedSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink staging needs privileges on Windows")
+	}
+	revision := stageAliasedActiveTarget(t, true, true)
+	assertActiveAliasRefused(t, revision)
+}
+
+// The absent-destination leg is deliberately conservative (controller ruling,
+// header block): parents matching by file identity plus case-folded basenames
+// refuse, so even on a case-SENSITIVE filesystem a store whose ACTIVE file
+// differs from a profile destination only by letter case is an unsafe store.
+// Deterministic on every filesystem: on a folding one the destination exists
+// and os.SameFile refuses; on a non-folding one it does not exist and the
+// case-folded parent comparison refuses.
+func TestSaveGolemProfileAsRefusesCaseFoldedCreateDestination(t *testing.T) {
+	sandboxAgentConfigEnv(t)
+	t.Chdir(t.TempDir())
+	profilesDir := filepath.Join(userProfileStoreRoot(t), "profiles")
+	if err := os.MkdirAll(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(profilesDir, "OTHER.JSON")
+	if err := os.WriteFile(active, []byte(keyedTargetJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", active)
+	t.Setenv(profileSetEnvName, profileAmbientSecret)
+	revision := stagedTargetRevision(t)
+	svc := newProfilesTestService(t)
+
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/other", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+		result.Diagnostics[0].Code != "store_unsafe" || result.Diagnostics[0].ProfileID != "user/other" {
+		t.Fatalf("case-folded create = %+v, want the bounded store_unsafe refusal", result)
+	}
+	after, readErr := os.ReadFile(active)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != keyedTargetJSON {
+		t.Fatal("the refusal touched the active configuration bytes")
+	}
+}
+
+func TestSaveGolemProfileAsRequestShapeRefusals(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	svc := newProfilesTestService(t)
+	rows := []struct {
+		name string
+		req  SaveGolemProfileAsRequest
+		code string
+	}{
+		{"curated namespace", SaveGolemProfileAsRequest{ID: "curated/local", AppliedRevision: revision}, "curated_read_only"},
+		{"bad id", SaveGolemProfileAsRequest{ID: "user/UPPER", AppliedRevision: revision}, "invalid_id"},
+		{"bare slug", SaveGolemProfileAsRequest{ID: "mine", AppliedRevision: revision}, "invalid_id"},
+		{"malformed applied revision", SaveGolemProfileAsRequest{ID: "user/mine", AppliedRevision: "123"}, "invalid_id"},
+		// §5.3: no empty-string sentinel — present-and-empty must never reach
+		// the store, where it would silently mean create-only.
+		{"empty expected revision", SaveGolemProfileAsRequest{ID: "user/mine", ExpectedRevision: stringPtr(""), AppliedRevision: revision}, "invalid_id"},
+	}
+	for _, row := range rows {
+		result, err := svc.SaveGolemProfileAs(row.req)
+		if err != nil {
+			t.Fatalf("%s: %v", row.name, err)
+		}
+		if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+			result.Diagnostics[0].Code != row.code {
+			t.Fatalf("%s = %+v, want %s", row.name, result, row.code)
+		}
+	}
+}
+
+func TestSaveGolemProfileAsRefusesMissingActive(t *testing.T) {
+	// Missing: no applied source at all (§4.8 — Save refused).
+	sandboxAgentConfigEnv(t)
+	svc := newProfilesTestService(t)
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || result.Diagnostics[0].Code != "active_config_invalid" {
+		t.Fatalf("missing-target save = %+v", result)
+	}
+}
+
+func TestSaveGolemProfileAsRefusesLimitedActive(t *testing.T) {
+	// A read-only (duplicate keys) target is Limited: not a valid applied
+	// source at state 'ready' (§4.8 duplicate-era rule).
+	stageApplyTarget(t, duplicateProviderDocumentJSON)
+	revision := stagedTargetRevision(t)
+	svc := newProfilesTestService(t)
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || result.Diagnostics[0].Code != "active_config_invalid" {
+		t.Fatalf("limited-target save = %+v", result)
+	}
+}
+
+func TestSaveGolemProfileAsProfileLimitOnCreateOnly(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	for i := 0; i < 256; i++ {
+		stageUserProfile(t, "p-"+threeDigits(i), keyedProfileJSON)
+	}
+	svc := newProfilesTestService(t)
+
+	// 257 total rows: the list is limited, so a CREATE is refused…
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/one-more", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || result.Diagnostics[0].Code != "profile_limit" {
+		t.Fatalf("over-limit create = %+v", result)
+	}
+	// …while replacing an existing profile by exact id/revision stays open.
+	result, err = svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/p-000", ExpectedRevision: stringPtr(profileBodyRevision(keyedProfileJSON)),
+		AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "saved" {
+		t.Fatalf("over-limit overwrite = %+v", result)
+	}
+}
+
+// The durability warning is the nil-error path (§4.8): SaveOutcome.Persisted
+// pairs with a nil error and the bounded warning code. The store cannot be
+// driven into that state from here, so the mapping is pinned as a pure table.
+func TestProfileSaveResultMapping(t *testing.T) {
+	rev := strings.Repeat("c", 64)
+	rows := []struct {
+		name    string
+		outcome profiles.SaveOutcome
+		err     error
+		want    GolemProfileSaveResult
+	}{
+		{"saved", profiles.SaveOutcome{Persisted: true, Revision: rev}, nil,
+			GolemProfileSaveResult{Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: rev}}},
+		{"saved with durability warning", profiles.SaveOutcome{Persisted: true, Warning: profiles.CodeDurability, Revision: rev}, nil,
+			GolemProfileSaveResult{Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: rev}, Warning: "durability_uncertain"}},
+	}
+	for _, row := range rows {
+		got := profileSaveResult("user/mine", row.outcome, row.err)
+		if got.Status != row.want.Status || got.Warning != row.want.Warning ||
+			(got.Profile == nil) != (row.want.Profile == nil) ||
+			(got.Profile != nil && *got.Profile != *row.want.Profile) {
+			t.Fatalf("%s = %+v, want %+v", row.name, got, row.want)
+		}
+	}
+}
+
+func TestSaveGolemProfileAsRunsWhileConversationsBusy(t *testing.T) {
+	revision := stageKeyedSaveTarget(t)
+	svc := newProfilesTestService(t)
+	// A running conversation owns the idle barrier; writeSettings would answer
+	// busy. Save is deliberately NOT under that barrier (§5.3).
+	conv := svc.conversationFor("busy-conversation")
+	conv.mu.Lock()
+	conv.state = stateRunning
+	conv.mu.Unlock()
+	t.Cleanup(func() {
+		conv.mu.Lock()
+		conv.state = stateIdle
+		conv.mu.Unlock()
+	})
+
+	result, err := svc.SaveGolemProfileAs(SaveGolemProfileAsRequest{
+		ID: "user/mine", AppliedRevision: revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "saved" {
+		t.Fatalf("busy-time save = %+v, want saved (no idle barrier)", result)
+	}
+}

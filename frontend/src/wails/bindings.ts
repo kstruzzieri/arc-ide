@@ -2,6 +2,7 @@
 import { Call, type CancellablePromise } from '@wailsio/runtime';
 import type {
   ConfirmSettingsApplyRequest,
+  SaveGolemProfileAsRequest,
   SettingsApplyRequest,
   StatusRequest,
   TurnRequest,
@@ -64,6 +65,7 @@ export const GOLEM_RAW_CALL_IDS = {
   PrepareGolemDestinationGrants: 4086758063,
   ReloadGolemSettings: 1366669581,
   RunGolemTurn: 2592072505,
+  SaveGolemProfileAs: 354391537,
 } as const;
 
 // Each override shadows the `export *` above for one call, keeps the generated
@@ -113,6 +115,9 @@ export const ReloadGolemSettings = (): CancellablePromise<unknown> =>
 
 export const RunGolemTurn = (req: TurnRequest): CancellablePromise<unknown> =>
   Call.ByID(GOLEM_RAW_CALL_IDS.RunGolemTurn, req);
+
+export const SaveGolemProfileAs = (req: SaveGolemProfileAsRequest): CancellablePromise<unknown> =>
+  Call.ByID(GOLEM_RAW_CALL_IDS.SaveGolemProfileAs, req);
 
 // #271 window state and bootstrap: both resolve with a generated class whose
 // constructor defaults every missing field, so the phase, mode and instance a

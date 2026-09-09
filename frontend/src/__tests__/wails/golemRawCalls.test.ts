@@ -110,6 +110,7 @@ describe('adapter routing', () => {
     ['PrepareGolemDestinationGrants', []],
     ['ReloadGolemSettings', []],
     ['RunGolemTurn', [{ request: 'turn' }]],
+    ['SaveGolemProfileAs', [{ request: 'save-as' }]],
   ];
 
   it.each(routes)('%s calls ByID with its id and returns the payload as-is', async (name, args) => {
@@ -212,10 +213,10 @@ const replay = async (document: string, fixture: ApplyFixture, payload: unknown)
       parseGolemProfileListResult(await bindings.ListGolemProfiles());
       return;
     case 'profile_save_request':
-      parseSaveGolemProfileAsRequest(payload);
+      parseSaveGolemProfileAsRequest(await bindings.SaveGolemProfileAs(payload as never));
       return;
     case 'profile_save_result':
-      parseGolemProfileSaveResult(payload);
+      parseGolemProfileSaveResult(await bindings.SaveGolemProfileAs(payload as never));
       return;
     default:
       throw new Error(`unknown document ${document}`);
