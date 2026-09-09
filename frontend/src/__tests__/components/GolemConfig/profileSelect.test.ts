@@ -137,6 +137,9 @@ describe('buildProfileSelectModel', () => {
       label: 'Blank draft',
       disabled: false,
     });
+    // Rule 8: a non-profile source yields '' even against a populated list —
+    // the description is never borrowed from the list's first row.
+    expect(blank.description).toBe('');
     const applied = buildProfileSelectModel({
       source: { kind: 'applied' },
       list: loadedList,
@@ -145,6 +148,7 @@ describe('buildProfileSelectModel', () => {
       state: 'ready',
     });
     expect(applied.blank).toBeNull();
+    expect(applied.description).toBe('');
   });
 
   it('groups curated and user rows by slug and surfaces the selected description', () => {
@@ -158,6 +162,9 @@ describe('buildProfileSelectModel', () => {
     expect(model.curated).toEqual([{ value: 'curated/local', label: 'local', disabled: false }]);
     expect(model.yours).toEqual([{ value: 'user/mine', label: 'mine', disabled: false }]);
     expect(model.description).toBe('Vetted local lineup');
+    // Rule 7: the selected profile IS present in the rendered rows, so
+    // `retained` must be null — the "exactly when absent" half of the rule.
+    expect(model.retained).toBeNull();
   });
 
   it('disables profile options while the projection is Invalid or Limited', () => {
