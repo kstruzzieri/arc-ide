@@ -22,6 +22,7 @@ jest.mock('../../../wails/bindings', () => ({
 }));
 import {
   ApplyGolemSettings,
+  CancelGolemSettingsApply,
   ListGolemProfiles,
   LoadGolemProfile,
   PrepareGolemDestinationGrants,
@@ -478,6 +479,40 @@ describe('Configuration menu', () => {
     await screen.findByText('Profile saved.');
     // §4.8: the staged configuration draft is untouched.
     expect(screen.getByText(/1 change waiting for Apply/i)).toBeInTheDocument();
+  });
+
+  it('save leaves staged keys in the vault for the next Apply', async () => {
+    (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
+      status: 'saved',
+      profile: { id: 'user/mine', revision: REV('c') },
+    });
+    (ApplyGolemSettings as jest.Mock).mockResolvedValue({
+      status: 'applied',
+      projection: readyProjection,
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    // Stage a key on the existing provider (flow per GolemConfigFlows.test.tsx:
+    // Edit provider button, New API key field, Done stages it, Cancel closes
+    // the row so the notice step's own Done control below is unambiguous).
+    await user.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+    await user.type(screen.getByLabelText('New API key'), 'sk-test-key');
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Profile saved.');
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalled());
+    const request = (ApplyGolemSettings as jest.Mock).mock.calls[0][0] as {
+      keys: Record<string, string>;
+    };
+    expect(request.keys).toEqual({ 'llama-swap': 'sk-test-key' });
   });
 
   it('starts from a curated profile through the submenu', async () => {
@@ -946,5 +981,203 @@ describe('Configuration menu', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('button', { name: 'Start blank' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Configuration' })).toHaveFocus();
+  });
+});
+
+describe('availability matrix (§4.8)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const mountState = async (projection: unknown, list: unknown = listResult()) => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({ busy: false, projection });
+    (ListGolemProfiles as jest.Mock).mockResolvedValue(list);
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    await screen.findByLabelText('Configuration source');
+    await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
+  };
+
+  // §5.6: `revision` is present exactly for Ready/Limited documents — a
+  // revision-less Limited projection is rejected by the shipped parser and the
+  // mount would never establish the state it advertises.
+  const matrixProjection = (state: 'invalid' | 'limited', origin: string) =>
+    state === 'limited'
+      ? { ...emptyProjection('limited', origin), revision: REV('9') }
+      : emptyProjection('invalid', origin);
+
+  it.each([
+    ['invalid', 'env'],
+    ['limited', 'user_config'],
+  ] as const)(
+    'while %s: Save refused, Start refused, profile options disabled',
+    async (state, origin) => {
+      await mountState(matrixProjection(state, origin));
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Configuration' }));
+      expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+      expect(
+        screen.getByText('Unavailable while the configuration is Invalid or Limited.')
+      ).toBeInTheDocument();
+      const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+      const option = within(select).getByRole('option', { name: 'local' });
+      expect(option).toBeDisabled();
+    }
+  );
+
+  it('while ready: everything is offered', async () => {
+    await mountState(readyProjection);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
+  });
+
+  it('while a selection load is in flight the select disables with the affordance', async () => {
+    let resolveLoad: (value: unknown) => void = () => undefined;
+    (LoadGolemProfile as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      })
+    );
+    await mountState(readyProjection);
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText('Configuration source'), 'user/mine');
+    expect(screen.getByLabelText('Configuration source')).toBeDisabled();
+    expect(screen.getByText('Loading profile…')).toBeInTheDocument();
+    resolveLoad(profileLoadResult('user/mine'));
+    await waitFor(() => expect(screen.getByLabelText('Configuration source')).toBeEnabled());
+  });
+
+  it('while a Save is in flight the other profile actions disable', async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    (SaveGolemProfileAs as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      })
+    );
+    await mountState(readyProjection);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByLabelText('Configuration source')).toBeDisabled();
+    resolveSave({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+    await screen.findByText('Profile saved.');
+  });
+});
+
+describe('select shows the source (§4.8 invariants)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('successful Apply returns the select to Applied', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    (ApplyGolemSettings as jest.Mock).mockResolvedValue({
+      status: 'applied',
+      projection: readyProjection,
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText('Configuration source'), 'user/mine');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
+        'user/mine'
+      )
+    );
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
+        'applied'
+      )
+    );
+  });
+
+  it('Discard returns the select to Applied', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    (CancelGolemSettingsApply as jest.Mock).mockResolvedValue({ status: 'cancelled' });
+    await mountReady();
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText('Configuration source'), 'user/mine');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
+        'user/mine'
+      )
+    );
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
+        'applied'
+      )
+    );
+  });
+
+  it('a list-only refresh that lost the selected profile retains it as the selected, disabled option', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
+      status: 'saved',
+      profile: { id: 'user/other', revision: REV('c') },
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+    await user.selectOptions(select, 'user/mine');
+    await waitFor(() => expect(select.value).toBe('user/mine'));
+
+    // The list refresh a successful Save triggers — a LIST-ONLY refresh, no
+    // §4.6a transition — no longer carries user/mine.
+    (ListGolemProfiles as jest.Mock).mockResolvedValue(
+      listResult({
+        profiles: [
+          {
+            id: 'curated/local',
+            description: 'Vetted local lineup',
+            curated: true,
+            revision: REV('a'),
+          },
+        ],
+      })
+    );
+    await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'other');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Profile saved.');
+
+    // §4.8: retained as the SELECTED option, marked unavailable and not
+    // re-choosable — never a snap to a lie. This is the rendered proof the
+    // pure-model rule stands in the real select.
+    expect(select.value).toBe('user/mine');
+    const retained = within(select).getByRole('option', {
+      name: 'mine (unavailable)',
+    }) as HTMLOptionElement;
+    expect(retained.selected).toBe(true);
+    expect(retained).toBeDisabled();
+  });
+
+  it('a list refresh alone never changes the selected source', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
+      status: 'saved',
+      profile: { id: 'user/other', revision: REV('c') },
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText('Configuration source'), 'user/mine');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
+        'user/mine'
+      )
+    );
+    // A successful save triggers refreshProfileList (a list refresh with no
+    // §4.6a transition) — the selection must not move. Save requires ready
+    // state, which the profile-source draft still satisfies via projection.
+    await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'other');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Profile saved.');
+    expect((screen.getByLabelText('Configuration source') as HTMLSelectElement).value).toBe(
+      'user/mine'
+    );
   });
 });
