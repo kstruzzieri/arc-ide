@@ -26,7 +26,23 @@ type ProfileInfo struct {
 // GolemProfileListResult is the closed §5.6 list union. `limited` carries the
 // first maxProjectionEntries rows in stable ID order.
 type GolemProfileListResult struct {
-	Status      string              `json:"status"`
+	Status string `json:"status"`
+	// Profiles MUST be non-empty whenever Status is "loaded" or "limited". That
+	// is guaranteed, not merely hoped for: the embedded curated catalog always
+	// contributes at least "curated/local" to Store.List, so an empty
+	// loaded/limited result is unreachable by construction, and Task 3's
+	// TestListGolemProfilesNeverEmpty is the guard that pins it. `omitempty`
+	// here is deliberate and depends on that invariant holding — marshaling a
+	// genuinely EMPTY slice would silently drop the member and produce
+	// {"status":"loaded"}, which is exactly the byte shape the shared corpus
+	// records as reject (reject-profile-list-missing-profiles.json), not the
+	// accept shape {"status":"loaded","profiles":[]}
+	// (accept-profile-list-loaded-empty.json — that fixture documents a wire
+	// shape the SCHEMA allows, not one this producer ever emits). Do not "fix"
+	// this by dropping omitempty or switching to *[]ProfileInfo — see
+	// TestGolemProfileResultsRoundTripTheContract in settings_apply_test.go,
+	// which proves every result this producer can actually emit round-trips
+	// through the same contract checks a fixture takes.
 	Profiles    []ProfileInfo       `json:"profiles,omitempty"`
 	Diagnostics []ProfileDiagnostic `json:"diagnostics,omitempty"`
 }

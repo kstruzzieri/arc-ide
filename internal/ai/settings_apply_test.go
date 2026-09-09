@@ -753,6 +753,77 @@ func TestApplyCorpusCoversEveryVariant(t *testing.T) {
 	}
 }
 
+// TestGolemProfileResultsRoundTripTheContract closes the gap
+// TestSettingsApplyContractCorpus leaves open: that test only ever DECODES
+// corpus bytes into the production types, so it can never catch a producer
+// whose own MARSHALED output the same contract would reject. This test goes
+// the other direction — it builds every REACHABLE GolemProfileListResult and
+// GolemProfileSaveResult (the shapes the real producer can emit, never an
+// unreachable empty loaded/limited list — see the Profiles field comment on
+// GolemProfileListResult in profiles.go), marshals each with json.Marshal
+// (the same encoding/json the Wails runtime uses), and runs the resulting
+// bytes back through the exact three-layer contract path a fixture takes:
+// the structural check, then a strict decode, then the result validator.
+func TestGolemProfileResultsRoundTripTheContract(t *testing.T) {
+	curated := ProfileInfo{
+		ID: "curated/local", Description: "Vetted local llama-swap lineup",
+		Curated: true, Revision: testSettingsRevision,
+	}
+	user := ProfileInfo{ID: "user/mine", Curated: false}
+
+	listCases := map[string]GolemProfileListResult{
+		"loaded":      {Status: "loaded", Profiles: []ProfileInfo{curated, user}},
+		"limited":     {Status: "limited", Profiles: []ProfileInfo{curated, user}},
+		"diagnostics": {Status: "diagnostics", Diagnostics: []ProfileDiagnostic{{Code: "io"}}},
+	}
+	for name, result := range listCases {
+		t.Run("list/"+name, func(t *testing.T) {
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := profileListStructuralCheck(raw); err != nil {
+				t.Fatalf("structural check rejected published output: %v (%s)", err, raw)
+			}
+			var decoded GolemProfileListResult
+			if err := strictDecodeFixture(raw, &decoded); err != nil {
+				t.Fatalf("strict decode rejected published output: %v (%s)", err, raw)
+			}
+			if err := validateGolemProfileListResult(decoded); err != nil {
+				t.Fatalf("validator rejected published output: %v (%s)", err, raw)
+			}
+		})
+	}
+
+	saveCases := map[string]GolemProfileSaveResult{
+		"saved": {Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: testSettingsRevision}},
+		"saved-with-warning": {
+			Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: testSettingsRevision},
+			Warning: "durability_uncertain",
+		},
+		"conflict":    {Status: "conflict", Conflict: "active_revision"},
+		"diagnostics": {Status: "diagnostics", Diagnostics: []ProfileDiagnostic{{Code: "profile_limit"}}},
+	}
+	for name, result := range saveCases {
+		t.Run("save/"+name, func(t *testing.T) {
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := profileSaveResultStructuralCheck(raw); err != nil {
+				t.Fatalf("structural check rejected published output: %v (%s)", err, raw)
+			}
+			var decoded GolemProfileSaveResult
+			if err := strictDecodeFixture(raw, &decoded); err != nil {
+				t.Fatalf("strict decode rejected published output: %v (%s)", err, raw)
+			}
+			if err := validateGolemProfileSaveResult(decoded); err != nil {
+				t.Fatalf("validator rejected published output: %v (%s)", err, raw)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Focused request-validation tests: the boundary rules the corpus states as
 // verdicts, restated as behavior with an explicit expectation.
