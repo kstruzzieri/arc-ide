@@ -44,7 +44,11 @@
 
 /* ── masthead ───────────────────────────────────────────────────────────── */
 
+/* `position: relative` is load-bearing, not decoration: the Configuration
+   menu's panel positions against the MASTHEAD rather than its own trigger, so
+   the panel's `max-width` resolves against the pane width (see .menuPanel). */
 .masthead {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -141,6 +145,105 @@
   border-color: transparent;
   background-color: transparent;
   color: var(--text-secondary);
+}
+
+/* ── configuration menu (§4.8) ──────────────────────────────────────────── */
+
+/* The panel positions against the MASTHEAD (which carries `position: relative`
+   for exactly this), not the trigger span: its max-width then resolves against
+   the pane width, so a 200px pane — and the same pane at 200% zoom, where CSS
+   pixels scale uniformly — can never be outgrown. No fixed min-width for the
+   same reason. */
+.menuRoot {
+  display: inline-flex;
+}
+
+.menuPanel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 30;
+  width: max-content;
+  min-width: 0;
+  max-width: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-panel);
+}
+
+.menuItem,
+.menuSubItem {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.menuItem:hover:not(:disabled),
+.menuSubItem:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.menuItem:focus-visible,
+.menuSubItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.menuItem:disabled,
+.menuSubItem:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.menuSubItem {
+  padding-left: 24px;
+}
+
+.menuHint {
+  margin: 0;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.menuForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.menuNameRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menuNamePrefix {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.menuNameInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.menuActions {
+  display: inline-flex;
+  gap: 6px;
 }
 
 /* ── status: dot + text, never a bordered pill ──────────────────────────── */

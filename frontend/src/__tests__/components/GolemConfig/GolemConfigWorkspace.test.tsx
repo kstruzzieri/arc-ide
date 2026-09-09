@@ -128,6 +128,15 @@ describe('GolemConfig stylesheet', () => {
     const select = css().match(/^select\.input \{[^}]*\}/m)?.[0] ?? '';
     expect(select).toMatch(/appearance: none/);
   });
+
+  it('the configuration menu panel can never outgrow its pane', () => {
+    const text = css();
+    const panel = text.match(/\.menuPanel\s*\{[^}]*\}/)?.[0] ?? '';
+    // Pane-relative clamp (the masthead is the positioned ancestor) and no
+    // fixed floor: a 200px pane, at 100% or 200% zoom, always fits the panel.
+    expect(panel).toContain('max-width: calc(100% - 16px)');
+    expect(panel).not.toMatch(/min-width:\s*[1-9]/);
+  });
 });
 
 describe('GolemConfigWorkspace', () => {

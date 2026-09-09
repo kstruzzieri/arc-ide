@@ -36,6 +36,7 @@ import {
   LoadGolemProfile,
   PrepareGolemDestinationGrants,
   ReloadGolemSettings,
+  SaveGolemProfileAs,
 } from '../../wails/bindings';
 import type { ai } from '../../wails/bindings';
 import {
@@ -57,6 +58,8 @@ import {
   parseDestinationGrantsResult,
   parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyResult,
   projectDraft,
   readActiveProfile,
@@ -74,17 +77,20 @@ import {
   type ConsentPromptIntent,
   type DestinationGrantsStatus,
   type DraftEvent,
+  type GolemProfileSaveResult,
   type ProfileDraftProjection,
   type SettingsApplyRequest,
   type SettingsApplyResult,
 } from '../../types/golemConfig';
 import { formatProfileDiagnostic, formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { ApplyBar, type EditorFocusRequest } from './ApplyBar';
+import { ConfigurationMenu, type AcquireRevisionOutcome } from './ConfigurationMenu';
 import { registerConfigCloseHandler, type ConfigCloseIntent } from './configCloseGuard';
 import styles from './GolemConfig.module.css';
 import {
   APPLIED_SOURCE_VALUE,
   BLANK_SOURCE_VALUE,
+  LIST_LIMITED_COPY,
   TRANSPORT_UNAVAILABLE_COPY,
   buildProfileSelectModel,
   sourceSelectValue,
@@ -132,9 +138,6 @@ const EDITING_UNAVAILABLE: Partial<Record<SettingsProjection['state'], string>> 
 /** The CAS token is 64 hex characters; the head identifies a revision at a
  * glance and the full value stays available on hover. */
 const REVISION_HEAD = 12;
-
-/** Slice B invokes the profile loader for this one fixed bootstrap CTA (§5.3). */
-const CURATED_PROFILE = 'curated/local';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -340,6 +343,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [outcome, setOutcome] = useState<WriteOutcome>(NO_OUTCOME);
   /** The grant-only action's own line. It never speaks about the draft. */
   const [grantNotice, setGrantNotice] = useState('');
+  /**
+   * True while a profile Save (or its collider acquisition) is in flight.
+   * Deliberately separate from `sending`: a Save runs OUTSIDE the
+   * `beginOperation` gate — it never touches the draft — so it disables the
+   * other profile actions (§4.8) without freezing the settings write path.
+   */
+  const [saving, setSaving] = useState(false);
   /** True while an Apply/Confirm/Cancel owns the surface (§3.3). */
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -348,9 +358,27 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** The exact request Confirm and Retry resend: Call 1 retained none of it. */
   const pendingRequestRef = useRef<SettingsApplyRequest | null>(null);
-  /** The settings RPC an app-close handshake must wait out (§4.6a). */
+  /** The writes an app-close handshake must wait out (§4.6a, §5.5). */
   const writeRef = useRef<Promise<void>>(Promise.resolve());
   const answerRef = useRef<((ok: boolean) => void) | null>(null);
+
+  /**
+   * §5.5 close-wait registration that COMPOSES. The shipped writeRef is a
+   * single slot, and Save runs OUTSIDE the beginOperation gate, so it can
+   * overlap a settings RPC — a plain assignment would let the later RPC's
+   * completion release the close handshake while Save is still in flight.
+   * Every registration folds into the ref instead, so `await writeRef.current`
+   * awaits every outstanding write registered SO FAR — a write registered
+   * DURING that await is not in the awaited promise, which is why the close
+   * handler drains in a loop (below) instead of awaiting once.
+   */
+  const registerWrite = (run: Promise<unknown>): void => {
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    );
+    writeRef.current = Promise.all([writeRef.current, settled]).then(() => undefined);
+  };
 
   const invalidateLoads = useCallback(() => {
     generation.current += 1;
@@ -588,7 +616,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         endOperation();
       }
     })();
-    writeRef.current = run.then(() => undefined);
+    registerWrite(run);
     return run;
   };
 
@@ -621,8 +649,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     hasUnsavedWork: () => unsavedRef.current,
     confirm: async (intent: ConfigCloseIntent): Promise<boolean> => {
       // The backend has torn down nothing yet, so waiting out an in-flight
-      // settings RPC is safe and is what §4.6a requires before any decision.
-      await writeRef.current.catch(() => undefined);
+      // write is safe and is what §4.6a requires before any decision.
+      //
+      // §5.5: drain until stable. A write registered while this loop was
+      // awaiting is not in `pending`, so re-await until the set is empty AND
+      // unchanged across one settle — the same register/await/re-check idiom
+      // the backend close machine uses. Terminates: every extra iteration
+      // consumes a registration made during the previous await.
+      for (;;) {
+        const pending = writeRef.current;
+        await pending.catch(() => undefined);
+        if (writeRef.current === pending) break;
+      }
       if (!unsavedRef.current) return true; // clean: acknowledge, no dialog
       const confirmLabel = intent === 'quit' ? 'Discard & quit' : 'Discard & close';
       const ok = await clearForTransitionRef.current(
@@ -730,18 +768,6 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const startFromProfile = async () => {
-    if (
-      unsavedRef.current &&
-      !(await clearForTransition(
-        'Discard your staged changes and switch source?',
-        'Discard & switch'
-      ))
-    )
-      return;
-    await adoptProfile(CURATED_PROFILE, false);
-  };
-
   const startBlank = async () => {
     if (
       unsavedRef.current &&
@@ -776,6 +802,59 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       return;
     }
     await adoptProfile(value, false);
+  };
+
+  /**
+   * §4.8: Save never touches the staged draft, the ancestry record, or the
+   * KeyVault — no settle, no provenance write, no vault access. It registers
+   * in the §5.5 close-wait set through registerWrite, so the close handshake
+   * waits it out alongside any settings RPC. The revisions come from the
+   * CALLER (the menu freezes the confirmed overwrite tuple — controller
+   * ruling, plan header): this function never substitutes the live projection
+   * revision into a confirmed request. The outbound request is validated by
+   * the same parser that guards inbound payloads.
+   */
+  const saveProfileAs = (
+    id: string,
+    revisions: { appliedRevision: string; expectedRevision?: string }
+  ): Promise<GolemProfileSaveResult> => {
+    const request = parseSaveGolemProfileAsRequest({
+      id,
+      appliedRevision: revisions.appliedRevision,
+      ...(revisions.expectedRevision === undefined
+        ? {}
+        : { expectedRevision: revisions.expectedRevision }),
+    });
+    setSaving(true);
+    const run = (async () => {
+      try {
+        const result = parseGolemProfileSaveResult(await SaveGolemProfileAs(request as never));
+        if (result.status === 'saved') void refreshProfileList();
+        return result;
+      } finally {
+        setSaving(false);
+      }
+    })();
+    registerWrite(run);
+    return run;
+  };
+
+  /** §4.8 acquisition: read the collider's raw revision WITHOUT staging it —
+   *  no draft, preview, or source change; adoptProfile is never called. It
+   *  holds `saving` for its duration so the acquisition leg of the save flow
+   *  disables the other profile actions like the RPC legs do. */
+  const acquireProfileRevision = async (id: string): Promise<AcquireRevisionOutcome> => {
+    setSaving(true);
+    try {
+      const result = parseGolemProfileLoadResult(await LoadGolemProfile(id));
+      return result.status === 'loaded'
+        ? { kind: 'revision', revision: result.sourceRevision }
+        : { kind: 'unloadable' };
+    } catch {
+      return { kind: 'transport' };
+    } finally {
+      setSaving(false);
+    }
   };
 
   // -------------------------------------------------------------------------
@@ -868,7 +947,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         endOperation();
       }
     })();
-    writeRef.current = run;
+    registerWrite(run);
   };
 
   const dispatchRequest = (request: SettingsApplyRequest): void => {
@@ -944,7 +1023,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         endOperation();
       }
     })();
-    writeRef.current = run;
+    registerWrite(run);
   };
 
   /** Call 1, fresh on every click: there is no subscription to keep it warm. */
@@ -1071,6 +1150,36 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const locked =
     inFlight || sourceLoading || sending || recovery || outcome.busy || outcome.challenge !== null;
   const sourceLocked = inFlight || sourceLoading || sending || recovery || outcome.busy;
+
+  const listLimited = profileList.kind === 'limited';
+  // Two refusals on purpose: the STATE refusal blocks every Save (create and
+  // overwrite alike), while the LIMIT refusal blocks only creation — §5.6
+  // keeps replacement by exact id/revision available while the list is
+  // limited, and the menu's Overwrite gates on saveRefusal alone.
+  const saveRefusal =
+    projection === null || projection.state !== 'ready' || projection.revision === undefined
+      ? 'Save needs a Ready applied configuration.'
+      : '';
+  const createRefusal = listLimited ? 'Too many profiles exist to create another.' : '';
+  const startRefusal =
+    projection !== null && (projection.state === 'invalid' || projection.state === 'limited')
+      ? 'Unavailable while the configuration is Invalid or Limited.'
+      : listLimited
+        ? LIST_LIMITED_COPY
+        : '';
+  const curatedEntries =
+    profileList.kind === 'loaded' || profileList.kind === 'limited'
+      ? profileList.profiles
+          .filter((row) => row.curated)
+          .map((row) => ({ id: row.id, label: row.id.slice(row.id.indexOf('/') + 1) }))
+      : [];
+  const curatedNotice =
+    profileList.kind === 'unavailable'
+      ? profileList.message
+      : profileList.kind === 'unloaded'
+        ? TRANSPORT_UNAVAILABLE_COPY
+        : '';
+
   const changeCount = draftChangeCount(draft);
   // Editing needs a document that is both loaded and writable. A profile or
   // blank source supplies its own: the draft is layered on THAT preview.
@@ -1159,7 +1268,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   id="golem-profile-select"
                   className={styles.profileSelect}
                   value={selectModel.value}
-                  disabled={projection === null || sourceLocked}
+                  disabled={projection === null || sourceLocked || saving}
                   aria-describedby={
                     selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
                   }
@@ -1206,28 +1315,34 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </span>
             );
           })()}
-          {/* §4.1: profile management is absent, not disabled, in Slice B. The
-              fixed bootstrap CTAs are the sole exception (§4.6). */}
-          {projection?.state === 'missing' && !recovery && (
-            <>
-              <button
-                type="button"
-                className={styles.button}
-                disabled={sourceLocked}
-                onClick={() => void startFromProfile()}
-              >
-                Start from curated/local
-              </button>
-              <button
-                type="button"
-                className={styles.button}
-                disabled={sourceLocked}
-                onClick={() => void startBlank()}
-              >
-                Start blank
-              </button>
-            </>
-          )}
+          {/*
+           * §4.8: the one naming flow and the two bootstrap actions, behind a
+           * single menu. `disabled` composes the SHIPPED lock conditions:
+           * `sourceLocked` covers write/busy/recovery/in-flight, `locked`
+           * additionally freezes the surface while a consent challenge holds
+           * the visible request, and `outcome.drops !== null` is named
+           * EXPLICITLY because `locked` does not include the drop panel —
+           * which holds the visible request the same way a challenge does, and
+           * a Start action would settle the draft out from under it. The
+           * SELECT above keeps the narrower `sourceLocked || saving`: a source
+           * switch is a §4.6a cancel-then-transition path, and the dirty-draft
+           * guard intercepts it while a challenge or drop set stands.
+           */}
+          <ConfigurationMenu
+            curated={curatedEntries}
+            curatedNotice={curatedNotice}
+            saveRefusal={saveRefusal}
+            createRefusal={createRefusal}
+            startRefusal={startRefusal}
+            disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
+            saving={saving}
+            appliedRevision={projection?.revision}
+            onOpen={() => void refreshProfileList()}
+            onStartFromProfile={(id) => void selectSource(id)}
+            onStartBlank={() => void startBlank()}
+            saveProfileAs={saveProfileAs}
+            acquireProfileRevision={acquireProfileRevision}
+          />
           {recovery ? (
             <button
               type="button"

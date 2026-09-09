@@ -31,6 +31,7 @@ jest.mock('../../../wails/bindings', () => ({
   CancelGolemSettingsApply: jest.fn(),
   ConfirmGolemDestinationGrants: jest.fn(),
   PrepareGolemDestinationGrants: jest.fn(),
+  ListGolemProfiles: jest.fn(),
   LoadGolemProfile: jest.fn(),
 }));
 import {
@@ -39,6 +40,7 @@ import {
   ConfirmGolemDestinationGrants,
   ConfirmGolemSettingsApply,
   CreateGolemSettings,
+  ListGolemProfiles,
   LoadGolemProfile,
   PrepareGolemDestinationGrants,
   ReloadGolemSettings,
@@ -125,6 +127,19 @@ const loadedProfile = {
   },
 };
 
+/**
+ * §4.8: the curated submenu lists whatever the live list projection carries, so
+ * the menu has no rows at all without a list result — this is what makes
+ * `startCuratedViaMenu` below reach `curated/local`.
+ */
+const profileListResult = () => ({
+  status: 'loaded',
+  profiles: [
+    { id: 'curated/local', description: 'Vetted local lineup', curated: true },
+    { id: 'user/mine', curated: false },
+  ],
+});
+
 const destination = (over: Record<string, unknown> = {}) => ({
   provider: 'hosted',
   model: 'gpt-5-mini',
@@ -176,6 +191,26 @@ async function declareModel(name: string) {
 
 const clickApply = async () => await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
+/**
+ * §4.8 replaced the two fixed Missing-state CTAs with the Configuration menu.
+ * Every former `Start from curated/local` / `Start blank` interaction routes
+ * through these instead; the menu closes behind the choice, so each helper is
+ * a complete open-choose cycle.
+ */
+const openConfigMenu = async () =>
+  await userEvent.click(screen.getByRole('button', { name: 'Configuration' }));
+
+const startBlankViaMenu = async () => {
+  await openConfigMenu();
+  await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+};
+
+const startCuratedViaMenu = async () => {
+  await openConfigMenu();
+  await userEvent.click(screen.getByRole('button', { name: 'Start from curated' }));
+  await userEvent.click(screen.getByRole('button', { name: 'local' }));
+};
+
 /** Stages one provider-key-set on `hosted`, the change every key assertion uses. */
 async function stageKey(): Promise<void> {
   await openProvider();
@@ -220,6 +255,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   reload();
+  (ListGolemProfiles as jest.Mock).mockResolvedValue(profileListResult());
   (CancelGolemSettingsApply as jest.Mock).mockResolvedValue({ status: 'cancelled' });
 });
 
@@ -1383,28 +1419,36 @@ describe('unsaved-work transitions', () => {
 // Bootstrap (state = missing)
 // ---------------------------------------------------------------------------
 
-describe('bootstrap CTAs', () => {
+describe('bootstrap through the Configuration menu', () => {
   beforeEach(() => {
     reload(missingProjection);
     (LoadGolemProfile as jest.Mock).mockResolvedValue(loadedProfile);
   });
 
-  it('offers exactly the two fixed starting points and no profile picker', async () => {
+  // The `no profile picker` clause this test used to carry is gone on purpose:
+  // Slice C ships the masthead source select, so asserting its absence would
+  // now be a lie. What replaces it is the §4.8 rule that actually holds here —
+  // Save refuses without a Ready applied configuration, while both Start
+  // actions bootstrap it. (The select's own Missing-state shape is pinned by
+  // GolemConfigProfiles.test.tsx.)
+  it('offers both starting points inside the menu and refuses Save while Missing', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByRole('button', { name: 'Start from curated/local' });
+    await screen.findByText(/nothing is written until you Apply/);
+    await openConfigMenu();
     const masthead = screen.getByTestId('golem-config-masthead');
 
-    expect(
-      within(masthead).getByRole('button', { name: 'Start from curated/local' })
-    ).toBeEnabled();
+    expect(within(masthead).getByRole('button', { name: 'Start from curated' })).toBeEnabled();
     expect(within(masthead).getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(screen.queryByRole('combobox', { name: /profile/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/nothing is written until you Apply/)).toBeVisible();
+    expect(
+      within(masthead).getByRole('button', { name: 'Save applied as profile…' })
+    ).toBeDisabled();
+    expect(screen.getByText('Save needs a Ready applied configuration.')).toBeVisible();
   });
 
   it('loads the curated profile as the draft source and paints its rows as pending', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
 
     expect(await screen.findByTestId('provider-row-hosted')).toBeInTheDocument();
@@ -1421,10 +1465,14 @@ describe('bootstrap CTAs', () => {
         })
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
 
-    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    // The menu closed behind the choice, and the pending load locks the whole
+    // surface — so it cannot be reopened at all, which subsumes the two former
+    // CTAs' own disabled attributes.
+    expect(screen.getByRole('button', { name: 'Configuration' })).toBeDisabled();
+    expect(screen.getByLabelText('Configuration source')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
 
     settleProfile(loadedProfile);
@@ -1440,9 +1488,15 @@ describe('bootstrap CTAs', () => {
         })
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    const profile = await screen.findByRole('button', { name: 'Start from curated/local' });
+    await screen.findByText(/nothing is written until you Apply/);
+    await openConfigMenu();
+    await userEvent.click(screen.getByRole('button', { name: 'Start from curated' }));
+    const profile = screen.getByRole('button', { name: 'local' });
     const blank = screen.getByRole('button', { name: 'Start blank' });
 
+    // Both handlers run against the SAME render — the menu's own close and the
+    // source lock both land only on the next one — so this is exactly the
+    // double-dispatch the two fixed CTAs could produce.
     act(() => {
       fireEvent.click(profile);
       fireEvent.click(blank);
@@ -1461,7 +1515,12 @@ describe('bootstrap CTAs', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps source switches reachable during consent and locks them during cancellation', async () => {
+  // §4.8 freezes the Configuration MENU while a consent challenge holds the
+  // visible request — the menu also carries the Save flow, which the request
+  // has no business reaching. The SELECT keeps the narrower source lock,
+  // because a source switch is a §4.6a cancel-then-transition path, so that is
+  // where "reachable during consent" is now proved.
+  it('keeps a source switch reachable during consent and locks it during cancellation', async () => {
     let settleCancel!: (value: unknown) => void;
     (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
       status: 'consent_required',
@@ -1474,14 +1533,17 @@ describe('bootstrap CTAs', () => {
         })
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+    expect(screen.getByRole('button', { name: 'Configuration' })).toBeDisabled();
+    expect(select).toBeEnabled();
+
+    await userEvent.selectOptions(select, 'applied');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1489,18 +1551,24 @@ describe('bootstrap CTAs', () => {
     );
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
 
-    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    expect(select).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Configuration' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
 
     settleCancel({ status: 'cancelled' });
-    expect(
-      await screen.findByRole('button', { name: 'source → blank configuration' })
-    ).toBeVisible();
+    await waitFor(() => expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument());
+    expect(select.value).toBe('applied');
   });
 
+  // The one test in this describe that starts from a LOADED document. The
+  // switch that cancels the consent has to come through the select (the menu
+  // is frozen while a challenge stands), and the select only lists profiles
+  // when the document is Ready — while Missing it shows the applied-absent
+  // state alone (§4.8). The profile source itself is still adopted through the
+  // menu, so the bootstrap path is the one under test either way.
   it('clears cancelled consent before a replacement profile load can fail', async () => {
+    reload(readyProjection);
     let rejectProfile!: (reason: unknown) => void;
     (LoadGolemProfile as jest.Mock)
       .mockResolvedValueOnce(loadedProfile)
@@ -1511,18 +1579,16 @@ describe('bootstrap CTAs', () => {
           })
       )
       .mockResolvedValueOnce(loadedProfile);
-    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
-      status: 'consent_required',
-      challenge: challenge(),
-    });
-    render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    await mountWorkspace();
+    await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
     await stageKey();
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+    await userEvent.selectOptions(select, 'user/mine');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1543,22 +1609,22 @@ describe('bootstrap CTAs', () => {
     expect(screen.queryByRole('button', { name: 'Cancel approval' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
-    // §4.8: the failed reload above restored the PRIOR source — still
-    // curated/local, since this was a reload of the same profile — with its
-    // clean preview. A profile source is inherently unsaved (draftChangeCount
-    // counts a non-applied source as one change), so the guard intercepts
-    // this next switch too.
+    // §4.8: the failed load above restored the PRIOR source — still
+    // curated/local — with its clean preview. A profile source is inherently
+    // unsaved (draftChangeCount counts a non-applied source as one change), so
+    // the guard intercepts this next switch too, and the third load resolves
+    // onto curated/local again.
+    await userEvent.selectOptions(select, 'user/mine');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
       })
     );
     await screen.findByRole('button', { name: 'source → curated/local' });
-    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({ status: 'busy' });
+    applyReturns({ status: 'busy' });
     await clickApply();
     await screen.findByRole('button', { name: 'Retry' });
-    expect((CreateGolemSettings as jest.Mock).mock.calls.at(-1)?.[0].keys).toEqual({});
+    expect(lastApply().keys).toEqual({});
   });
 
   // The curated bootstrap end to end. The loaded, scrubbed profile document IS
@@ -1570,7 +1636,8 @@ describe('bootstrap CTAs', () => {
       projection: { ...readyProjection, revision: movedRevision },
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
 
     expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
@@ -1602,7 +1669,8 @@ describe('bootstrap CTAs', () => {
   // the whole handle: reopen it, correct it, or take it back.
   it('reopens a staged provider-add on its staged values and re-stages a correction', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
@@ -1642,7 +1710,8 @@ describe('bootstrap CTAs', () => {
 
   it('unstages a provider-add from its own strip', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
@@ -1669,7 +1738,8 @@ describe('bootstrap CTAs', () => {
   // remounts the cards too, so a standing chip request must not ride along.
   it('does not replay a chip click across a bootstrap source switch', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
@@ -1680,7 +1750,7 @@ describe('bootstrap CTAs', () => {
     await userEvent.click(screen.getByRole('button', { name: 'local → new provider' }));
     expect(screen.getByRole('group', { name: 'Staged provider local' })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await startCuratedViaMenu();
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1695,7 +1765,8 @@ describe('bootstrap CTAs', () => {
   it('creates from a blank builder once the bootstrap inputs are complete', async () => {
     (CreateGolemSettings as jest.Mock).mockResolvedValue({ status: 'busy' });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
     expect(
       await screen.findByRole('button', { name: 'source → blank configuration' })
     ).toBeVisible();
