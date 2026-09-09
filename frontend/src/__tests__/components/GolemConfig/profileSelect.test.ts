@@ -1,0 +1,207 @@
+import {
+  APPLIED_SOURCE_VALUE,
+  BLANK_SOURCE_VALUE,
+  buildProfileSelectModel,
+  type ProfileListState,
+} from '../../../components/GolemConfig/profileSelect';
+
+const REV_A = 'a'.repeat(64);
+const REV_B = 'b'.repeat(64);
+
+const loadedList: ProfileListState = {
+  kind: 'loaded',
+  profiles: [
+    { id: 'curated/local', description: 'Vetted local lineup', curated: true, revision: REV_A },
+    { id: 'user/mine', curated: false },
+  ],
+};
+
+describe('buildProfileSelectModel', () => {
+  it('derives the value from the source alone', () => {
+    const base = {
+      list: loadedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready' as const,
+    };
+    expect(buildProfileSelectModel({ ...base, source: { kind: 'applied' } }).value).toBe(
+      APPLIED_SOURCE_VALUE
+    );
+    expect(buildProfileSelectModel({ ...base, source: { kind: 'blank' } }).value).toBe(
+      BLANK_SOURCE_VALUE
+    );
+    expect(
+      buildProfileSelectModel({
+        ...base,
+        source: { kind: 'profile', profileId: 'user/mine', sourceRevision: REV_B },
+      }).value
+    ).toBe('user/mine');
+  });
+
+  it('a list refresh never changes the selected source', () => {
+    const source = { kind: 'profile', profileId: 'user/mine', sourceRevision: REV_B } as const;
+    const before = buildProfileSelectModel({
+      source,
+      list: { kind: 'unloaded' },
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    const after = buildProfileSelectModel({
+      source,
+      list: loadedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(before.value).toBe('user/mine');
+    expect(after.value).toBe('user/mine');
+  });
+
+  it('renders ancestry on the applied option, with the modified marker on divergence', () => {
+    const provenance = { version: 1 as const, profileId: 'user/mine', appliedRevision: REV_A };
+    const same = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list: loadedList,
+      provenance,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(same.applied.label).toBe('Applied configuration — user/mine');
+    const diverged = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list: loadedList,
+      provenance,
+      appliedRevision: REV_B,
+      state: 'ready',
+    });
+    expect(diverged.applied.label).toBe('Applied configuration — user/mine · modified');
+  });
+
+  it('shows only the applied-absent state while Missing: no optgroup rows at all', () => {
+    const model = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list: loadedList,
+      provenance: null,
+      state: 'missing',
+    });
+    expect(model.applied.label).toBe('No applied configuration');
+    // §4.8: bootstrap goes through the menu's Start actions, never the select.
+    expect(model.curated).toEqual([]);
+    expect(model.yours).toEqual([]);
+    expect(model.retained).toBeNull();
+    expect(model.blank).toBeNull();
+  });
+
+  it('a Start-staged draft while Missing still names its source, optgroups stay absent', () => {
+    const staged = buildProfileSelectModel({
+      source: { kind: 'profile', profileId: 'curated/local', sourceRevision: REV_A },
+      list: loadedList,
+      provenance: null,
+      state: 'missing',
+    });
+    expect(staged.value).toBe('curated/local');
+    expect(staged.curated).toEqual([]);
+    expect(staged.yours).toEqual([]);
+    // The bare slug, disabled, WITHOUT the unavailable marker: the list still
+    // carries curated/local, so nothing proved absence — the option only
+    // represents the staged source truthfully.
+    expect(staged.retained).toEqual({ value: 'curated/local', label: 'local', disabled: true });
+    expect(staged.description).toBe('Vetted local lineup');
+
+    const blank = buildProfileSelectModel({
+      source: { kind: 'blank' },
+      list: loadedList,
+      provenance: null,
+      state: 'missing',
+    });
+    expect(blank.value).toBe(BLANK_SOURCE_VALUE);
+    expect(blank.blank).toEqual({
+      value: BLANK_SOURCE_VALUE,
+      label: 'Blank draft',
+      disabled: false,
+    });
+    expect(blank.curated).toEqual([]);
+  });
+
+  it('lists the blank draft option only while the draft is blank', () => {
+    const blank = buildProfileSelectModel({
+      source: { kind: 'blank' },
+      list: loadedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(blank.blank).toEqual({
+      value: BLANK_SOURCE_VALUE,
+      label: 'Blank draft',
+      disabled: false,
+    });
+    const applied = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list: loadedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(applied.blank).toBeNull();
+  });
+
+  it('groups curated and user rows by slug and surfaces the selected description', () => {
+    const model = buildProfileSelectModel({
+      source: { kind: 'profile', profileId: 'curated/local', sourceRevision: REV_A },
+      list: loadedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(model.curated).toEqual([{ value: 'curated/local', label: 'local', disabled: false }]);
+    expect(model.yours).toEqual([{ value: 'user/mine', label: 'mine', disabled: false }]);
+    expect(model.description).toBe('Vetted local lineup');
+  });
+
+  it('disables profile options while the projection is Invalid or Limited', () => {
+    for (const state of ['invalid', 'limited'] as const) {
+      const model = buildProfileSelectModel({
+        source: { kind: 'applied' },
+        list: loadedList,
+        provenance: null,
+        state,
+      });
+      expect(model.curated[0].disabled).toBe(true);
+      expect(model.yours[0].disabled).toBe(true);
+    }
+  });
+
+  it('retains a selected profile missing from a refreshed list, marked unavailable', () => {
+    const model = buildProfileSelectModel({
+      source: { kind: 'profile', profileId: 'user/gone', sourceRevision: REV_B },
+      list: loadedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(model.value).toBe('user/gone');
+    expect(model.retained).toEqual({
+      value: 'user/gone',
+      label: 'gone (unavailable)',
+      disabled: true,
+    });
+  });
+
+  it('retains the selected profile without the marker while the list is unproven', () => {
+    for (const list of [
+      { kind: 'unloaded' } as const,
+      { kind: 'unavailable', message: 'x' } as const,
+    ]) {
+      const model = buildProfileSelectModel({
+        source: { kind: 'profile', profileId: 'user/mine', sourceRevision: REV_B },
+        list,
+        provenance: null,
+        appliedRevision: REV_A,
+        state: 'ready',
+      });
+      expect(model.retained).toEqual({ value: 'user/mine', label: 'mine', disabled: true });
+    }
+  });
+});
