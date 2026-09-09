@@ -90,7 +90,6 @@ import styles from './GolemConfig.module.css';
 import {
   APPLIED_SOURCE_VALUE,
   BLANK_SOURCE_VALUE,
-  LIST_LIMITED_COPY,
   TRANSPORT_UNAVAILABLE_COPY,
   buildProfileSelectModel,
   sourceSelectValue,
@@ -1161,12 +1160,16 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       ? 'Save needs a Ready applied configuration.'
       : '';
   const createRefusal = listLimited ? 'Too many profiles exist to create another.' : '';
+  // startRefusal deliberately ignores listLimited (Ruling 13): §5.6 scopes the
+  // profile-count limit to CREATION, never to the Start actions. Start blank
+  // is purely local and never reads the store, and the curated block always
+  // sorts inside the first maxProjectionEntries rows, so "Start from curated"
+  // has its rows regardless of the limit — a limited list must never leave a
+  // Missing-state user with zero bootstrap path.
   const startRefusal =
     projection !== null && (projection.state === 'invalid' || projection.state === 'limited')
       ? 'Unavailable while the configuration is Invalid or Limited.'
-      : listLimited
-        ? LIST_LIMITED_COPY
-        : '';
+      : '';
   const curatedEntries =
     profileList.kind === 'loaded' || profileList.kind === 'limited'
       ? profileList.profiles

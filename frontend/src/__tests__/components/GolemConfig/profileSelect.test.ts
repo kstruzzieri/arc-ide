@@ -196,6 +196,27 @@ describe('buildProfileSelectModel', () => {
     });
   });
 
+  // Fix for the review finding: `limited`'s rows are only the first
+  // maxProjectionEntries in ID order — a source past the cap EXISTS and is
+  // simply not shown, so a limited list proves nothing about absence. Only a
+  // fully `loaded` list (the test above) may earn the marker.
+  it('retains a selected profile missing from a LIMITED list without the marker', () => {
+    const limitedList: ProfileListState = { kind: 'limited', profiles: loadedList.profiles };
+    const model = buildProfileSelectModel({
+      source: { kind: 'profile', profileId: 'user/gone', sourceRevision: REV_B },
+      list: limitedList,
+      provenance: null,
+      appliedRevision: REV_A,
+      state: 'ready',
+    });
+    expect(model.value).toBe('user/gone');
+    expect(model.retained).toEqual({
+      value: 'user/gone',
+      label: 'gone',
+      disabled: true,
+    });
+  });
+
   it('retains the selected profile without the marker while the list is unproven', () => {
     for (const list of [
       { kind: 'unloaded' } as const,

@@ -60,6 +60,11 @@ const SAVE_COLLIDER_UNREADABLE =
 const SAVE_OUTCOME_UNKNOWN =
   'The save result is unknown — the profile may already exist. Refresh the profile list before saving again.';
 
+// Focus targets for the step-transition effect below — named once so the
+// effect and the elements that carry the ids cannot drift apart.
+const OVERWRITE_CONFIRM_ID = 'golem-profile-overwrite-confirm';
+const NOTICE_DONE_ID = 'golem-profile-notice-done';
+
 type SaveStep =
   | { step: 'idle' }
   | { step: 'naming'; slug: string; fieldError: string }
@@ -122,6 +127,19 @@ export function ConfigurationMenu({
   appliedRevisionRef.current = appliedRevision;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLSpanElement>(null);
+  /**
+   * The announcement channel for the visible notice text, mirroring
+   * RoutingCard's `announcement` state (line ~144 there). The live region it
+   * feeds is rendered UNCONDITIONALLY below, outside `open &&` — a region
+   * inserted together with its text is generally not announced by assistive
+   * technology, so it must pre-exist for the menu's whole lifetime and only
+   * then receive text. This is an announcement CHANNEL only: the visible
+   * notice copy stays exactly where it was.
+   */
+  const [announcement, setAnnouncement] = useState('');
+  /** A fresh object per request, so a repeated transition to the same step
+   *  focuses again (mirrors RoutingCard's `pendingFocus`). */
+  const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
 
   const invalidateFlow = () => {
     flowGeneration.current += 1;
@@ -156,6 +174,35 @@ export function ConfigurationMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Every notice, however it was produced (settleSaved, an active/target
+  // conflict, an unreadable collider, a transport rejection…), announces
+  // through this ONE effect rather than at each setSave call site — so no
+  // future notice-producing path can forget the announcement. Leaving the
+  // notice step clears it back to '', so a REPEATED identical notice text
+  // still registers as a change for assistive technology.
+  useEffect(() => {
+    setAnnouncement(save.step === 'notice' ? save.text : '');
+  }, [save]);
+
+  // A step transition currently drops focus to <body> — nothing moves it —
+  // so a keyboard user must Tab from the document start to reach the fresh
+  // control. Mirrors RoutingCard's pendingFocus + focus effect exactly:
+  // `setPendingFocus` is called SYNCHRONOUSLY alongside `setSave` at each
+  // entry point below (gotoNotice; the naming trigger; beginOverwrite) —
+  // never derived from a separate effect watching save.step. A derived
+  // effect adds a second render/commit hop between "the step changed" and
+  // "focus moved", and that extra hop raced a real keyboard interaction in
+  // testing: a `Refresh` keypress landed while the stolen focus was still
+  // in flight and silently hijacked it. Setting both states in the same
+  // synchronous block lets React batch them into ONE commit, so the
+  // consuming effect below runs focus() inside the SAME flush that puts the
+  // fresh step on screen.
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    document.getElementById(pendingFocus.elementId)?.focus();
+    setPendingFocus(null);
+  }, [pendingFocus]);
+
   // §4.8 availability, enforced on EVERY descendant and handler — not only the
   // trigger — so a restriction arriving while the popover is open (a list
   // refresh resolving limited, a projection transition) takes effect at once.
@@ -166,11 +213,20 @@ export function ConfigurationMenu({
   const overwriteBlocked = flowBusy || saveRefusal !== '';
   const startBlocked = flowBusy || startRefusal !== '';
 
+  /**
+   * Enters the notice step AND focuses Done, in one synchronous call — every
+   * notice-producing path below routes through this ONE function so none of
+   * them can forget the focus move (mirrors the announcement effect's "one
+   * place" rationale). See the pendingFocus effect above for why the two
+   * setters must land together rather than through a derived effect.
+   */
+  const gotoNotice = (text: string) => {
+    setSave({ step: 'notice', text });
+    setPendingFocus({ elementId: NOTICE_DONE_ID });
+  };
+
   const settleSaved = (result: Extract<GolemProfileSaveResult, { status: 'saved' }>) => {
-    setSave({
-      step: 'notice',
-      text: result.warning === undefined ? PROFILE_SAVED : PROFILE_SAVED_UNCERTAIN,
-    });
+    gotoNotice(result.warning === undefined ? PROFILE_SAVED : PROFILE_SAVED_UNCERTAIN);
   };
 
   /** §4.8: collision -> load WITHOUT staging, solely to capture the raw
@@ -187,7 +243,7 @@ export function ConfigurationMenu({
       // lapsing mid-acquisition gets the honest active-conflict copy.
       const applied = appliedRevisionRef.current;
       if (applied === undefined) {
-        setSave({ step: 'notice', text: SAVE_ACTIVE_CONFLICT });
+        gotoNotice(SAVE_ACTIVE_CONFLICT);
         return;
       }
       setSave({
@@ -197,12 +253,12 @@ export function ConfigurationMenu({
         appliedRevision: applied,
         notice,
       });
+      setPendingFocus({ elementId: OVERWRITE_CONFIRM_ID });
       return;
     }
-    setSave({
-      step: 'notice',
-      text: acquired.kind === 'unloadable' ? SAVE_COLLIDER_UNREADABLE : TRANSPORT_UNAVAILABLE_COPY,
-    });
+    gotoNotice(
+      acquired.kind === 'unloadable' ? SAVE_COLLIDER_UNREADABLE : TRANSPORT_UNAVAILABLE_COPY
+    );
   };
 
   const submitName = async (slug: string) => {
@@ -230,20 +286,20 @@ export function ConfigurationMenu({
           return;
         case 'conflict':
           if (result.conflict === 'active_revision') {
-            setSave({ step: 'notice', text: SAVE_ACTIVE_CONFLICT });
+            gotoNotice(SAVE_ACTIVE_CONFLICT);
             return;
           }
           await beginOverwrite(gen, slug, '');
           return;
         case 'diagnostics':
-          setSave({ step: 'notice', text: formatProfileDiagnostic(result.diagnostics[0]) });
+          gotoNotice(formatProfileDiagnostic(result.diagnostics[0]));
           return;
       }
     } catch {
       // §4.8: a transport-rejected Save has an UNKNOWN outcome — its own
       // recovery notice, and never an automatic retry.
       if (gen !== flowGeneration.current) return;
-      setSave({ step: 'notice', text: SAVE_OUTCOME_UNKNOWN });
+      gotoNotice(SAVE_OUTCOME_UNKNOWN);
     } finally {
       if (gen === flowGeneration.current) setPending(false);
     }
@@ -268,7 +324,7 @@ export function ConfigurationMenu({
           return;
         case 'conflict':
           if (result.conflict === 'active_revision') {
-            setSave({ step: 'notice', text: SAVE_ACTIVE_CONFLICT });
+            gotoNotice(SAVE_ACTIVE_CONFLICT);
             return;
           }
           // §4.8: a further conflict re-runs acquisition and requires a FRESH
@@ -279,12 +335,12 @@ export function ConfigurationMenu({
           await beginOverwrite(gen, frozen.slug, SAVE_TARGET_CONFLICT);
           return;
         case 'diagnostics':
-          setSave({ step: 'notice', text: formatProfileDiagnostic(result.diagnostics[0]) });
+          gotoNotice(formatProfileDiagnostic(result.diagnostics[0]));
           return;
       }
     } catch {
       if (gen !== flowGeneration.current) return;
-      setSave({ step: 'notice', text: SAVE_OUTCOME_UNKNOWN });
+      gotoNotice(SAVE_OUTCOME_UNKNOWN);
     } finally {
       if (gen === flowGeneration.current) setPending(false);
     }
@@ -310,6 +366,19 @@ export function ConfigurationMenu({
       >
         Configuration <span aria-hidden="true">▾</span>
       </button>
+      {/* #263 follow-up: rendered unconditionally (outside `open &&`) so this
+          region exists for the menu's WHOLE lifetime, not only from the
+          moment the notice step mounts — a region inserted together with its
+          text is generally not announced by assistive technology. */}
+      <span
+        className={styles.srOnly}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="golem-profile-menu-announcement"
+      >
+        {announcement}
+      </span>
       {open && (
         <div className={styles.menuPanel} role="group" aria-label="Configuration actions">
           {save.step === 'idle' && (
@@ -321,6 +390,7 @@ export function ConfigurationMenu({
                 onClick={() => {
                   if (createBlocked) return;
                   setSave({ step: 'naming', slug: '', fieldError: '' });
+                  setPendingFocus({ elementId: 'golem-profile-name' });
                 }}
               >
                 Save applied as profile…
@@ -445,6 +515,7 @@ export function ConfigurationMenu({
               <span className={styles.menuActions}>
                 <button
                   type="button"
+                  id={OVERWRITE_CONFIRM_ID}
                   className={styles.button}
                   disabled={overwriteBlocked}
                   onClick={() => void confirmOverwrite(save)}
@@ -466,10 +537,17 @@ export function ConfigurationMenu({
           )}
           {save.step === 'notice' && (
             <div className={styles.menuForm}>
-              <p className={styles.panelText} role="status">
-                {save.text}
-              </p>
-              <button type="button" className={styles.button} onClick={() => close(true)}>
+              {/* Visible copy only: the persistent region above (rendered for
+                  the menu's whole lifetime) is the one that announces — a
+                  region created together with its text, as this `<p>` was
+                  before, is generally not picked up by assistive technology. */}
+              <p className={styles.panelText}>{save.text}</p>
+              <button
+                type="button"
+                id={NOTICE_DONE_ID}
+                className={styles.button}
+                onClick={() => close(true)}
+              >
                 Done
               </button>
             </div>

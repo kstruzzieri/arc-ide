@@ -106,14 +106,15 @@ export function buildProfileSelectModel(args: BuildProfileSelectArgs): ProfileSe
   // §4.8: a selected profile absent from the RENDERED rows is retained as the
   // selected option — never a snap to a lie. The ` (unavailable)` marker
   // appears exactly when a proven list genuinely lacks it in its UNDERLYING
-  // rows; a Missing-state staged source the list still carries, or an
-  // unloaded/unavailable list, gets the bare slug — nothing proved absence.
+  // rows; a Missing-state staged source the list still carries, an
+  // unloaded/unavailable list, OR a limited list, gets the bare slug —
+  // `limited`'s rows are only the first maxProjectionEntries in ID order, so
+  // a source past the cap EXISTS and is simply not shown, which proves
+  // nothing about absence. Only a fully `loaded` list has scanned every row.
   // Either way the option is not re-choosable.
   let retained: ProfileSelectOption | null = null;
   if (source.kind === 'profile' && !listed.some((row) => row.id === source.profileId)) {
-    const provenAbsent =
-      (list.kind === 'loaded' || list.kind === 'limited') &&
-      !rows.some((row) => row.id === source.profileId);
+    const provenAbsent = list.kind === 'loaded' && !rows.some((row) => row.id === source.profileId);
     retained = {
       value: source.profileId,
       label: `${slugOf(source.profileId)}${provenAbsent ? ' (unavailable)' : ''}`,

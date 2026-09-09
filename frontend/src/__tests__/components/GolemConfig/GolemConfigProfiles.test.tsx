@@ -545,17 +545,23 @@ describe('Configuration menu', () => {
     expect(screen.getByRole('option', { name: 'Blank draft' })).toBeInTheDocument();
   });
 
-  it('refuses all three actions while the list is limited', async () => {
+  // Ruling 13: a limited list blocks CREATE only (§5.6 scopes the profile
+  // count limit to creation). Start blank is purely local and the curated
+  // block always sorts inside the first maxProjectionEntries rows, so both
+  // Start actions stay enabled — a limited list must never strand a
+  // Missing-state user with zero bootstrap path.
+  it('refuses create while the list is limited but leaves the Start actions enabled', async () => {
     // The parameterized helper mounts against the limited list directly — a
     // pre-set mock would be overwritten by the helper's own default.
     await mountReady(listResult({ status: 'limited' }));
     const user = userEvent.setup();
     await openMenu(user);
     expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
     expect(screen.getByText('Too many profiles exist to create another.')).toBeInTheDocument();
-    expect(screen.getByText('Too many profiles to display.')).toBeInTheDocument();
+    // The list-limited copy no longer gates Start at all.
+    expect(screen.queryByText('Too many profiles to display.')).not.toBeInTheDocument();
     // Selection of LISTED rows stays allowed (§4.8).
     const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
     expect(select).not.toBeDisabled();
@@ -981,6 +987,72 @@ describe('Configuration menu', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('button', { name: 'Start blank' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Configuration' })).toHaveFocus();
+  });
+
+  // Fix for the review finding: a `role="status"` mounted together with its
+  // text is generally never announced. The distinguishing proof against that
+  // bug is exactly this ordering — the channel must exist, empty, BEFORE any
+  // notice, and only then receive the text.
+  it('the announcement region exists before any notice and receives the notice text after', async () => {
+    (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
+      status: 'saved',
+      profile: { id: 'user/mine', revision: REV('c') },
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    // Pre-exists, empty — captured before any save action, the same node
+    // instance is checked again below (it is never unmounted).
+    const region = screen.getByTestId('golem-profile-menu-announcement');
+    expect(region).toHaveTextContent('');
+
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Profile saved.');
+    expect(region).toHaveTextContent('Profile saved.');
+  });
+
+  // Fix for the review finding: a step transition dropped focus to <body>,
+  // leaving a keyboard user to Tab from the document start. Mirrors
+  // RoutingCard's pendingFocus pattern.
+  it('focuses the name field on entering the naming step', async () => {
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    expect(screen.getByLabelText('Profile name')).toHaveFocus();
+  });
+
+  it('focuses the Overwrite confirm button on entering the overwrite step', async () => {
+    (SaveGolemProfileAs as jest.Mock).mockResolvedValueOnce({
+      status: 'conflict',
+      conflict: 'profile_target',
+    });
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText(/already exists/i);
+    expect(screen.getByRole('button', { name: 'Overwrite' })).toHaveFocus();
+  });
+
+  it('focuses Done on entering the notice step', async () => {
+    (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
+      status: 'saved',
+      profile: { id: 'user/mine', revision: REV('c') },
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Profile saved.');
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveFocus();
   });
 });
 
