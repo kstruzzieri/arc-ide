@@ -59,6 +59,7 @@ export const GOLEM_RAW_CALL_IDS = {
   GetGolemSettings: 3594143992,
   GetGolemStatus: 107712831,
   GetGolemWindowState: 180649870,
+  ListGolemProfiles: 2723764165,
   LoadGolemProfile: 1561429884,
   PrepareGolemDestinationGrants: 4086758063,
   ReloadGolemSettings: 1366669581,
@@ -100,6 +101,9 @@ export const GetGolemSettings = (): CancellablePromise<unknown> =>
 
 export const GetGolemStatus = (req: StatusRequest): CancellablePromise<unknown> =>
   Call.ByID(GOLEM_RAW_CALL_IDS.GetGolemStatus, req);
+
+export const ListGolemProfiles = (): CancellablePromise<unknown> =>
+  Call.ByID(GOLEM_RAW_CALL_IDS.ListGolemProfiles);
 
 export const LoadGolemProfile = (profileID: string): CancellablePromise<unknown> =>
   Call.ByID(GOLEM_RAW_CALL_IDS.LoadGolemProfile, profileID);

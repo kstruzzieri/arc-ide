@@ -105,6 +105,7 @@ describe('adapter routing', () => {
     ['GetGolemSettings', []],
     ['GetGolemStatus', [{ request: 'status' }]],
     ['GetGolemWindowState', []],
+    ['ListGolemProfiles', []],
     ['LoadGolemProfile', ['profile-id']],
     ['PrepareGolemDestinationGrants', []],
     ['ReloadGolemSettings', []],
@@ -208,7 +209,7 @@ const replay = async (document: string, fixture: ApplyFixture, payload: unknown)
       parseGolemProfileLoadResult(await bindings.LoadGolemProfile('profile'));
       return;
     case 'profile_list_result':
-      parseGolemProfileListResult(payload);
+      parseGolemProfileListResult(await bindings.ListGolemProfiles());
       return;
     case 'profile_save_request':
       parseSaveGolemProfileAsRequest(payload);

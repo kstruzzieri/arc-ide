@@ -5,6 +5,7 @@ import { GolemContractError, parseSettingsProjection } from '../../types/golem';
 import {
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
@@ -60,28 +61,29 @@ const fixtureMode = (fixture: ApplyFixture): ApplyMode => {
   return fixture.mode;
 };
 
-// The Slice C profile documents (profile_list_result, profile_save_request,
+// The remaining Slice C profile documents (profile_save_request,
 // profile_save_result) have no generated v3 class yet -- their bindings land
-// in later tasks once ListGolemProfiles/SaveGolemProfileAs exist -- so this
-// regression pin, which is specifically about generated CLASS instances,
-// covers only the documents below until then. The shared-corpus contract
-// itself (byte-identical accept/reject across Go and TS) is proven elsewhere
-// by golemConfig.test.ts and golemRawCalls.test.ts, which do walk every
-// fixture.
+// in Task 4 once SaveGolemProfileAs exists -- so this regression pin, which is
+// specifically about generated CLASS instances, covers only the documents
+// below until then. profile_list_result joined this set once Task 3 generated
+// ai.GolemProfileListResult. The shared-corpus contract itself
+// (byte-identical accept/reject across Go and TS) is proven elsewhere by
+// golemConfig.test.ts and golemRawCalls.test.ts, which do walk every fixture.
 const KNOWN_APPLY_DOCUMENTS = new Set([
   'apply_request',
   'confirm_request',
   'apply_result',
   'cancel_result',
   'profile_load_result',
+  'profile_list_result',
 ]);
 
 // The set of accept-fixture documents this file's own switches do not
-// recognize. This MUST stay exactly the three pending Slice C documents: if
-// Task 3 or 4 generates a binding for one of them without widening
+// recognize. This MUST stay exactly the two pending Slice C documents: if
+// Task 4 generates a binding for one of them without widening
 // KNOWN_APPLY_DOCUMENTS to match, the filtered fixture list below silently
 // keeps excluding it and the "has accept fixtures" floor below stays
-// satisfied by the five old documents forever — the narrowing would fail
+// satisfied by the six known documents forever — the narrowing would fail
 // open instead of forcing the set to grow. Restated as a fail-closed
 // assertion (not just a filter) so that mistake breaks this suite loudly.
 const excludedApplyDocuments = acceptFiles(applyCorpus)
@@ -100,6 +102,8 @@ const parseDocument = (fixture: ApplyFixture, value: unknown): unknown => {
       return parseCancelSettingsApplyResult(value);
     case 'profile_load_result':
       return parseGolemProfileLoadResult(value);
+    case 'profile_list_result':
+      return parseGolemProfileListResult(value);
     default:
       throw new Error(`unknown document ${fixture.document}`);
   }
@@ -118,6 +122,8 @@ const instantiate = (fixture: ApplyFixture): unknown => {
       return ai.CancelSettingsApplyResult.createFrom(source);
     case 'profile_load_result':
       return ai.GolemProfileLoadResult.createFrom(source);
+    case 'profile_list_result':
+      return ai.GolemProfileListResult.createFrom(source);
     default:
       throw new Error(`unknown document ${fixture.document}`);
   }
@@ -167,25 +173,23 @@ describe('v3 generated class instances at the Golem boundary', () => {
     });
 
     // Fail-closed companion to the filter above: the exclusion is scoped to
-    // exactly the three Slice C documents with no generated class yet, never
-    // silently wider. The moment Task 3 or 4 generates a binding for one of
-    // these, its class stops being undefined below and this test forces
+    // exactly the two Slice C documents with no generated class yet, never
+    // silently wider. The moment Task 4 generates a binding for one of these,
+    // its class stops being undefined below and this test forces
     // KNOWN_APPLY_DOCUMENTS to be widened rather than letting the narrowed
     // fixture set stand forever.
     it('only the not-yet-generated Slice C documents are excluded', () => {
       expect([...new Set(excludedApplyDocuments)].sort()).toEqual([
-        'profile_list_result',
         'profile_save_request',
         'profile_save_result',
       ]);
     });
 
     it('the excluded documents really have no generated v3 class yet', () => {
-      // Cast through unknown: these three names are not (yet) properties of
+      // Cast through unknown: these two names are not (yet) properties of
       // the generated `ai` namespace, so a direct reference would not compile
       // -- which is exactly the fact this test exists to pin.
       const generated = ai as unknown as Record<string, unknown>;
-      expect(generated.GolemProfileListResult).toBeUndefined();
       expect(generated.SaveGolemProfileAsRequest).toBeUndefined();
       expect(generated.GolemProfileSaveResult).toBeUndefined();
     });

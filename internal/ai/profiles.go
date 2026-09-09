@@ -1,8 +1,11 @@
 package ai
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/kstruzzieri/go-llm/profiles"
 )
 
 // The closed §5.6 Slice C profile transport: the list projection, the SaveAs
@@ -119,4 +122,76 @@ func validateSaveGolemProfileAsRequest(req SaveGolemProfileAsRequest) *GolemProf
 			Diagnostics: []ProfileDiagnostic{{Code: "invalid_id"}}}
 	}
 	return nil
+}
+
+// profileStoreDiagnostics maps one store failure onto the closed §5.6 profile
+// vocabulary; anything unmapped (including a raw context cancellation, for
+// which CodeOf reports nothing) is the store failing, not the profile: "io".
+func profileStoreDiagnostics(err error) []ProfileDiagnostic {
+	code, ok := profileStoreCodes[profiles.CodeOf(err)]
+	if !ok {
+		code = "io"
+	}
+	return []ProfileDiagnostic{{Code: code}}
+}
+
+// projectProfileInfos maps store rows into bounded §5.6 rows. The id shape is
+// pinned to upstream ParseID by TestProfileIDPatternMatchesUpstreamParseID, so
+// no per-row filtering is needed; `curated` is DERIVED from the namespace so
+// the flag can never disagree with the id; descriptions are sanitized
+// (Cc/Cf -> U+FFFD) and trimmed to the §5.6 byte bound at a rune boundary; a
+// revision crosses only in §5.6 shape. User rows arrive ID-only from
+// Store.List and stay that way — nothing is invented here.
+func projectProfileInfos(rows []profiles.Info) []ProfileInfo {
+	out := make([]ProfileInfo, 0, len(rows))
+	for _, row := range rows {
+		info := ProfileInfo{
+			ID:      string(row.ID),
+			Curated: strings.HasPrefix(string(row.ID), "curated/"),
+		}
+		if desc := trimToBytes(sanitizeIdentifier(row.Description), maxProjectionEndpointLen); desc != "" {
+			info.Description = desc
+		}
+		if validRevision(row.Revision) {
+			info.Revision = row.Revision
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// ListGolemProfiles projects Store.List into the closed §5.6 list union
+// (spec §5.3). It is a pure read — no idle barrier, no snapshot, no write —
+// carrying only the lifecycle registration the §5.5 close machine consults,
+// so Close waits out an in-flight listing and a closing service refuses new
+// ones. `limited` truncates to the first maxProjectionEntries rows in the
+// store's stable ID order; the "Too many profiles to display." copy is the
+// frontend's, keyed off the status.
+func (s *Service) ListGolemProfiles() (GolemProfileListResult, error) {
+	const op = "profile-list"
+	s.lifecycleMu.Lock()
+	if s.closing {
+		s.lifecycleMu.Unlock()
+		return GolemProfileListResult{}, s.publicErr(op, fmt.Errorf("%w: profile list rejected", errServiceClosing))
+	}
+	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+	defer s.wg.Done()
+
+	store, err := profiles.DefaultStoreWithOptions(profileStoreOptions())
+	if err != nil {
+		// The user config directory could not be resolved; there is no store.
+		return GolemProfileListResult{Status: "diagnostics",
+			Diagnostics: []ProfileDiagnostic{{Code: "io"}}}, nil
+	}
+	rows, err := store.List(s.baseCtx)
+	if err != nil {
+		return GolemProfileListResult{Status: "diagnostics",
+			Diagnostics: profileStoreDiagnostics(err)}, nil
+	}
+	infos := projectProfileInfos(rows)
+	if len(infos) > maxProjectionEntries {
+		return GolemProfileListResult{Status: "limited", Profiles: infos[:maxProjectionEntries]}, nil
+	}
+	return GolemProfileListResult{Status: "loaded", Profiles: infos}, nil
 }
