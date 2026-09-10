@@ -1,5 +1,5 @@
 /**
- * §4.8 Configuration ▾ menu: Save applied as profile… (the ONLY naming flow),
+ * §4.8 Actions ▾ menu: Save applied as profile… (the ONLY naming flow),
  * Start from curated ▸, Start blank. Ordinary buttons in natural Tab order,
  * Escape closes and restores the trigger, an outside pointer closes without
  * stealing focus (§4.7). Export and Delete are deferred (go-llm#537/#536) and
@@ -348,6 +348,13 @@ export function ConfigurationMenu({
 
   return (
     <span className={styles.menuRoot} ref={rootRef}>
+      {/* #263 Slice C: an invisible twin of the select's "Source" label
+          (same class, non-breaking-space content) so `.profileCluster`'s
+          flex-start alignment lands this trigger beside the SELECT, not
+          beside its label. See .menuSpacer. */}
+      <span className={`${styles.sourceLabel} ${styles.menuSpacer}`} aria-hidden="true">
+        {' '}
+      </span>
       <button
         type="button"
         ref={triggerRef}
@@ -364,7 +371,7 @@ export function ConfigurationMenu({
           onOpen();
         }}
       >
-        Configuration <span aria-hidden="true">▾</span>
+        Actions <span aria-hidden="true">▾</span>
       </button>
       {/* #263 follow-up: rendered unconditionally (outside `open &&`) so this
           region exists for the menu's WHOLE lifetime, not only from the

@@ -198,7 +198,7 @@ const clickApply = async () => await userEvent.click(screen.getByRole('button', 
  * a complete open-choose cycle.
  */
 const openConfigMenu = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Configuration' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Actions' }));
 
 const startBlankViaMenu = async () => {
   await openConfigMenu();
@@ -1475,8 +1475,8 @@ describe('bootstrap through the Configuration menu', () => {
     // The menu closed behind the choice, and the pending load locks the whole
     // surface — so it cannot be reopened at all, which subsumes the two former
     // CTAs' own disabled attributes.
-    expect(screen.getByRole('button', { name: 'Configuration' })).toBeDisabled();
-    expect(screen.getByLabelText('Configuration source')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
+    expect(screen.getByLabelText('Source')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
 
     settleProfile(loadedProfile);
@@ -1543,8 +1543,8 @@ describe('bootstrap through the Configuration menu', () => {
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
-    expect(screen.getByRole('button', { name: 'Configuration' })).toBeDisabled();
+    const select = screen.getByLabelText('Source') as HTMLSelectElement;
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
     expect(select).toBeEnabled();
 
     await userEvent.selectOptions(select, 'applied');
@@ -1556,7 +1556,7 @@ describe('bootstrap through the Configuration menu', () => {
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
 
     expect(select).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Configuration' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
 
@@ -1591,7 +1591,7 @@ describe('bootstrap through the Configuration menu', () => {
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    const select = screen.getByLabelText('Configuration source') as HTMLSelectElement;
+    const select = screen.getByLabelText('Source') as HTMLSelectElement;
     await userEvent.selectOptions(select, 'user/mine');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {

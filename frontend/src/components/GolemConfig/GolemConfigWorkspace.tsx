@@ -1272,8 +1272,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               });
               return (
                 <span className={styles.profileSource}>
-                  <label className={styles.srOnly} htmlFor="golem-profile-select">
-                    Configuration source
+                  <label className={styles.sourceLabel} htmlFor="golem-profile-select">
+                    Source
                   </label>
                   <select
                     id="golem-profile-select"

@@ -67,7 +67,7 @@ describe('buildProfileSelectModel', () => {
       appliedRevision: REV_A,
       state: 'ready',
     });
-    expect(same.applied.label).toBe('Applied configuration — user/mine');
+    expect(same.applied.label).toBe('Applied — user/mine');
     const diverged = buildProfileSelectModel({
       source: { kind: 'applied' },
       list: loadedList,
@@ -75,7 +75,7 @@ describe('buildProfileSelectModel', () => {
       appliedRevision: REV_B,
       state: 'ready',
     });
-    expect(diverged.applied.label).toBe('Applied configuration — user/mine · modified');
+    expect(diverged.applied.label).toBe('Applied — user/mine · modified');
   });
 
   it('shows only the applied-absent state while Missing: no optgroup rows at all', () => {

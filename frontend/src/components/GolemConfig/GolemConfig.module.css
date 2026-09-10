@@ -91,7 +91,11 @@
  * menu's trigger even when the description grows the select's column to two
  * lines, and `flex: none` keeps the pair from ever splitting across a wrapped
  * masthead row — one moves, the other follows (defect #2 of the 263 Slice C
- * visual pass).
+ * visual pass). The select's column now also carries a visible "Source"
+ * label ABOVE the control (#263 Slice C, defect of the same pass): flex-start
+ * still anchors on the column TOPS, so `.menuRoot` carries a same-sized
+ * hidden `.menuSpacer` twin of `.sourceLabel` to keep that top anchor level
+ * with the select rather than the label.
  */
 .profileCluster {
   display: inline-flex;
@@ -106,6 +110,14 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.sourceLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 /* §4.1: auto-width to the longest id, capped at 280px AND the available pane
@@ -213,6 +225,22 @@
 .menuRoot {
   position: relative;
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/*
+ * The trigger's half of the #263 Slice C label/spacer pair described above
+ * .profileCluster: same font metrics as `.sourceLabel` (so the height matches
+ * exactly, not by a guessed pixel value), a non-breaking space rather than
+ * "Source" itself (so no query for the real label can ever match this one
+ * too), and dropped from both paint and the accessibility tree. `top: 100%`
+ * on `.menuPanel` still resolves against the BOTTOM of this taller column, so
+ * the dropdown keeps opening flush under the button.
+ */
+.menuSpacer {
+  visibility: hidden;
 }
 
 .menuPanel {

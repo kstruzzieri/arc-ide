@@ -78,7 +78,7 @@ export function buildProfileSelectModel(args: BuildProfileSelectArgs): ProfileSe
         }`;
   const applied: ProfileSelectOption = {
     value: APPLIED_SOURCE_VALUE,
-    label: state === 'missing' ? 'No applied configuration' : `Applied configuration${ancestry}`,
+    label: state === 'missing' ? 'No applied configuration' : `Applied${ancestry}`,
     disabled: false,
   };
 
