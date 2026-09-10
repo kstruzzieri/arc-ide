@@ -199,10 +199,17 @@
    it even when the masthead wraps the trigger onto its own row. Anchoring to
    the trigger means `.menuPanel`'s `max-width` can no longer resolve as a
    percentage of the pane (the trigger is far narrower than the pane), so it
-   clamps against the viewport instead — the same `min(<cap>, calc(100vw -
-   32px))` idiom CommandPalette already uses. A 200px pane still can never be
-   outgrown: at that width the viewport itself is at most a little larger, so
-   the vw term wins over the cap. No fixed min-width for the same reason. */
+   clamps with `cqw` against `.root`'s inline size instead — `.root` below is
+   the nearest `container-type: inline-size` ancestor between here and the
+   pane, and `cqw` resolves against it regardless of how many non-positioned
+   elements sit in between, the same containment the `@container
+   golem-config` query near the bottom of this file already relies on. This
+   must NOT be `vw`: Firn's shell docks resizable side panels beside the
+   editor column (see `MIN_SIDE_WIDTH` / `CENTER_LIMITS.minFiles` in
+   frontend/src/utils/centerLayout.ts), so this component's pane is routinely
+   far narrower than the OS viewport — a `vw`-based clamp does not shrink
+   with the pane and can let the panel overflow it. No fixed min-width for
+   the same pane-can-be-narrow reason. */
 .menuRoot {
   position: relative;
   display: inline-flex;
@@ -215,7 +222,7 @@
   z-index: 30;
   width: max-content;
   min-width: 0;
-  max-width: min(320px, calc(100vw - 32px));
+  max-width: min(320px, calc(100cqw - 32px));
   display: flex;
   flex-direction: column;
   gap: 4px;

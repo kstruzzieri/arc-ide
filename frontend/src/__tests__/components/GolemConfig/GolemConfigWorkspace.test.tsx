@@ -132,11 +132,14 @@ describe('GolemConfig stylesheet', () => {
   it('the configuration menu panel can never outgrow its pane', () => {
     const text = css();
     const panel = text.match(/\.menuPanel\s*\{[^}]*\}/)?.[0] ?? '';
-    // Viewport-relative clamp (the trigger, not the masthead, is the
-    // positioned ancestor now, so a percentage can no longer reach the pane
-    // width) and no fixed floor: a 200px pane, at 100% or 200% zoom, always
-    // fits the panel, because the vw term shrinks along with it.
-    expect(panel).toContain('max-width: min(320px, calc(100vw - 32px))');
+    // Container-relative clamp against `.root`'s inline size (the trigger,
+    // not the masthead, is the positioned ancestor now, so a percentage can
+    // no longer reach the pane width directly) and no fixed floor: a 200px
+    // pane, at 100% or 200% zoom, always fits the panel, because the cqw
+    // term shrinks along with the PANE — unlike vw, which tracks the OS
+    // viewport and can be far larger than a docked, resizable pane.
+    expect(panel).toContain('max-width: min(320px, calc(100cqw - 32px))');
+    expect(panel).not.toMatch(/\bvw\b/);
     expect(panel).not.toMatch(/min-width:\s*[1-9]/);
   });
 });
