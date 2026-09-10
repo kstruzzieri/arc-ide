@@ -1254,98 +1254,115 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             </>
           )}
           <span className={styles.grow} />
-          {(() => {
-            const selectModel = buildProfileSelectModel({
-              source: draft.source,
-              list: profileList,
-              provenance: readActiveProfile(),
-              appliedRevision: projection?.revision,
-              state: projection?.state ?? null,
-            });
-            return (
-              <span className={styles.profileSource}>
-                <label className={styles.srOnly} htmlFor="golem-profile-select">
-                  Configuration source
-                </label>
-                <select
-                  id="golem-profile-select"
-                  className={styles.profileSelect}
-                  value={selectModel.value}
-                  disabled={projection === null || sourceLocked || saving}
-                  aria-describedby={
-                    selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
-                  }
-                  onChange={(event) => void selectSource(event.target.value)}
-                >
-                  <option value={selectModel.applied.value}>{selectModel.applied.label}</option>
-                  {selectModel.blank !== null && (
-                    <option value={selectModel.blank.value}>{selectModel.blank.label}</option>
-                  )}
-                  {selectModel.retained !== null && (
-                    <option value={selectModel.retained.value} disabled>
-                      {selectModel.retained.label}
-                    </option>
-                  )}
-                  {selectModel.curated.length > 0 && (
-                    <optgroup label="Curated">
-                      {selectModel.curated.map((option) => (
-                        <option key={option.value} value={option.value} disabled={option.disabled}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {selectModel.yours.length > 0 && (
-                    <optgroup label="Yours">
-                      {selectModel.yours.map((option) => (
-                        <option key={option.value} value={option.value} disabled={option.disabled}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-                {sourceLoading && (
-                  <span className={styles.selectDescription} role="status">
-                    Loading profile…
-                  </span>
-                )}
-                {selectModel.description !== '' && (
-                  <span id="golem-profile-select-desc" className={styles.selectDescription}>
-                    {selectModel.description}
-                  </span>
-                )}
-              </span>
-            );
-          })()}
           {/*
-           * §4.8: the one naming flow and the two bootstrap actions, behind a
-           * single menu. `disabled` composes the SHIPPED lock conditions:
-           * `sourceLocked` covers write/busy/recovery/in-flight, `locked`
-           * additionally freezes the surface while a consent challenge holds
-           * the visible request, and `outcome.drops !== null` is named
-           * EXPLICITLY because `locked` does not include the drop panel —
-           * which holds the visible request the same way a challenge does, and
-           * a Start action would settle the draft out from under it. The
-           * SELECT above keeps the narrower `sourceLocked || saving`: a source
-           * switch is a §4.6a cancel-then-transition path, and the dirty-draft
-           * guard intercepts it while a challenge or drop set stands.
+           * The select and the Configuration menu are grouped into one
+           * non-wrapping cluster so they stay adjacent, in a stable relative
+           * order, whether or not the description below the select is
+           * present (defect #2 of the 263 Slice C visual pass — see
+           * .profileCluster).
            */}
-          <ConfigurationMenu
-            curated={curatedEntries}
-            curatedNotice={curatedNotice}
-            saveRefusal={saveRefusal}
-            createRefusal={createRefusal}
-            startRefusal={startRefusal}
-            disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
-            saving={saving}
-            appliedRevision={projection?.revision}
-            onOpen={() => void refreshProfileList()}
-            onStartFromProfile={(id) => void selectSource(id)}
-            onStartBlank={() => void startBlank()}
-            saveProfileAs={saveProfileAs}
-            acquireProfileRevision={acquireProfileRevision}
-          />
+          <span className={styles.profileCluster}>
+            {(() => {
+              const selectModel = buildProfileSelectModel({
+                source: draft.source,
+                list: profileList,
+                provenance: readActiveProfile(),
+                appliedRevision: projection?.revision,
+                state: projection?.state ?? null,
+              });
+              return (
+                <span className={styles.profileSource}>
+                  <label className={styles.srOnly} htmlFor="golem-profile-select">
+                    Configuration source
+                  </label>
+                  <select
+                    id="golem-profile-select"
+                    className={styles.profileSelect}
+                    value={selectModel.value}
+                    disabled={projection === null || sourceLocked || saving}
+                    aria-describedby={
+                      selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
+                    }
+                    onChange={(event) => void selectSource(event.target.value)}
+                  >
+                    <option value={selectModel.applied.value}>{selectModel.applied.label}</option>
+                    {selectModel.blank !== null && (
+                      <option value={selectModel.blank.value}>{selectModel.blank.label}</option>
+                    )}
+                    {selectModel.retained !== null && (
+                      <option value={selectModel.retained.value} disabled>
+                        {selectModel.retained.label}
+                      </option>
+                    )}
+                    {selectModel.curated.length > 0 && (
+                      <optgroup label="Curated">
+                        {selectModel.curated.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                          >
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {selectModel.yours.length > 0 && (
+                      <optgroup label="Yours">
+                        {selectModel.yours.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                          >
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  {sourceLoading && (
+                    <span className={styles.selectDescription} role="status">
+                      Loading profile…
+                    </span>
+                  )}
+                  {selectModel.description !== '' && (
+                    <span id="golem-profile-select-desc" className={styles.selectDescription}>
+                      {selectModel.description}
+                    </span>
+                  )}
+                </span>
+              );
+            })()}
+            {/*
+             * §4.8: the one naming flow and the two bootstrap actions, behind a
+             * single menu. `disabled` composes the SHIPPED lock conditions:
+             * `sourceLocked` covers write/busy/recovery/in-flight, `locked`
+             * additionally freezes the surface while a consent challenge holds
+             * the visible request, and `outcome.drops !== null` is named
+             * EXPLICITLY because `locked` does not include the drop panel —
+             * which holds the visible request the same way a challenge does, and
+             * a Start action would settle the draft out from under it. The
+             * SELECT above keeps the narrower `sourceLocked || saving`: a source
+             * switch is a §4.6a cancel-then-transition path, and the dirty-draft
+             * guard intercepts it while a challenge or drop set stands.
+             */}
+            <ConfigurationMenu
+              curated={curatedEntries}
+              curatedNotice={curatedNotice}
+              saveRefusal={saveRefusal}
+              createRefusal={createRefusal}
+              startRefusal={startRefusal}
+              disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
+              saving={saving}
+              appliedRevision={projection?.revision}
+              onOpen={() => void refreshProfileList()}
+              onStartFromProfile={(id) => void selectSource(id)}
+              onStartBlank={() => void startBlank()}
+              saveProfileAs={saveProfileAs}
+              acquireProfileRevision={acquireProfileRevision}
+            />
+          </span>
           {recovery ? (
             <button
               type="button"

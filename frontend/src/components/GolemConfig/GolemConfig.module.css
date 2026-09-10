@@ -44,11 +44,7 @@
 
 /* ── masthead ───────────────────────────────────────────────────────────── */
 
-/* `position: relative` is load-bearing, not decoration: the Configuration
-   menu's panel positions against the MASTHEAD rather than its own trigger, so
-   the panel's `max-width` resolves against the pane width (see .menuPanel). */
 .masthead {
-  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -89,25 +85,74 @@
   color: var(--text-muted);
 }
 
+/*
+ * The select and the Configuration menu are one cluster, not two independent
+ * masthead items: `align-items: flex-start` lines the select up with the
+ * menu's trigger even when the description grows the select's column to two
+ * lines, and `flex: none` keeps the pair from ever splitting across a wrapped
+ * masthead row — one moves, the other follows (defect #2 of the 263 Slice C
+ * visual pass).
+ */
+.profileCluster {
+  display: inline-flex;
+  align-items: flex-start;
+  flex: none;
+  gap: 10px;
+  min-width: 0;
+}
+
 .profileSource {
   display: inline-flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
 }
 
 /* §4.1: auto-width to the longest id, capped at 280px AND the available pane
-   width; overflow ellipsizes rather than widening the masthead. */
+   width; overflow ellipsizes rather than widening the masthead. Token set
+   matches .button: it is a control on the same masthead, not a native select
+   dropped among flat, tokenized ones. `appearance: none` is required for the
+   ellipsis triple to mean anything on a <select>, so the caret is redrawn the
+   same way `select.input` redraws it below. */
 .profileSelect {
   max-width: min(280px, 100%);
+  padding: 5px 26px 5px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
   text-overflow: ellipsis;
   overflow: hidden;
   white-space: nowrap;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2390a0b6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
 }
 
+.profileSelect:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.profileSelect:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.profileSelect:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Real spacing under the select, not the 2px it used to be, plus a readable
+   line-height for the curated description that wraps to two lines. */
 .selectDescription {
   color: var(--text-muted);
   font-size: 12px;
+  line-height: 1.4;
   max-width: min(280px, 100%);
 }
 
@@ -149,23 +194,28 @@
 
 /* ── configuration menu (§4.8) ──────────────────────────────────────────── */
 
-/* The panel positions against the MASTHEAD (which carries `position: relative`
-   for exactly this), not the trigger span: its max-width then resolves against
-   the pane width, so a 200px pane — and the same pane at 200% zoom, where CSS
-   pixels scale uniformly — can never be outgrown. No fixed min-width for the
-   same reason. */
+/* The panel positions against its OWN trigger span (`position: relative`
+   here, not on `.masthead`), so it stays attached to the button that opened
+   it even when the masthead wraps the trigger onto its own row. Anchoring to
+   the trigger means `.menuPanel`'s `max-width` can no longer resolve as a
+   percentage of the pane (the trigger is far narrower than the pane), so it
+   clamps against the viewport instead — the same `min(<cap>, calc(100vw -
+   32px))` idiom CommandPalette already uses. A 200px pane still can never be
+   outgrown: at that width the viewport itself is at most a little larger, so
+   the vw term wins over the cap. No fixed min-width for the same reason. */
 .menuRoot {
+  position: relative;
   display: inline-flex;
 }
 
 .menuPanel {
   position: absolute;
   top: calc(100% + 4px);
-  right: 8px;
+  right: 0;
   z-index: 30;
   width: max-content;
   min-width: 0;
-  max-width: calc(100% - 16px);
+  max-width: min(320px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
   gap: 4px;
