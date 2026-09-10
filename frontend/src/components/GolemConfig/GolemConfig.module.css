@@ -86,20 +86,25 @@
 }
 
 /*
- * The select and the Configuration menu are one cluster, not two independent
- * masthead items: `align-items: flex-start` lines the select up with the
- * menu's trigger even when the description grows the select's column to two
- * lines, and `flex: none` keeps the pair from ever splitting across a wrapped
- * masthead row — one moves, the other follows (defect #2 of the 263 Slice C
- * visual pass). The select's column now also carries a visible "Source"
- * label ABOVE the control (#263 Slice C, defect of the same pass): flex-start
- * still anchors on the column TOPS, so `.menuRoot` carries a same-sized
- * hidden `.menuSpacer` twin of `.sourceLabel` to keep that top anchor level
- * with the select rather than the label.
+ * #263 Slice C: the select, the Configuration menu, and the masthead's three
+ * plain buttons (Refresh/Recover, Approve, Close) are ONE control group, not
+ * five independent masthead items — `flex: none` keeps the whole group from
+ * splitting across a wrapped masthead row (either it all sits beside the
+ * identity block, or it all drops to its own line together), and
+ * `align-items: flex-end` lines up every control's BOTTOM edge: the select,
+ * the menu trigger, and the buttons all share the same font-size/padding/
+ * border box, so their bottoms coincide regardless of what sits above any one
+ * of them (the "Source" label over the select; nothing over the buttons).
+ * That is why ConfigurationMenu no longer carries a `.menuSpacer` label twin
+ * to fake a same-height row over the trigger — a flex-end anchor does not
+ * care what is above the last item in a column, unlike the flex-start anchor
+ * this replaced. The description below the select and the loading affordance
+ * are rendered OUTSIDE this group entirely (`.selectDescription`, further
+ * down) so neither can change the group's size or move anything inside it.
  */
-.profileCluster {
+.controlGroup {
   display: inline-flex;
-  align-items: flex-start;
+  align-items: flex-end;
   flex: none;
   gap: 10px;
   min-width: 0;
@@ -109,6 +114,7 @@
   display: inline-flex;
   flex-direction: column;
   gap: 6px;
+  width: min(280px, 100%);
   min-width: 0;
 }
 
@@ -120,14 +126,17 @@
   color: var(--text-muted);
 }
 
-/* §4.1: auto-width to the longest id, capped at 280px AND the available pane
-   width; overflow ellipsizes rather than widening the masthead. Token set
-   matches .button: it is a control on the same masthead, not a native select
-   dropped among flat, tokenized ones. `appearance: none` is required for the
-   ellipsis triple to mean anything on a <select>, so the caret is redrawn the
-   same way `select.input` redraws it below. */
+/* §4.1: a FIXED width — capped at 280px and the available pane width, same as
+   before, but no longer shrink-to-fit (#263 Slice C) — so neither the
+   selected value's length nor (previously) the description below it could
+   widen this column and move the masthead's wrap point. Overflow still
+   ellipsizes rather than widening. Token set matches .button: it is a
+   control on the same masthead, not a native select dropped among flat,
+   tokenized ones. `appearance: none` is required for the ellipsis triple to
+   mean anything on a <select>, so the caret is redrawn the same way
+   `select.input` redraws it below. */
 .profileSelect {
-  max-width: min(280px, 100%);
+  width: min(280px, 100%);
   padding: 5px 26px 5px 10px;
   border: 1px solid var(--surface-border);
   border-radius: 6px;
@@ -159,13 +168,20 @@
   cursor: default;
 }
 
-/* Real spacing under the select, not the 2px it used to be, plus a readable
-   line-height for the curated description that wraps to two lines. */
+/* #263 Slice C: rendered OUTSIDE .controlGroup (a masthead sibling, not a
+   child of .profileSource any more) so it can never affect the control row's
+   width or height — `flex: 0 0 100%` claims a full new masthead line for
+   whichever of the loading affordance / selected-profile description is
+   present, instead of growing a fixed-width column's height the way it used
+   to (the three-line-description defect of the 263 Slice C visual pass).
+   Real spacing above it comes from `.masthead`'s own `gap`; the line-height
+   stays readable for a description that wraps to two or three lines. */
 .selectDescription {
+  flex: 0 0 100%;
+  min-width: 0;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.4;
-  max-width: min(280px, 100%);
 }
 
 /* ── buttons: the only filled elements on the page ──────────────────────── */
@@ -228,19 +244,6 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-}
-
-/*
- * The trigger's half of the #263 Slice C label/spacer pair described above
- * .profileCluster: same font metrics as `.sourceLabel` (so the height matches
- * exactly, not by a guessed pixel value), a non-breaking space rather than
- * "Source" itself (so no query for the real label can ever match this one
- * too), and dropped from both paint and the accessibility tree. `top: 100%`
- * on `.menuPanel` still resolves against the BOTTOM of this taller column, so
- * the dropdown keeps opening flush under the button.
- */
-.menuSpacer {
-  visibility: hidden;
 }
 
 .menuPanel {

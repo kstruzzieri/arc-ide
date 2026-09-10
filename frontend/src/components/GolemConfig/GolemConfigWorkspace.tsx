@@ -1229,6 +1229,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           ? BOOTSTRAP_GATE
           : null;
 
+  // Hoisted out of the masthead JSX (was an inline IIFE) so the description
+  // it carries can render on its OWN full-width line, outside .controlGroup,
+  // instead of only inside the select's column — see the masthead comment
+  // below (#263 Slice C control-group follow-up).
+  const selectModel = buildProfileSelectModel({
+    source: draft.source,
+    list: profileList,
+    provenance: readActiveProfile(),
+    appliedRevision: projection?.revision,
+    state: projection?.state ?? null,
+  });
+
   return (
     <div className={styles.root}>
       <div className={styles.page}>
@@ -1255,85 +1267,77 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           )}
           <span className={styles.grow} />
           {/*
-           * The select and the Configuration menu are grouped into one
-           * non-wrapping cluster so they stay adjacent, in a stable relative
-           * order, whether or not the description below the select is
-           * present (defect #2 of the 263 Slice C visual pass — see
-           * .profileCluster).
+           * #263 Slice C follow-up: the select, the Actions menu, and the
+           * Refresh/Recover, Approve, and Close buttons are now ONE control
+           * group (.controlGroup) so they wrap the masthead as a UNIT —
+           * either all beside the identity block, or all together on their
+           * own line. Before this the three plain buttons were separate
+           * masthead flex items and could wrap away from the select/menu
+           * independently, splitting the controls across two lines in
+           * whatever combination the identity block's width and the
+           * select's then content-driven width happened to leave room for
+           * (defect of the 263 Slice C visual pass).
+           *
+           * Alignment is on the group's BOTTOM edge (`align-items:
+           * flex-end`): the select, the menu trigger, and the three buttons
+           * all share the same font-size/padding/border box, so their
+           * bottoms coincide regardless of what sits above any one of them.
+           * That is also why ConfigurationMenu's old `.menuSpacer` label
+           * twin (a flex-start-only trick) is gone — flex-end does not care
+           * what is above the last item in a column, so nothing needs to
+           * fake a same-height label row over the menu trigger any more.
+           *
+           * The select's own width is now fixed (`.profileSelect`) rather
+           * than shrink-to-fit, and the loading affordance / selected
+           * profile's description render OUTSIDE this group entirely (see
+           * `.selectDescription` below) — so neither the selected value's
+           * length nor a profile's description can change this group's
+           * size, its wrap point, or the position of anything inside it.
            */}
-          <span className={styles.profileCluster}>
-            {(() => {
-              const selectModel = buildProfileSelectModel({
-                source: draft.source,
-                list: profileList,
-                provenance: readActiveProfile(),
-                appliedRevision: projection?.revision,
-                state: projection?.state ?? null,
-              });
-              return (
-                <span className={styles.profileSource}>
-                  <label className={styles.sourceLabel} htmlFor="golem-profile-select">
-                    Source
-                  </label>
-                  <select
-                    id="golem-profile-select"
-                    className={styles.profileSelect}
-                    value={selectModel.value}
-                    disabled={projection === null || sourceLocked || saving}
-                    aria-describedby={
-                      selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
-                    }
-                    onChange={(event) => void selectSource(event.target.value)}
-                  >
-                    <option value={selectModel.applied.value}>{selectModel.applied.label}</option>
-                    {selectModel.blank !== null && (
-                      <option value={selectModel.blank.value}>{selectModel.blank.label}</option>
-                    )}
-                    {selectModel.retained !== null && (
-                      <option value={selectModel.retained.value} disabled>
-                        {selectModel.retained.label}
+          <span className={styles.controlGroup}>
+            <span className={styles.profileSource}>
+              <label className={styles.sourceLabel} htmlFor="golem-profile-select">
+                Source
+              </label>
+              <select
+                id="golem-profile-select"
+                className={styles.profileSelect}
+                value={selectModel.value}
+                disabled={projection === null || sourceLocked || saving}
+                aria-describedby={
+                  selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
+                }
+                onChange={(event) => void selectSource(event.target.value)}
+              >
+                <option value={selectModel.applied.value}>{selectModel.applied.label}</option>
+                {selectModel.blank !== null && (
+                  <option value={selectModel.blank.value}>{selectModel.blank.label}</option>
+                )}
+                {selectModel.retained !== null && (
+                  <option value={selectModel.retained.value} disabled>
+                    {selectModel.retained.label}
+                  </option>
+                )}
+                {selectModel.curated.length > 0 && (
+                  <optgroup label="Curated">
+                    {selectModel.curated.map((option) => (
+                      <option key={option.value} value={option.value} disabled={option.disabled}>
+                        {option.label}
                       </option>
-                    )}
-                    {selectModel.curated.length > 0 && (
-                      <optgroup label="Curated">
-                        {selectModel.curated.map((option) => (
-                          <option
-                            key={option.value}
-                            value={option.value}
-                            disabled={option.disabled}
-                          >
-                            {option.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {selectModel.yours.length > 0 && (
-                      <optgroup label="Yours">
-                        {selectModel.yours.map((option) => (
-                          <option
-                            key={option.value}
-                            value={option.value}
-                            disabled={option.disabled}
-                          >
-                            {option.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                  {sourceLoading && (
-                    <span className={styles.selectDescription} role="status">
-                      Loading profile…
-                    </span>
-                  )}
-                  {selectModel.description !== '' && (
-                    <span id="golem-profile-select-desc" className={styles.selectDescription}>
-                      {selectModel.description}
-                    </span>
-                  )}
-                </span>
-              );
-            })()}
+                    ))}
+                  </optgroup>
+                )}
+                {selectModel.yours.length > 0 && (
+                  <optgroup label="Yours">
+                    {selectModel.yours.map((option) => (
+                      <option key={option.value} value={option.value} disabled={option.disabled}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </span>
             {/*
              * §4.8: the one naming flow and the two bootstrap actions, behind a
              * single menu. `disabled` composes the SHIPPED lock conditions:
@@ -1362,65 +1366,82 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               saveProfileAs={saveProfileAs}
               acquireProfileRevision={acquireProfileRevision}
             />
+            {recovery ? (
+              <button
+                type="button"
+                className={styles.button}
+                disabled={inFlight || sourceLoading || sending}
+                onClick={() => void recover()}
+              >
+                Recover state
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={styles.button}
+                disabled={inFlight || sourceLoading || sending}
+                onClick={() => void refresh()}
+              >
+                Refresh
+              </button>
+            )}
+            {/*
+             * Permanent (spec I15): nothing probes for missing destinations on
+             * mount and no event tells this surface when the set changes, so the
+             * action is always offered and every click asks Call 1 afresh. It
+             * needs a loaded document to have something to list against.
+             */}
+            <button
+              type="button"
+              className={styles.button}
+              disabled={
+                projection === null ||
+                inFlight ||
+                sourceLoading ||
+                sending ||
+                recovery ||
+                // Locking remounts the editors, so their fields must be staged first.
+                unstagedEditors.size > 0 ||
+                outcome.challenge !== null ||
+                // A settings-apply disclosure is still on screen: the dropped-
+                // fields panel is the ONLY copy of `outcome.drops` (restageDrops
+                // reads it), and a busy Retry keeps a request retryable. A fresh
+                // Prepare here would replace the whole outcome and destroy either
+                // one, so the action stays off until the user has resolved it.
+                outcome.drops !== null ||
+                outcome.busy ||
+                outcome.conflict !== null
+              }
+              onClick={approveDestinations}
+            >
+              {APPROVE_ACTION}
+            </button>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.quiet}`}
+              disabled={sending}
+              onClick={onClose}
+            >
+              Close
+            </button>
           </span>
-          {recovery ? (
-            <button
-              type="button"
-              className={styles.button}
-              disabled={inFlight || sourceLoading || sending}
-              onClick={() => void recover()}
-            >
-              Recover state
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={styles.button}
-              disabled={inFlight || sourceLoading || sending}
-              onClick={() => void refresh()}
-            >
-              Refresh
-            </button>
-          )}
           {/*
-           * Permanent (spec I15): nothing probes for missing destinations on
-           * mount and no event tells this surface when the set changes, so the
-           * action is always offered and every click asks Call 1 afresh. It
-           * needs a loaded document to have something to list against.
+           * The loading affordance and the selected profile's description
+           * live OUTSIDE .controlGroup on purpose (see the note above it):
+           * `.selectDescription` is `flex: 0 0 100%`, so each one that
+           * renders claims its own full masthead line beneath the controls
+           * and can never widen or heighten the control row above it.
            */}
-          <button
-            type="button"
-            className={styles.button}
-            disabled={
-              projection === null ||
-              inFlight ||
-              sourceLoading ||
-              sending ||
-              recovery ||
-              // Locking remounts the editors, so their fields must be staged first.
-              unstagedEditors.size > 0 ||
-              outcome.challenge !== null ||
-              // A settings-apply disclosure is still on screen: the dropped-
-              // fields panel is the ONLY copy of `outcome.drops` (restageDrops
-              // reads it), and a busy Retry keeps a request retryable. A fresh
-              // Prepare here would replace the whole outcome and destroy either
-              // one, so the action stays off until the user has resolved it.
-              outcome.drops !== null ||
-              outcome.busy ||
-              outcome.conflict !== null
-            }
-            onClick={approveDestinations}
-          >
-            {APPROVE_ACTION}
-          </button>
-          <button
-            type="button"
-            className={`${styles.button} ${styles.quiet}`}
-            disabled={sending}
-            onClick={onClose}
-          >
-            Close
-          </button>
+          {sourceLoading && (
+            <span className={styles.selectDescription} role="status">
+              Loading profile…
+            </span>
+          )}
+          {selectModel.description !== '' && (
+            <span id="golem-profile-select-desc" className={styles.selectDescription}>
+              {selectModel.description}
+            </span>
+          )}
         </header>
 
         {grantNotice !== '' && (

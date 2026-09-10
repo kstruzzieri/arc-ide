@@ -348,13 +348,6 @@ export function ConfigurationMenu({
 
   return (
     <span className={styles.menuRoot} ref={rootRef}>
-      {/* #263 Slice C: an invisible twin of the select's "Source" label
-          (same class, non-breaking-space content) so `.profileCluster`'s
-          flex-start alignment lands this trigger beside the SELECT, not
-          beside its label. See .menuSpacer. */}
-      <span className={`${styles.sourceLabel} ${styles.menuSpacer}`} aria-hidden="true">
-        {' '}
-      </span>
       <button
         type="button"
         ref={triggerRef}
