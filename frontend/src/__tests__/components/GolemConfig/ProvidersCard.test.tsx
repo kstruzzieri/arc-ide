@@ -184,3 +184,42 @@ it('keeps an unstaged provider addition mounted when Add provider is clicked aga
   expect(screen.getByLabelText('Provider name')).toBe(name);
   expect(name).toHaveValue('draft-provider');
 });
+
+it('keeps an applied strip and a staged add of the same name apart', async () => {
+  // [K6] A profile-source conflict reload keeps the draft, so a staged `provider-add`
+  // can meet an applied provider of the SAME name. Keyed on the name alone, the two
+  // strips collided: React reused one node for both and the second Edit reached the
+  // first editor. The strip's own `editorId` is what distinguishes them.
+  // React is the only witness that two siblings shared a key, and it reports it
+  // through console.error — so that is what this asserts on.
+  const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
+  render(
+    <ProvidersCard
+      {...cardProps({
+        providers: [provider],
+        stagedProviders: [{ ...provider, endpoint: 'http://127.0.0.1:9999/v1' }],
+        changes: [
+          { kind: 'provider-add', name: provider.name, endpoint: 'http://127.0.0.1:9999/v1' },
+        ],
+      })}
+    />
+  );
+  expect(screen.getAllByTestId('provider-row-llama-swap')).toHaveLength(2);
+  // Only the staged strip can be unstaged, so it is the one that owns that control.
+  const [applied, staged] = screen.getAllByTestId('provider-row-llama-swap');
+  expect(within(applied).queryByRole('button', { name: /Unstage/ })).toBeNull();
+  expect(within(staged).getByRole('button', { name: /Unstage/ })).toBeInTheDocument();
+  expect(applied).toHaveAttribute('id', 'golem-provider-editor-0-row');
+  expect(staged).toHaveAttribute('id', 'golem-provider-staged-editor-0-row');
+
+  await userEvent.click(within(staged).getByRole('button', { name: /Edit provider/ }));
+  // The staged strip has no applied row underneath it, which is what makes its editor
+  // the STAGED one — and proves the click did not reach the applied strip's editor.
+  expect(screen.getByRole('group', { name: 'Staged provider llama-swap' })).toHaveAttribute(
+    'id',
+    'golem-provider-staged-editor-0'
+  );
+  const reported = errors.mock.calls.map((call) => call.join(' ')).join('\n');
+  errors.mockRestore();
+  expect(reported).not.toContain('same key');
+});

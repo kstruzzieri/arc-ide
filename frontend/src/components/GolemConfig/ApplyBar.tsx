@@ -57,8 +57,11 @@ export function changeChipLabel(change: Change): string {
       return `${change.name} · API key`;
     case 'provider-key-clear':
       return `${change.name} · API key cleared`;
+    // [C6] `removed` alone read as a provider removal: a provider and a model role
+    // may carry the same name, and the two chips sat side by side saying the same
+    // thing about different things.
     case 'role-remove':
-      return `${change.role} · removed`;
+      return `${change.role} · model removed`;
   }
 }
 

@@ -106,8 +106,15 @@ export function ProvidersCard({
    * that row's Edit button, so one effect serves both directions.
    */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
-  /** The provider a jump just landed on, for ~1.4s (ruling 7). */
+  /**
+   * The provider a jump just landed on, for ~1.4s (ruling 7), held as
+   * `<name>#<nonce>`. [K4] The nonce rides along because a SECOND jump to the same
+   * row inside the flash window is an identical `setFlash` — React bails out, the
+   * attribute never changes, and the row the user asked for twice flashes once.
+   */
   const [flash, setFlash] = useState<string | null>(null);
+  const flashNonce = (name: string): string | undefined =>
+    flash !== null && flash.startsWith(`${name}#`) ? flash.slice(name.length + 1) : undefined;
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -171,7 +178,7 @@ export function ProvidersCard({
     // [C26] Never interpolate an identifier into a selector; the row carries an
     // index-derived id. `scrollIntoView` is optional-called: jsdom lacks it.
     document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
-    setFlash(rowKey === ADD_ROW_KEY ? null : name);
+    setFlash(rowKey === ADD_ROW_KEY ? null : `${name}#${focusRequest.nonce}`);
     const timer = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(timer);
     // Both lists are stable for the life of one card mount (the workspace
@@ -290,14 +297,14 @@ export function ProvidersCard({
               const changed = markers?.modified === true || markers?.keyStaged === true;
               const row = (
                 <div
-                  key={`row:${provider.name}`}
+                  key={`row:${editorId}`}
                   id={`${editorId}-row`}
                   role="row"
                   data-testid={`provider-row-${provider.name}`}
                   className={styles.row}
                   data-expanded={expanded || undefined}
                   data-changed={changed || undefined}
-                  data-flash={flash === provider.name || undefined}
+                  data-flash={flashNonce(provider.name)}
                 >
                   <Cell className={styles.identifier}>{provider.name}</Cell>
                   <Cell className={styles.endpointCell}>
@@ -413,12 +420,13 @@ export function ProvidersCard({
               );
               // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
               // key differs from the bare row's: with the same key React would reuse the row's
-              // DOM node AS the group and slide a new row inside it. [X1] The discriminator is a
-              // PREFIX, not a suffix: `a` and `a:group` are both legal provider names, so a
-              // suffix would let one provider's group key collide with another's row key.
+              // DOM node AS the group and slide a new row inside it. [K6] Both keys are built on
+              // `editorId`, which is unique per STRIP: keying on the name alone collided an
+              // applied strip with a staged add of the same name, which a profile_source reload
+              // that keeps the draft produces.
               return expanded || notices.length > 0 ? (
                 <div
-                  key={`group:${provider.name}`}
+                  key={`group:${editorId}`}
                   role="rowgroup"
                   className={expanded ? styles.editGroup : styles.noticeGroup}
                 >

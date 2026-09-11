@@ -1018,7 +1018,10 @@ describe('effectiveRoutes / providerUsage (one derived view)', () => {
       { useCase: 'chat', role: 'c' },
     ],
     models: [
-      modelRow({ role: 'a', provider: 'llama-swap', modelName: 'm1' }),
+      // The fallback-inclusive claim each model carries has to AGREE with the
+      // routes above, or the fold [X3] applies would credit a use case the base
+      // never routed there. `modelRow` defaults to `['chat']`.
+      modelRow({ role: 'a', provider: 'llama-swap', modelName: 'm1', routedUseCases: ['agent'] }),
       modelRow({ role: 'c', provider: 'zen', modelName: 'm2' }),
     ],
   };
@@ -1039,11 +1042,11 @@ describe('effectiveRoutes / providerUsage (one derived view)', () => {
     const routes = effectiveRoutes(base, changes);
     expect(routes.get('agent')).toEqual({ provider: 'zen', model: 'm3' });
     expect(routes.get('chat')).toBeNull();
-    expect(providerUsage(routes)).toEqual(new Map([['zen', ['agent']]]));
+    expect(providerUsage(routes, base, changes)).toEqual(new Map([['zen', ['agent']]]));
   });
 
   it('with no changes equals the base', () => {
-    expect(providerUsage(effectiveRoutes(base, []))).toEqual(
+    expect(providerUsage(effectiveRoutes(base, []), base, [])).toEqual(
       new Map([
         ['llama-swap', ['agent']],
         ['zen', ['chat']],

@@ -154,9 +154,14 @@ export function RoutingCard({
    * The row a jump just landed on, for ~1.4s (ruling 7), held as the change
    * identity `route:<useCase>` / `role:<role>`. [X11] Both namespaces flash, and a
    * use case and a model role may legally share a name, so the namespace rides
-   * along rather than the bare name.
+   * along rather than the bare name. [K4] So does the request's nonce: a SECOND
+   * jump to the same row inside the flash window is otherwise an identical
+   * `setFlash`, which React bails out of — the attribute never changes and the row
+   * the user asked for twice flashes once.
    */
   const [flash, setFlash] = useState<string | null>(null);
+  const flashNonce = (key: string): string | undefined =>
+    flash !== null && flash.startsWith(`${key}#`) ? flash.slice(key.length + 1) : undefined;
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -204,7 +209,7 @@ export function RoutingCard({
       // [X11] A `role-remove` chip has no editor, so the defined-model row itself is
       // the target — and it flashes like any other landed jump.
       setPendingFocus({ elementId: definedRowId(name) });
-      setFlash(`role:${name}`);
+      setFlash(`role:${name}#${focusRequest.nonce}`);
       const roleTimer = window.setTimeout(() => setFlash(null), 1400);
       return () => window.clearTimeout(roleTimer);
     }
@@ -220,7 +225,7 @@ export function RoutingCard({
     // use-case names); the row carries an index-derived id instead.
     // `scrollIntoView` is optional-called because jsdom does not implement it.
     document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
-    setFlash(`route:${name}`);
+    setFlash(`route:${name}#${focusRequest.nonce}`);
     const timer = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(timer);
     // Routes are stable for the life of one card mount (the workspace remounts
@@ -326,8 +331,10 @@ export function RoutingCard({
             // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
             // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
             // row marker — the shipped definition of "this row has a staged change" — so
-            // think-only, exposure-only and assign-into-empty changes stripe too.
-            const changed = markers?.modified === true || markers?.keyStaged === true;
+            // think-only, exposure-only and assign-into-empty changes stripe too. [C5] Only
+            // `modified`: `keyStaged` is set on PROVIDER rows alone, so the disjunct this
+            // line used to carry could never be true here.
+            const changed = markers?.modified === true;
             const wasModel =
               staged?.kind === 'route' &&
               applied !== null &&
@@ -361,7 +368,7 @@ export function RoutingCard({
                 className={styles.row}
                 data-expanded={expanded || undefined}
                 data-changed={changed || undefined}
-                data-flash={flash === `route:${useCase}` || undefined}
+                data-flash={flashNonce(`route:${useCase}`)}
               >
                 <Cell className={styles.useCase}>
                   {useCase}
@@ -541,7 +548,7 @@ export function RoutingCard({
                     // [X11] A staged `role-remove` stripes its row like every other
                     // staged change, and a landed `role:` jump flashes it.
                     data-changed={markers?.modified === true || undefined}
-                    data-flash={flash === `role:${model.role}` || undefined}
+                    data-flash={flashNonce(`role:${model.role}`)}
                   >
                     <Cell className={styles.identifier}>{model.role}</Cell>
                     <Cell className={styles.providerCell}>{model.provider}</Cell>

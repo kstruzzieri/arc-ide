@@ -316,6 +316,15 @@ describe('Apply bar', () => {
     expect(within(bar).queryByRole('button', { name: 'hosted · API key' })).toBeNull();
   });
 
+  it('says a model role was removed, not just "removed"', async () => {
+    // [C6] A provider and a model role may carry the SAME name, and both chips read
+    // `<name> · removed` — two different removals, one indistinguishable label.
+    await mountWorkspace();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove model role other-role' }));
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByRole('button', { name: 'other-role · model removed' })).toBeEnabled();
+  });
+
   it('opens and focuses the editor its chip names', async () => {
     await mountWorkspace();
     await stageKey();
@@ -1205,6 +1214,23 @@ describe('grant-only destination approval', () => {
       expect(lastApply().keys).toEqual({ hosted: KEY });
     }
   );
+
+  it('does not replay a chip click when a grant round trip remounts the cards', async () => {
+    // [K5] The grant landing flips the surface lock, which remounts both cards — and a
+    // fresh card replays whatever focusRequest still stands, reopening an editor the
+    // user had left behind a whole round trip ago.
+    prepareReturns({ status: 'granted' });
+    await mountWorkspace();
+    await stageKey();
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
+    expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
+    await cancelEditor();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+
+    await approve();
+    expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+  });
 
   // The grant-only notice never reaches `settle` on its own, so a later
   // settings apply must clear it explicitly — otherwise "Destinations

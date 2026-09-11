@@ -1522,8 +1522,12 @@ export function effectiveRoutes(
  */
 export function providerUsage(
   routes: ReadonlyMap<string, { provider: string; model: string } | null>,
-  base?: DraftBaseProjection,
-  changes: readonly Change[] = []
+  // [K10][C8] Both REQUIRED. Omitting them is not a smaller question, it is a
+  // DIFFERENT and quietly wrong answer — a provider reached only through a
+  // fallback chain reports as `not routed` — and an optional parameter is an
+  // invitation to ask for that answer by accident.
+  base: DraftBaseProjection,
+  changes: readonly Change[]
 ): Map<string, string[]> {
   const out = new Map<string, Set<string>>();
   const add = (provider: string, useCase: string) => {
@@ -1535,16 +1539,14 @@ export function providerUsage(
     if (target === null) continue;
     add(target.provider, useCase);
   }
-  if (base !== undefined) {
-    const staged = new Set(
-      changes
-        .filter((change) => change.kind === 'route' || change.kind === 'route-unassign')
-        .map((change) => (change as Extract<Change, { useCase: string }>).useCase)
-    );
-    for (const model of base.models)
-      for (const useCase of model.routedUseCases)
-        if (!staged.has(useCase)) add(model.provider, useCase);
-  }
+  const staged = new Set(
+    changes
+      .filter((change) => change.kind === 'route' || change.kind === 'route-unassign')
+      .map((change) => (change as Extract<Change, { useCase: string }>).useCase)
+  );
+  for (const model of base.models)
+    for (const useCase of model.routedUseCases)
+      if (!staged.has(useCase)) add(model.provider, useCase);
   return new Map(
     [...out].map(([provider, seen]) => [provider, [...seen].sort(compareString)] as const)
   );

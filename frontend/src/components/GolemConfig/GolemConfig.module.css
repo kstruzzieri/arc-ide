@@ -323,6 +323,14 @@
   background-color: var(--surface-hover);
 }
 
+/* [K7] The KEYBOARD-active option is the listbox's cursor, and a shared hover
+   background could not tell the two apart — the pointer moving across the list
+   looked exactly like the row Enter would choose. The ring says which is which. */
+.pickerOption[data-active] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .pickerOption[aria-selected='true']::before {
   content: '';
   position: absolute;
@@ -1652,14 +1660,6 @@ select.input {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.destination {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  margin: 0;
 }
 
 .dropList {

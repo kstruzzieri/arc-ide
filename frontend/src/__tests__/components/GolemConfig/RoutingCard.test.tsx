@@ -259,6 +259,18 @@ describe('route editor Done (firn-ide#284)', () => {
     expect(screen.getByTestId('route-row-chat')).toHaveAttribute('data-flash');
   });
 
+  it('re-flashes the same row when the chip is clicked again', async () => {
+    // [K4] A second jump inside the 1.4s window set the SAME flash value, React bailed
+    // out of the render, and the row the user asked for twice flashed once. The
+    // request's nonce rides along so the landing is a new value every time.
+    const { rerender } = render(<RoutingCard {...baseProps()} focusRequest={null} />);
+    rerender(<RoutingCard {...baseProps()} focusRequest={{ changeId: 'route:chat', nonce: 1 }} />);
+    const first = screen.getByTestId('route-row-chat').getAttribute('data-flash');
+    expect(first).not.toBeNull();
+    rerender(<RoutingCard {...baseProps()} focusRequest={{ changeId: 'route:chat', nonce: 2 }} />);
+    expect(screen.getByTestId('route-row-chat').getAttribute('data-flash')).not.toBe(first);
+  });
+
   it('stripes and flashes a defined-model row a role chip jumps to', async () => {
     // [X11] A `role-remove` chip is the ONLY handle a staged role removal has; the row
     // it lands on must carry the same staged-change stripe and landing flash every
