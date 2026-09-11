@@ -142,6 +142,36 @@ describe('GolemConfig stylesheet', () => {
     expect(panel).not.toMatch(/\bvw\b/);
     expect(panel).not.toMatch(/min-width:\s*[1-9]/);
   });
+
+  it('lays the masthead out mobile-first by container width only, never viewport', () => {
+    const text = css();
+    expect(text).not.toMatch(/\d(vw|vh)\b/);
+    // [A7] The BASE is the stacked form: full-width picker, wrapping actions, full-row check button.
+    expect(text.match(/^\.picker \{[^}]*\}/ms)?.[0]).toMatch(/flex: 1 1 100%/);
+    expect(text.match(/^\.actions > \.checkDestinations \{[^}]*\}/ms)?.[0]).toMatch(
+      /flex: 1 1 100%/
+    );
+    // The two-row form fixes the picker at 280px and puts the actions on their own row…
+    const twoRow =
+      text.match(/@container golem-config \(min-width: 600px\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(twoRow).toMatch(/\.picker \{[^}]*flex: 0 0 280px/s);
+    expect(twoRow).toMatch(/\.actions \{[^}]*flex: 1 1 100%/s);
+    expect(twoRow).toMatch(/\.actions > \.checkDestinations \{[^}]*flex: none/s);
+    // …and the one-row form stops the control row wrapping at all.
+    const oneRow =
+      text.match(/@container golem-config \(min-width: 800px\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(oneRow).toMatch(/\.controls \{[^}]*flex-wrap: nowrap/s);
+    expect(oneRow).toMatch(/\.actions \{[^}]*flex: none/s);
+    // [C18] A container query can never style its own container: no `.root` rule may live inside one.
+    for (const block of text.match(/@container golem-config[^{]*\{[\s\S]*?\n\}/g) ?? []) {
+      expect(block).not.toMatch(/\n\s*\.root \{/);
+    }
+  });
+
+  it('the picker popover clamps to the pane like the save popover', () => {
+    const list = css().match(/\.pickerList\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(list).toContain('width: min(320px, calc(100cqw - 32px))');
+  });
 });
 
 describe('GolemConfigWorkspace', () => {
@@ -517,8 +547,17 @@ describe('GolemConfigWorkspace', () => {
     render(<GolemConfigWorkspace onClose={onClose} />);
     await screen.findByTestId('provider-row-llama-swap');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Close configuration' }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts Close in the identity row as an icon button', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const masthead = await screen.findByTestId('golem-config-masthead');
+    const close = within(masthead).getByRole('button', { name: 'Close configuration' });
+    // First child of the masthead is the identity row; Close lives inside it, not among the actions.
+    expect(masthead.firstElementChild).toContainElement(close);
+    expect(close.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('renders no draft bar until something is staged', async () => {

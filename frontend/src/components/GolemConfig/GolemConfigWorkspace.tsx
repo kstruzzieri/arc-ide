@@ -1234,56 +1234,49 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     <div className={styles.root}>
       <div className={styles.page}>
         <header className={styles.masthead} data-testid="golem-config-masthead">
-          <h2 ref={headingRef} tabIndex={-1} className={styles.title}>
-            Golem Configuration
-          </h2>
-          {projection && (
-            <>
-              <StatusText tone={STATE_TONE[projection.state]}>
-                {STATE_LABEL[projection.state]}
-              </StatusText>
-              {/* §4.2: the projection state is the document's; a dirty draft
-                  overlays `Modified` beside it, in the same dot+text grammar
-                  the rows use, so one vocabulary reads at both scales. */}
-              {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
-              <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
-              {projection.revision !== undefined && (
-                <span className={styles.revision} title={projection.revision}>
-                  rev {projection.revision.slice(0, REVISION_HEAD)}
-                </span>
-              )}
-            </>
-          )}
-          <span className={styles.grow} />
+          <div className={styles.identity}>
+            <h2 ref={headingRef} tabIndex={-1} className={styles.title}>
+              Golem Configuration
+            </h2>
+            {projection && (
+              <div className={styles.mastheadMeta}>
+                <StatusText tone={STATE_TONE[projection.state]}>
+                  {STATE_LABEL[projection.state]}
+                </StatusText>
+                {/* §4.2: a dirty draft overlays `Modified` beside the document state. */}
+                {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
+                {projection.state !== 'missing' && (
+                  <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
+                )}
+                {projection.revision !== undefined && (
+                  <span className={styles.revision} title={projection.revision}>
+                    rev {projection.revision.slice(0, REVISION_HEAD)}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Ruling 2: Close is the identity row's corner icon, not a masthead action. */}
+            <button
+              type="button"
+              className={`${styles.button} ${styles.closeIcon}`}
+              aria-label="Close configuration"
+              disabled={sending}
+              onClick={onClose}
+            >
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M2 2l8 8M10 2l-8 8" />
+              </svg>
+            </button>
+          </div>
           {/*
-           * #263 Slice C follow-up: the source picker, the Save as profile…
-           * button, and the Refresh/Recover, Approve, and Close buttons are
-           * now ONE control group (.controlGroup) so they wrap the masthead
-           * as a UNIT — either all beside the identity block, or all
-           * together on their own line. Before this the three plain buttons
-           * were separate masthead flex items and could wrap away from the
-           * select/menu independently, splitting the controls across two
-           * lines in whatever combination the identity block's width and the
-           * select's then content-driven width happened to leave room for
-           * (defect of the 263 Slice C visual pass).
-           *
-           * Alignment is on the group's BOTTOM edge (`align-items:
-           * flex-end`): the select, the Save trigger, and the three buttons
-           * all share the same font-size/padding/border box, so their
-           * bottoms coincide regardless of what sits above any one of them.
-           * That is also why the former Actions menu's `.menuSpacer` label
-           * twin (a flex-start-only trick) is gone — flex-end does not care
-           * what is above the last item in a column, so nothing needs to
-           * fake a same-height label row over the trigger any more.
-           *
-           * The source picker's own width is now fixed (`.picker`) rather
-           * than shrink-to-fit, and the loading affordance / selected
-           * profile's description render OUTSIDE this group entirely (see
-           * `.selectDescription` below) — so neither the selected value's
-           * length nor a profile's description can change this group's
-           * size, its wrap point, or the position of anything inside it.
+           * Layout is a function of container width only (§4.7 amended). The
+           * picker is a fixed 280px column and the actions anchor BESIDE it —
+           * a right-anchored cluster shifts its left edge by 200+px whenever
+           * the conditional approval button appears (measured on the mockup).
+           * Nothing here wraps by content: the 799 and 599 container queries
+           * decide the form.
            */}
-          <span className={styles.controlGroup}>
+          <div className={styles.controls}>
             <SourcePicker
               model={selectModel}
               disabled={projection === null || sourceLocked || saving}
@@ -1349,74 +1342,85 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               saveProfileAs={saveProfileAs}
               acquireProfileRevision={acquireProfileRevision}
             />
-            {recovery ? (
+            <div className={styles.actions}>
+              {recovery ? (
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.warn}`}
+                  disabled={inFlight || sourceLoading || sending}
+                  title={
+                    inFlight || sourceLoading || sending
+                      ? 'Wait for the current operation to finish.'
+                      : undefined
+                  }
+                  onClick={() => void recover()}
+                >
+                  Recover state
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={inFlight || sourceLoading || sending}
+                  title={
+                    inFlight || sourceLoading || sending
+                      ? 'Wait for the current operation to finish.'
+                      : undefined
+                  }
+                  onClick={() => void refresh()}
+                >
+                  Refresh
+                </button>
+              )}
+              {/*
+               * Permanent (spec I15): nothing probes for missing destinations on
+               * mount and no event tells this surface when the set changes, so the
+               * action is always offered and every click asks Call 1 afresh. It
+               * needs a loaded document to have something to list against.
+               */}
               <button
                 type="button"
-                className={styles.button}
-                disabled={inFlight || sourceLoading || sending}
-                onClick={() => void recover()}
+                className={`${styles.button} ${styles.checkDestinations}`}
+                disabled={
+                  projection === null ||
+                  inFlight ||
+                  sourceLoading ||
+                  sending ||
+                  recovery ||
+                  // Locking remounts the editors, so their fields must be staged first.
+                  unstagedEditors.size > 0 ||
+                  outcome.challenge !== null ||
+                  // A settings-apply disclosure is still on screen: the dropped-
+                  // fields panel is the ONLY copy of `outcome.drops` (restageDrops
+                  // reads it), and a busy Retry keeps a request retryable. A fresh
+                  // Prepare here would replace the whole outcome and destroy either
+                  // one, so the action stays off until the user has resolved it.
+                  outcome.drops !== null ||
+                  outcome.busy ||
+                  outcome.conflict !== null
+                }
+                onClick={approveDestinations}
               >
-                Recover state
+                {APPROVE_ACTION}
               </button>
-            ) : (
-              <button
-                type="button"
-                className={styles.button}
-                disabled={inFlight || sourceLoading || sending}
-                onClick={() => void refresh()}
-              >
-                Refresh
-              </button>
-            )}
-            {/*
-             * Permanent (spec I15): nothing probes for missing destinations on
-             * mount and no event tells this surface when the set changes, so the
-             * action is always offered and every click asks Call 1 afresh. It
-             * needs a loaded document to have something to list against.
-             */}
-            <button
-              type="button"
-              className={styles.button}
-              disabled={
-                projection === null ||
-                inFlight ||
-                sourceLoading ||
-                sending ||
-                recovery ||
-                // Locking remounts the editors, so their fields must be staged first.
-                unstagedEditors.size > 0 ||
-                outcome.challenge !== null ||
-                // A settings-apply disclosure is still on screen: the dropped-
-                // fields panel is the ONLY copy of `outcome.drops` (restageDrops
-                // reads it), and a busy Retry keeps a request retryable. A fresh
-                // Prepare here would replace the whole outcome and destroy either
-                // one, so the action stays off until the user has resolved it.
-                outcome.drops !== null ||
-                outcome.busy ||
-                outcome.conflict !== null
-              }
-              onClick={approveDestinations}
-            >
-              {APPROVE_ACTION}
-            </button>
-            <button
-              type="button"
-              className={`${styles.button} ${styles.quiet}`}
-              disabled={sending}
-              onClick={onClose}
-            >
-              Close
-            </button>
+            </div>
+          </div>
+          {/* [C12][A6] A live region must pre-exist its text AND stay in the tree: this is the
+              codebase's persistent sr-only status pattern (see the card announcement regions).
+              `hidden` would lose to the author `display`, and hiding it would remove it before
+              it speaks — so the announcement and the visible spinner line are two elements. */}
+          <span
+            id={SOURCE_LOADING_ID}
+            className={styles.srOnly}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {sourceLoading ? 'Loading profile…' : ''}
           </span>
-          {/*
-           * The loading affordance and the selected profile's description
-           * live OUTSIDE .controlGroup on purpose (see the note above it):
-           * `.selectDescription` is `flex: 0 0 100%`, so each one that
-           * renders claims its own full masthead line beneath the controls
-           * and can never widen or heighten the control row above it.
-           */}
           {sourceLoading && (
-            <span id={SOURCE_LOADING_ID} className={styles.selectDescription} role="status">
+            <span className={styles.selectDescription} aria-hidden="true">
+              <span className={styles.spinner} />
               Loading profile…
             </span>
           )}

@@ -1170,7 +1170,9 @@ describe('availability matrix (§4.8)', () => {
     const user = userEvent.setup();
     await pickSource(user, /mine/, 'Yours');
     expect(sourceTrigger()).toBeDisabled();
-    expect(screen.getByText('Loading profile…')).toBeInTheDocument();
+    // [C12][A6] the sr-only status announcement and the visible spinner line
+    // are two separate elements now, both carrying the same text.
+    expect(screen.getAllByText('Loading profile…')).toHaveLength(2);
     resolveLoad(profileLoadResult('user/mine'));
     await waitFor(() => expect(sourceTrigger()).toBeEnabled());
   });

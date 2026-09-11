@@ -42,17 +42,26 @@
   box-shadow: var(--shadow-panel);
 }
 
-/* ── masthead ───────────────────────────────────────────────────────────── */
+/* Generic flex spacer, still used by RouteEditor/ProviderEditor/ApplyBar/ModelBand. */
+.grow {
+  flex: 1;
+}
+
+/* ── masthead: identity row, control row, note ──────────────────────────── */
 
 .masthead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 22px;
+  padding: 10px 14px 12px;
   border-bottom: 1px solid var(--surface-border);
   border-radius: 9px 9px 0 0;
   background-color: var(--surface-elevated);
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  min-height: 28px;
 }
 
 .title {
@@ -62,6 +71,7 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .title:focus-visible {
@@ -69,8 +79,17 @@
   outline-offset: 3px;
 }
 
-.grow {
-  flex: 1;
+/* [C16] Not `.meta`: that class is the cards' column-flex cell and is redefined later in this file. */
+.mastheadMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  flex: 1 1 100%;
+  order: 3;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .revision {
@@ -85,29 +104,55 @@
   color: var(--text-muted);
 }
 
-/*
- * #263 Slice C: the select, the Save as profile… button, and the masthead's
- * three plain buttons (Refresh/Recover, Approve, Close) are ONE control
- * group, not five independent masthead items — `flex: none` keeps the whole
- * group from splitting across a wrapped masthead row (either it all sits
- * beside the identity block, or it all drops to its own line together), and
- * `align-items: flex-end` lines up every control's BOTTOM edge: the select,
- * the Save trigger, and the buttons all share the same font-size/padding/
- * border box, so their bottoms coincide regardless of what sits above any one
- * of them (the "Source" label over the select; nothing over the buttons).
- * That is why the trigger no longer carries a `.menuSpacer` label twin to
- * fake a same-height row above it — a flex-end anchor does not care what is
- * above the last item in a column, unlike the flex-start anchor this
- * replaced. The description below the select and the loading affordance are
- * rendered OUTSIDE this group entirely (`.selectDescription`, further down)
- * so neither can change the group's size or move anything inside it.
- */
-.controlGroup {
-  display: inline-flex;
+.closeIcon {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}
+
+.closeIcon svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+/* [A7] Mobile-first: the BASE is the stacked form (picker full width, actions
+   wrapping, the check button on its own row). The min-width container queries
+   at the bottom of this file upgrade to the two-row and one-row forms. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  flex: none;
-  gap: 10px;
-  min-width: 0;
+  gap: 12px 14px;
+  margin-top: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: stretch;
+  gap: 8px;
+  flex: 1 1 100%;
+}
+
+/* [C17] Direct children are the flex items: the Save button sits inside its
+   `.menuRoot` wrapper, so the wrapper is what stretches, and the button fills it. */
+.actions > .button,
+.actions > .menuRoot {
+  flex: 1 1 auto;
+}
+
+.actions > .menuRoot > .button {
+  width: 100%;
+}
+
+.actions > .checkDestinations {
+  flex: 1 1 100%;
 }
 
 .sourceLabel {
@@ -118,20 +163,48 @@
   color: var(--text-muted);
 }
 
-/* #263 Slice C: rendered OUTSIDE .controlGroup, as a masthead sibling, so it
-   can never affect the control row's width or height — `flex: 0 0 100%`
-   claims a full new masthead line for whichever of the loading affordance /
-   selected-profile description is present, instead of growing a fixed-width
-   column's height the way it used to (the three-line-description defect of
-   the 263 Slice C visual pass). Real spacing above it comes from
-   `.masthead`'s own `gap`; the line-height stays readable for a description
-   that wraps to two or three lines. */
 .selectDescription {
-  flex: 0 0 100%;
-  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  max-width: 62ch;
   color: var(--text-muted);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
+}
+
+.spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--surface-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-top-color: var(--accent);
+  }
+}
+
+.warn {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.warn:hover:not(:disabled) {
+  border-color: var(--status-warning);
+  background-color: rgba(245, 158, 11, 0.08);
 }
 
 /* ── Source picker (#312): trigger + listbox popover ─────────────────────── */
@@ -467,8 +540,8 @@
 .body {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 18px 22px 22px;
+  gap: 14px;
+  padding: 12px 12px 14px;
 }
 
 .card {
@@ -1726,10 +1799,6 @@ select.input {
     border-left: none;
   }
 
-  .root {
-    padding: 8px;
-  }
-
   /* Stacked rows have no column header to centre under. */
   .routeGrid > *:nth-child(4) {
     text-align: left;
@@ -1781,10 +1850,52 @@ select.input {
   }
 }
 
-/* ── TWO-ROW form: >= 600 container px ─────────────────────────────────── */
+/* ── TWO-ROW form: >= 600 container px (upgrade from the stacked base) ────── */
 
 @container golem-config (min-width: 600px) {
+  .masthead {
+    padding: 12px 22px 14px;
+  }
+
+  .mastheadMeta {
+    flex: 1 1 auto;
+    order: 0;
+  }
+
   .picker {
     flex: 0 0 280px;
+  }
+
+  .actions {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    flex: 1 1 100%;
+  }
+
+  .actions > .button,
+  .actions > .menuRoot,
+  .actions > .checkDestinations {
+    flex: none;
+  }
+
+  .actions > .menuRoot > .button {
+    width: auto;
+  }
+
+  .body {
+    padding: 16px 22px 18px;
+    gap: 18px;
+  }
+}
+
+/* ── ONE-ROW form: >= 800 container px ──────────────────────────────────── */
+
+@container golem-config (min-width: 800px) {
+  .controls {
+    flex-wrap: nowrap;
+  }
+
+  .actions {
+    flex: none;
   }
 }
