@@ -11,6 +11,8 @@ const rows: ProfileInfo[] = [
   { id: 'curated/local', curated: true, description: 'Vetted local lineup' },
   { id: 'user/abacus', curated: false },
   { id: 'user/local', curated: false },
+  // [X14] A second `a…` entry, so type-ahead accumulation has something to choose between.
+  { id: 'user/acme', curated: false },
 ];
 const list = { kind: 'loaded' as const, profiles: rows };
 const model = (over: Partial<Parameters<typeof buildProfileSelectModel>[0]> = {}) =>
@@ -48,7 +50,12 @@ describe('SourcePicker', () => {
     expect(trigger()).toHaveTextContent('Yours');
     expect(trigger()).toHaveTextContent('local');
     expect(trigger()).toHaveAttribute('data-value', 'user/local');
-    // [C11] The label names the button "Source"; the current value reaches AT as its description.
+    // [C11][F2] The label names the button "Source"; the current value reaches AT as
+    // its description. The name is pinned explicitly: `<label htmlFor>` names a
+    // <button> in only some engines, so the aria-labelledby is what makes
+    // `getByRole('button', { name: 'Source' })` true in every browser.
+    expect(trigger()).toHaveAccessibleName('Source');
+    expect(trigger()).toHaveAttribute('aria-labelledby', 'golem-profile-select-label');
     expect(trigger()).toHaveAccessibleDescription(/Current source: Yours · local/);
   });
 
@@ -201,9 +208,13 @@ describe('SourcePicker', () => {
     expect(blank).toHaveAttribute('aria-disabled', 'true');
     await user.click(blank);
     expect(p.onStartBlank).not.toHaveBeenCalled();
-    expect(
-      screen.getByText('Unavailable while the configuration is Invalid or Limited.')
-    ).toBeInTheDocument();
+    // [F1] The refusal is a <p>: illegal inside a listbox, so it sits in the popover
+    // wrapper beside it and reaches the listbox through aria-describedby.
+    const list = screen.getByRole('listbox', { name: 'Source' });
+    const refusal = screen.getByText('Unavailable while the configuration is Invalid or Limited.');
+    expect(list).not.toContainElement(refusal);
+    expect(list.parentElement).toContainElement(refusal);
+    expect(list.getAttribute('aria-describedby')?.split(' ')).toContain(refusal.id);
   });
 
   it('marks a PROVEN-absent retained profile unavailable and keeps it unchoosable', async () => {
@@ -278,15 +289,23 @@ describe('SourcePicker', () => {
     expect(p.onSelect).toHaveBeenCalledWith('user/abacus');
   });
 
-  it('reveals the active option and bounds the list height', async () => {
+  it('reveals the active option on keyboard moves', async () => {
+    // [X12] jsdom has no scrollIntoView, so the stub is the only way to observe the
+    // call — and it is restored, or every later suite in this worker inherits it.
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
     const scroll = jest.fn();
     Element.prototype.scrollIntoView = scroll;
-    const p = props();
-    const user = userEvent.setup();
-    render(<SourcePicker {...p} />);
-    trigger().focus();
-    await user.keyboard('{ArrowDown}{End}');
-    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+    try {
+      const p = props();
+      const user = userEvent.setup();
+      render(<SourcePicker {...p} />);
+      trigger().focus();
+      await user.keyboard('{ArrowDown}{End}');
+      expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+    } finally {
+      if (original === undefined) delete (Element.prototype as Partial<Element>).scrollIntoView;
+      else Object.defineProperty(Element.prototype, 'scrollIntoView', original);
+    }
   });
 
   it('renders the list notice below the entries', async () => {
@@ -294,12 +313,37 @@ describe('SourcePicker', () => {
     const user = userEvent.setup();
     render(<SourcePicker {...p} />);
     await user.click(trigger());
-    expect(
-      within(screen.getByRole('listbox', { name: 'Source' })).getByText('Loading profiles…')
-    ).toBeInTheDocument();
+    // [F1] Inside the POPOVER, below the listbox — never inside the listbox, where a
+    // <p> is an illegal child — and named to the listbox as its description.
+    const list = screen.getByRole('listbox', { name: 'Source' });
+    const notice = screen.getByText('Loading profiles…');
+    expect(list).not.toContainElement(notice);
+    expect(list.parentElement).toContainElement(notice);
+    expect(list.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(list.getAttribute('aria-describedby')?.split(' ')).toContain(notice.id);
   });
 
-  it('wraps a 256-byte identifier instead of widening the trigger', () => {
+  it('accumulates type-ahead letters within the window', async () => {
+    // [X14] `a` alone is ambiguous between `abacus` and `acme`; the second letter must
+    // EXTEND the prefix rather than restart it.
+    const p = { ...props(), model: model({ source: { kind: 'applied' } }) };
+    const user = userEvent.setup();
+    render(<SourcePicker {...p} />);
+    trigger().focus();
+    await user.keyboard('{ArrowDown}a');
+    const list = () => screen.getByRole('listbox', { name: 'Source' });
+    expect(list()).toHaveAttribute(
+      'aria-activedescendant',
+      screen.getByRole('option', { name: 'abacus' }).id
+    );
+    await user.keyboard('c');
+    expect(list()).toHaveAttribute(
+      'aria-activedescendant',
+      screen.getByRole('option', { name: 'acme' }).id
+    );
+  });
+
+  it('renders a 256-byte identifier in the trigger', () => {
     // [A3] Legal identifiers can be 256 bytes; the trigger ellipsizes, the option wraps.
     const long = 'a'.repeat(256);
     const p = {

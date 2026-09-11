@@ -20,6 +20,10 @@ export const SOURCE_DESCRIPTION_ID = `${SOURCE_PICKER_ID}-desc`;
 export const SOURCE_LOADING_ID = `${SOURCE_PICKER_ID}-loading`;
 const LIST_ID = `${SOURCE_PICKER_ID}-list`;
 const LABEL_ID = `${SOURCE_PICKER_ID}-label`;
+/** [F1] The notices live OUTSIDE the listbox (a `<p>` is an illegal listbox child)
+ *  and reach it through `aria-describedby`. */
+const REFUSAL_ID = `${LIST_ID}-refusal`;
+const NOTICE_ID = `${LIST_ID}-notice`;
 
 type Group = '' | 'Curated' | 'Yours' | 'Start from';
 /** [C2] ids may not contain spaces: `aria-labelledby` splits on them. */
@@ -212,6 +216,10 @@ export function SourcePicker({
         return;
       case 'Escape':
         event.preventDefault();
+        // [X7] SaveProfileButton listens for Escape on `document`; React attaches this
+        // handler to the root container, BELOW document, so stopping propagation here
+        // keeps a picker Escape from also closing an open Save popover.
+        event.stopPropagation();
         close(true);
         return;
       // [C10] Tab departs FROM THE TRIGGER: focus it synchronously (the list unmounts), and the
@@ -302,6 +310,10 @@ export function SourcePicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={LIST_ID}
+        // [F2] The accessible NAME is exactly `Source` in every browser: `<label
+        // htmlFor>` names a <button> only in some engines, so the labelledby is
+        // explicit. The current value stays a DESCRIPTION, never part of the name.
+        aria-labelledby={LABEL_ID}
         aria-describedby={[SOURCE_CURRENT_ID, describedBy ?? '']
           .filter((id) => id !== '')
           .join(' ')}
@@ -319,19 +331,37 @@ export function SourcePicker({
         </svg>
       </button>
       {open && (
-        <div
-          ref={listRef}
-          id={LIST_ID}
-          role="listbox"
-          aria-labelledby={LABEL_ID}
-          aria-activedescendant={activeIndex === -1 ? undefined : optionId(activeIndex)}
-          tabIndex={-1}
-          className={styles.pickerList}
-          onKeyDown={onListKey}
-        >
-          {items}
-          {startRefusal !== '' && <p className={styles.menuHint}>{startRefusal}</p>}
-          {listNotice !== '' && <p className={styles.menuHint}>{listNotice}</p>}
+        // [F1] A plain popover wrapper: the listbox owns ONLY options and groups —
+        // a `<p>` among them is an illegal listbox child — and the notices sit
+        // beside it, reachable through the listbox's `aria-describedby`.
+        <div className={styles.pickerList}>
+          <div
+            ref={listRef}
+            id={LIST_ID}
+            role="listbox"
+            aria-labelledby={LABEL_ID}
+            aria-describedby={
+              [startRefusal !== '' ? REFUSAL_ID : '', listNotice !== '' ? NOTICE_ID : '']
+                .filter((id) => id !== '')
+                .join(' ') || undefined
+            }
+            aria-activedescendant={activeIndex === -1 ? undefined : optionId(activeIndex)}
+            tabIndex={-1}
+            className={styles.pickerListbox}
+            onKeyDown={onListKey}
+          >
+            {items}
+          </div>
+          {startRefusal !== '' && (
+            <p id={REFUSAL_ID} className={styles.menuHint}>
+              {startRefusal}
+            </p>
+          )}
+          {listNotice !== '' && (
+            <p id={NOTICE_ID} className={styles.menuHint}>
+              {listNotice}
+            </p>
+          )}
         </div>
       )}
     </div>
