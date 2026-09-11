@@ -5,14 +5,7 @@
  * stay apart in the list, and a group eyebrow keeps them apart while closed.
  * The popover clamps against `.root` (cqw), never the viewport (§4.7).
  */
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FocusEvent,
-  type KeyboardEvent,
-  type ReactElement,
-} from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import styles from './GolemConfig.module.css';
 import {
   START_BLANK_VALUE,
@@ -194,14 +187,6 @@ export function SourcePicker({
       openList();
     }
   };
-  /** [C10] Tab's native focus move lands outside `.root`: close (without stealing the focus
-   *  that already moved) once it does. A move within `.root` (e.g. to the trigger) is not a
-   *  departure and leaves the list open. */
-  const onListBlur = (event: FocusEvent<HTMLDivElement>) => {
-    const next = event.relatedTarget as Node | null;
-    if (rootRef.current !== null && (next === null || !rootRef.current.contains(next)))
-      close(false);
-  };
   const onListKey = (event: KeyboardEvent<HTMLDivElement>) => {
     switch (event.key) {
       case 'ArrowDown':
@@ -229,10 +214,11 @@ export function SourcePicker({
         event.preventDefault();
         close(true);
         return;
-      // [C10] Tab is left UNHANDLED (no preventDefault): the browser's own default Tab /
-      // Shift+Tab moves focus off the (still-focused) listbox to whatever is next in the real
-      // tab order. The trigger drops out of that order while open (tabIndex -1 below) so the
-      // still-mounted listbox stands in for it; `onListBlur` then closes once focus has left.
+      // [C10] Tab departs FROM THE TRIGGER: focus it synchronously (the list unmounts), and the
+      // browser's default Tab / Shift+Tab then moves to the trigger's neighbour — no preventDefault.
+      case 'Tab':
+        close(true);
+        return;
       default:
         if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
           event.preventDefault();
@@ -321,9 +307,6 @@ export function SourcePicker({
           .join(' ')}
         data-value={model.value}
         disabled={disabled}
-        // [C10] Dropped from the tab sequence while open: the still-focused, still-mounted
-        // listbox stands in the trigger's tab-order slot, so Tab/Shift+Tab move relative to IT.
-        tabIndex={open ? -1 : undefined}
         onKeyDown={onTriggerKey}
         onClick={() => (open ? close(false) : openList())}
       >
@@ -345,7 +328,6 @@ export function SourcePicker({
           tabIndex={-1}
           className={styles.pickerList}
           onKeyDown={onListKey}
-          onBlur={onListBlur}
         >
           {items}
           {startRefusal !== '' && <p className={styles.menuHint}>{startRefusal}</p>}

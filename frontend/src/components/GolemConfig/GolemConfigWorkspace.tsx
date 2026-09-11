@@ -1329,7 +1329,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
              * EXPLICITLY because `locked` does not include the drop panel —
              * which holds the visible request the same way a challenge does, and
              * a Start action would settle the draft out from under it. The
-             * SELECT above keeps the narrower `sourceLocked || saving`: a source
+             * The picker above keeps the narrower `sourceLocked || saving`: a source
              * switch is a §4.6a cancel-then-transition path, and the dirty-draft
              * guard intercepts it while a challenge or drop set stands.
              */}

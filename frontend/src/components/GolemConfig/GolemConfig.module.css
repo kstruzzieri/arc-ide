@@ -118,14 +118,14 @@
   color: var(--text-muted);
 }
 
-/* #263 Slice C: rendered OUTSIDE .controlGroup (a masthead sibling, not a
-   child of .picker any more) so it can never affect the control row's
-   width or height — `flex: 0 0 100%` claims a full new masthead line for
-   whichever of the loading affordance / selected-profile description is
-   present, instead of growing a fixed-width column's height the way it used
-   to (the three-line-description defect of the 263 Slice C visual pass).
-   Real spacing above it comes from `.masthead`'s own `gap`; the line-height
-   stays readable for a description that wraps to two or three lines. */
+/* #263 Slice C: rendered OUTSIDE .controlGroup, as a masthead sibling, so it
+   can never affect the control row's width or height — `flex: 0 0 100%`
+   claims a full new masthead line for whichever of the loading affordance /
+   selected-profile description is present, instead of growing a fixed-width
+   column's height the way it used to (the three-line-description defect of
+   the 263 Slice C visual pass). Real spacing above it comes from
+   `.masthead`'s own `gap`; the line-height stays readable for a description
+   that wraps to two or three lines. */
 .selectDescription {
   flex: 0 0 100%;
   min-width: 0;
