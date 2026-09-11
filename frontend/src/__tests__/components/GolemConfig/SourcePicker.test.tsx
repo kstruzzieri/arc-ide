@@ -110,12 +110,12 @@ describe('SourcePicker', () => {
     expect(trigger()).toHaveFocus();
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
     await user.click(trigger());
-    const shifted = fireEvent.keyDown(screen.getByRole('listbox', { name: 'Source' }), {
-      key: 'Tab',
-      shiftKey: true,
-    });
+    const reopened = screen.getByRole('listbox', { name: 'Source' });
+    expect(reopened).toHaveFocus();
+    const shifted = fireEvent.keyDown(reopened, { key: 'Tab', shiftKey: true });
     expect(shifted).toBe(true);
     expect(trigger()).toHaveFocus();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'false');
     expect(p.onSelect).not.toHaveBeenCalled();
   });
 
