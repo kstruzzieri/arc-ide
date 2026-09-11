@@ -107,14 +107,15 @@ export function ProvidersCard({
    */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
   /**
-   * The provider a jump just landed on, for ~1.4s (ruling 7), held as
-   * `<name>#<nonce>`. [K4] The nonce rides along because a SECOND jump to the same
-   * row inside the flash window is an identical `setFlash` — React bails out, the
-   * attribute never changes, and the row the user asked for twice flashes once.
+   * The provider a jump just landed on, for ~1.4s (ruling 7). [K4] The nonce rides
+   * along because a SECOND jump to the same row inside the flash window is an
+   * identical `setFlash` — React bails out, the attribute never changes, and the row
+   * the user asked for twice flashes once. [N3] Two fields, not one packed string:
+   * `#` is a legal identifier character, so `<name>#<nonce>` was ambiguous.
    */
-  const [flash, setFlash] = useState<string | null>(null);
-  const flashNonce = (name: string): string | undefined =>
-    flash !== null && flash.startsWith(`${name}#`) ? flash.slice(name.length + 1) : undefined;
+  const [flash, setFlash] = useState<{ key: string; nonce: number } | null>(null);
+  const flashNonce = (name: string): number | undefined =>
+    flash?.key === name ? flash.nonce : undefined;
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -178,7 +179,7 @@ export function ProvidersCard({
     // [C26] Never interpolate an identifier into a selector; the row carries an
     // index-derived id. `scrollIntoView` is optional-called: jsdom lacks it.
     document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
-    setFlash(rowKey === ADD_ROW_KEY ? null : `${name}#${focusRequest.nonce}`);
+    setFlash(rowKey === ADD_ROW_KEY ? null : { key: name, nonce: focusRequest.nonce });
     const timer = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(timer);
     // Both lists are stable for the life of one card mount (the workspace
@@ -270,6 +271,13 @@ export function ProvidersCard({
               </span>
             </div>
             {strips.map(({ provider, applied, editorId }) => {
+              // [N2] React identity is the LIST + NAME, never the positional
+              // `editorId`: unstaging one staged add shifts every later index, and an
+              // index-keyed strip is remounted — silently discarding the unstaged edits
+              // in its open editor (§4.6a). Names are unique within each list
+              // (`takenNames` refuses a collision), and the list half keeps an applied
+              // strip apart from a staged add of the same name [K6].
+              const identity = `${applied === null ? 'staged' : 'applied'}:${provider.name}`;
               const credential = CREDENTIAL[provider.credentialState];
               const markers = rows.get(provider.name);
               const expanded = open.has(provider.name);
@@ -297,7 +305,7 @@ export function ProvidersCard({
               const changed = markers?.modified === true || markers?.keyStaged === true;
               const row = (
                 <div
-                  key={`row:${editorId}`}
+                  key={`row:${identity}`}
                   id={`${editorId}-row`}
                   role="row"
                   data-testid={`provider-row-${provider.name}`}
@@ -420,13 +428,13 @@ export function ProvidersCard({
               );
               // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
               // key differs from the bare row's: with the same key React would reuse the row's
-              // DOM node AS the group and slide a new row inside it. [K6] Both keys are built on
-              // `editorId`, which is unique per STRIP: keying on the name alone collided an
-              // applied strip with a staged add of the same name, which a profile_source reload
-              // that keeps the draft produces.
+              // DOM node AS the group and slide a new row inside it. [K6][N2] Both keys are built
+              // on `identity` — list plus name — which is unique per STRIP and position-free:
+              // keying on the name alone collided an applied strip with a staged add of the same
+              // name, which a profile_source reload that keeps the draft produces.
               return expanded || notices.length > 0 ? (
                 <div
-                  key={`group:${editorId}`}
+                  key={`group:${identity}`}
                   role="rowgroup"
                   className={expanded ? styles.editGroup : styles.noticeGroup}
                 >

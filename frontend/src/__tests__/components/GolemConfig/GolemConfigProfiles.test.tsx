@@ -1173,6 +1173,37 @@ describe('Save as profile', () => {
     );
   });
 
+  it('drops the held focus request when the user has moved on during the save', async () => {
+    // [N1] The [K2] hold had no owner check and never expired: Escape mid-save, click
+    // Edit, start typing, and the settling RPC yanked focus out of the editor and onto
+    // the Save trigger. The request survives only while NOTHING else holds focus.
+    let settle: ((result: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+    const endpoint = screen.getByLabelText('Endpoint');
+    await user.type(endpoint, '-draft');
+    expect(endpoint).toHaveFocus();
+
+    await act(async () => {
+      settle?.({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeEnabled()
+    );
+    expect(endpoint).toHaveFocus();
+    expect(endpoint).toHaveValue('http://127.0.0.1:9292/v1-draft');
+  });
+
   // Fix for the review finding: a `role="status"` mounted together with its
   // text is generally never announced. The distinguishing proof against that
   // bug is exactly this ordering — the channel must exist, empty, BEFORE any
@@ -1271,9 +1302,13 @@ describe('availability matrix (§4.8)', () => {
         'aria-disabled',
         'true'
       );
+      // [N5] ONE refusal notice names both halves; two near-identical <p>s under one
+      // list said the same thing twice and both landed in `aria-describedby`.
       expect(
-        screen.getByText('Unavailable while the configuration is Invalid or Limited.')
-      ).toBeInTheDocument();
+        screen.getAllByText(
+          'Profiles and Start from are unavailable while the configuration is Invalid or Limited.'
+        )
+      ).toHaveLength(1);
       const option = within(list).getByRole('option', { name: 'local' });
       expect(option).toHaveAttribute('aria-disabled', 'true');
     }

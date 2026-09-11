@@ -157,11 +157,12 @@ export function RoutingCard({
    * along rather than the bare name. [K4] So does the request's nonce: a SECOND
    * jump to the same row inside the flash window is otherwise an identical
    * `setFlash`, which React bails out of — the attribute never changes and the row
-   * the user asked for twice flashes once.
+   * the user asked for twice flashes once. [N3] The two live in separate fields
+   * rather than one `<key>#<nonce>` string: `#` is a legal identifier character.
    */
-  const [flash, setFlash] = useState<string | null>(null);
-  const flashNonce = (key: string): string | undefined =>
-    flash !== null && flash.startsWith(`${key}#`) ? flash.slice(key.length + 1) : undefined;
+  const [flash, setFlash] = useState<{ key: string; nonce: number } | null>(null);
+  const flashNonce = (key: string): number | undefined =>
+    flash?.key === key ? flash.nonce : undefined;
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -209,7 +210,7 @@ export function RoutingCard({
       // [X11] A `role-remove` chip has no editor, so the defined-model row itself is
       // the target — and it flashes like any other landed jump.
       setPendingFocus({ elementId: definedRowId(name) });
-      setFlash(`role:${name}#${focusRequest.nonce}`);
+      setFlash({ key: `role:${name}`, nonce: focusRequest.nonce });
       const roleTimer = window.setTimeout(() => setFlash(null), 1400);
       return () => window.clearTimeout(roleTimer);
     }
@@ -225,7 +226,7 @@ export function RoutingCard({
     // use-case names); the row carries an index-derived id instead.
     // `scrollIntoView` is optional-called because jsdom does not implement it.
     document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
-    setFlash(`route:${name}#${focusRequest.nonce}`);
+    setFlash({ key: `route:${name}`, nonce: focusRequest.nonce });
     const timer = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(timer);
     // Routes are stable for the life of one card mount (the workspace remounts

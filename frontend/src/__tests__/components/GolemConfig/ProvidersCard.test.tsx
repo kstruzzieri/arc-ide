@@ -223,3 +223,60 @@ it('keeps an applied strip and a staged add of the same name apart', async () =>
   errors.mockRestore();
   expect(reported).not.toContain('same key');
 });
+
+it('keeps a later staged strip mounted when an earlier one is unstaged', async () => {
+  // [N2] The strips were keyed on the POSITIONAL editor id, so unstaging the first
+  // staged add shifted every later index — React remounted the next strip and its
+  // open editor's unstaged endpoint was silently discarded (§4.6a). The key is the
+  // list plus the name now, so the surviving strip keeps its identity.
+  const staged = (name: string, endpoint: string): ProviderProjection => ({
+    ...provider,
+    name,
+    endpoint,
+  });
+  const adds: Change[] = [
+    { kind: 'provider-add', name: 'alpha', endpoint: 'http://alpha.local/v1' },
+    { kind: 'provider-add', name: 'beta', endpoint: 'http://beta.local/v1' },
+  ];
+  const onStage = jest.fn();
+  const { rerender } = render(
+    <ProvidersCard
+      {...cardProps({
+        providers: [],
+        stagedProviders: [
+          staged('alpha', 'http://alpha.local/v1'),
+          staged('beta', 'http://beta.local/v1'),
+        ],
+        changes: adds,
+        onStage,
+      })}
+    />
+  );
+
+  await userEvent.click(
+    within(screen.getByTestId('provider-row-beta')).getByRole('button', { name: /Edit provider/ })
+  );
+  const endpoint = screen.getByLabelText('Endpoint');
+  await userEvent.type(endpoint, '-draft');
+  expect(endpoint).toHaveValue('http://beta.local/v1-draft');
+
+  await userEvent.click(
+    within(screen.getByTestId('provider-row-alpha')).getByRole('button', { name: /Unstage/ })
+  );
+  expect(onStage).toHaveBeenCalledWith([], ['provider:alpha', 'provider-key:alpha']);
+  // The parent's unstage lands as a shorter list, which is what shifted the indices.
+  rerender(
+    <ProvidersCard
+      {...cardProps({
+        providers: [],
+        stagedProviders: [staged('beta', 'http://beta.local/v1')],
+        changes: [adds[1]],
+        onStage,
+      })}
+    />
+  );
+
+  expect(screen.getByRole('group', { name: 'Staged provider beta' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Endpoint')).toBe(endpoint);
+  expect(endpoint).toHaveValue('http://beta.local/v1-draft');
+});

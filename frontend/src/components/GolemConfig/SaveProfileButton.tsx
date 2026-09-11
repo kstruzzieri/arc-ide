@@ -134,6 +134,10 @@ export function SaveProfileButton({
   /** A fresh object per request, so a repeated transition to the same step
    *  focuses again (mirrors RoutingCard's `pendingFocus`). */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
+  /** [N1] The element id of the request WAITING for its disabled target to come back. */
+  const held = useRef<string | null>(null);
+  const ownedElsewhere = (): boolean =>
+    document.activeElement !== null && document.activeElement !== document.body;
 
   const invalidateFlow = () => {
     flowGeneration.current += 1;
@@ -210,8 +214,23 @@ export function SaveProfileButton({
     // popover WHILE its own RPC is still in flight — so hold the request across
     // the commits that keep it disabled and spend it on the one that re-enables
     // it. `createBlocked` is that bit; the effect re-runs when it clears.
-    if (target instanceof HTMLButtonElement && target.disabled) return;
-    target?.focus();
+    if (target instanceof HTMLButtonElement && target.disabled) {
+      // [N1] …but only while nothing else owns focus. Escape closes the popover
+      // mid-save, and the user can reach an editor and start typing before the
+      // RPC settles; a request held unconditionally would then yank focus back
+      // here. Something else holding focus means the request is stale — drop it.
+      if (ownedElsewhere()) setPendingFocus(null);
+      else held.current = pendingFocus.elementId;
+      return;
+    }
+    // [N1] A HELD request is spent on the commit that re-enables the target — which
+    // is also the first commit that can observe a focus move made while it waited.
+    // An immediate request (a step transition) is not subject to this: it fires in
+    // the same flush as the change that produced it, and the control it leaves
+    // behind — the trigger that opened the popover — is legitimately still focused.
+    const stale = held.current === pendingFocus.elementId && ownedElsewhere();
+    held.current = null;
+    if (!stale) target?.focus();
     setPendingFocus(null);
   }, [pendingFocus, createBlocked]);
 
