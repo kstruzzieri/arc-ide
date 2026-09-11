@@ -290,7 +290,7 @@ there — those stay with the repository-scoped Golem state.
 - [x] Phase routing and destination admission from `go-llm` (#285) — consent-derived destination policy, capability floors for chat and commit-message routing, reachable-set admission mirroring upstream, and batch settings-apply consent with provenance, so a fallback destination cannot silently widen the granted scope
 - [x] Center panel and undocked window (#271) — a full-height center island beside the Files column with persisted per-repository order, width and collapse, command bars for both panels, drag/keyboard/palette reorder, and an optional second native window that shares the surface while the main window stays the only executing owner
 
-If the Golem consent store becomes unavailable — a banner appears, and remote egress is blocked — remove or hand-repair `~/.firn/golem-consent.json`, restart Firn, then re-consent through the chat panel, the settings surface, or the "Approve missing destinations" flow to write a fresh record. The store is opened only at startup, so refreshing configuration or approving again cannot recover it until Firn restarts with the repaired or removed file.
+If the Golem consent store becomes unavailable — a banner appears, and remote egress is blocked — remove or hand-repair `~/.firn/golem-consent.json`, restart Firn, then re-consent through the chat panel, the settings surface, or the configuration workspace's `Check destinations…` action to write a fresh record. The store is opened only at startup, so refreshing configuration or approving again cannot recover it until Firn restarts with the repaired or removed file.
 
 ### Planned
 
