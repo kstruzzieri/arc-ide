@@ -214,7 +214,12 @@ describe('ProviderEditor', () => {
     expect(edit).toHaveAttribute('aria-expanded', 'false');
 
     await userEvent.click(edit);
-    expect(edit).toHaveAttribute('aria-expanded', 'true');
+    // [C6] Re-query: expanding wrapped the row in a rowgroup keyed differently,
+    // so the node captured above is detached.
+    expect(screen.getByRole('button', { name: 'Edit provider llama-swap' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
     const editor = screen.getByRole('group', { name: 'Edit provider llama-swap' });
     expect(within(editor).queryByLabelText('Provider name')).not.toBeInTheDocument();
     expect(within(editor).getByText(/name cannot be changed/i)).toBeInTheDocument();
@@ -441,8 +446,11 @@ describe('ProviderEditor', () => {
       ],
     });
 
+    // [C6] The row-owned diagnostic is a sibling `detailRow` in the row's rowgroup.
     const row = screen.getByTestId('provider-row-hosted');
-    expect(within(row).getByText('This provider is still used by a model.')).toBeInTheDocument();
+    expect(
+      within(row.parentElement!).getByText('This provider is still used by a model.')
+    ).toBeInTheDocument();
     expect(
       within(screen.getByTestId('provider-row-llama-swap')).queryByText(
         'This provider is still used by a model.'
@@ -630,8 +638,12 @@ describe('GolemConfigWorkspace provider editing', () => {
     await openEditor('hosted');
     // The first unstaged keystroke legitimately reaches the root: it is what
     // closes the global Apply gate (§4.2). Everything after it must not.
+    // [C6] The editor is a sibling detail row in the row's rowgroup, not a child
+    // of the row: the rowgroup is the scope that owns both.
     await userEvent.type(
-      within(screen.getByTestId('provider-row-llama-swap')).getByLabelText('Endpoint'),
+      within(screen.getByTestId('provider-row-llama-swap').parentElement!).getByLabelText(
+        'Endpoint'
+      ),
       'x'
     );
 
@@ -644,7 +656,9 @@ describe('GolemConfigWorkspace provider editing', () => {
     };
 
     await userEvent.type(
-      within(screen.getByTestId('provider-row-llama-swap')).getByLabelText('New API key'),
+      within(screen.getByTestId('provider-row-llama-swap').parentElement!).getByLabelText(
+        'New API key'
+      ),
       'sk-live'
     );
 
@@ -678,7 +692,7 @@ describe('GolemConfigWorkspace provider editing', () => {
 
     const row = await screen.findByTestId('provider-row-hosted');
     expect(
-      within(row).getByText('This provider endpoint is not a usable URL.')
+      within(row.parentElement!).getByText('This provider endpoint is not a usable URL.')
     ).toBeInTheDocument();
     const page = screen.getByRole('list', { name: 'Configuration diagnostics' });
     expect(within(page).getAllByRole('listitem')).toHaveLength(1);

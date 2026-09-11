@@ -35,9 +35,12 @@ it('keeps an unstaged provider edit mounted when Edit is clicked again', async (
   await userEvent.type(endpoint, '-draft');
   expect(onUnstagedChange).toHaveBeenLastCalledWith('llama-swap', true);
 
-  await userEvent.click(edit);
+  // [C6] Re-query: expanding wrapped the row in a rowgroup with a different React
+  // key, so the node captured above is detached and clicking it reaches nothing.
+  const reopened = screen.getByRole('button', { name: 'Edit provider llama-swap' });
+  await userEvent.click(reopened);
 
-  expect(edit).toHaveAttribute('aria-expanded', 'true');
+  expect(reopened).toHaveAttribute('aria-expanded', 'true');
   expect(editor).toHaveFocus();
   expect(screen.getByLabelText('Endpoint')).toBe(endpoint);
   expect(endpoint).toHaveValue('http://127.0.0.1:9292/v1-draft');

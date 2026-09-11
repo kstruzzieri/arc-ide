@@ -2,8 +2,8 @@
  * Golem configuration workspace (#263 Slice B, spec §4, mockup v10).
  *
  * Grammar, verbatim from §4.7: only buttons are filled; status is a dot plus
- * plain text, never a bordered pill; cards hold separated row strips; errors
- * render inside the strip that owns them. Data is plain text with mono
+ * plain text, never a bordered pill; cards hold tables of records; errors
+ * render inside the row group that owns them. Data is plain text with mono
  * identifiers. Instructional copy never drops below --text-muted (6.71:1 on
  * --surface-panel); --text-disabled is reserved for the inert em-dash placeholder
  * and for status dots, which always carry a text label beside them.
@@ -12,10 +12,10 @@
  * --panel/--elevated/--hover/--border/--tp/--ts/--tm/--td/--accent/--teal/
  * --warn/--red map 1:1 onto the tokens used below), so nothing is re-declared.
  *
- * Width: the page caps at 920px and the ROOT is the container. Below 720px of
- * container width the column strips stack into label/value rows, so a narrow
- * centre pane never scrolls horizontally — no viewport media query and no
- * width prop is involved.
+ * Width: the page caps at 920px and the ROOT is the container. [A7] The BASE is
+ * the stacked record form, so a narrow centre pane never scrolls horizontally;
+ * the column-aligned table is an upgrade at >= 600 container px — no viewport
+ * media query and no width prop is involved.
  */
 
 .root {
@@ -524,15 +524,33 @@
 }
 
 .status[data-tone='ok'] .statusDot {
-  background-color: var(--accent-go);
+  background-color: var(--status-success);
+  box-shadow: 0 0 0 1px var(--status-success) inset;
 }
 
 .status[data-tone='warn'] .statusDot {
   background-color: var(--status-warning);
+  box-shadow: 0 0 0 1px var(--status-warning) inset;
 }
 
 .status[data-tone='bad'] .statusDot {
   background-color: var(--palette-red);
+  box-shadow: 0 0 0 1px var(--palette-red) inset;
+}
+
+/* Ruling 10: Limited is a hollow amber ring; Missing / No model a hollow muted ring. */
+.status[data-tone='limited'] .statusDot {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--status-warning) inset;
+}
+
+.status[data-tone='dim'] .statusDot {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--text-muted) inset;
+}
+
+.status[data-tone='dim'] {
+  color: var(--text-muted);
 }
 
 /* ── body + cards ───────────────────────────────────────────────────────── */
@@ -550,26 +568,32 @@
   background-color: var(--surface-panel);
 }
 
-/*
- * No left accent bar. A 3px rule down one rounded edge reads as a stray sliver
- * rather than structure; the header already separates itself with its own
- * background and its bottom border.
- */
+/* ── tables (#308, [A7] mobile-first): the BASE is the record form; the
+   column-aligned table is an upgrade inside @supports + the >= 600 container
+   query at the end of this file ─────────────────────────────────────────────
+
+   No left accent bar. A 3px rule down one rounded edge reads as a stray sliver
+   rather than structure; the header already separates itself with its own
+   background and its bottom border. */
 .cardHead {
   display: flex;
+  /* Kept wrapping: the hint and the Add button must fall to a second line in a
+     narrow pane rather than push the card into a horizontal scroll. */
   flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--surface-border);
   border-radius: 9px 9px 0 0;
-  background-color: var(--surface-hover);
+  background-color: var(--surface-elevated);
 }
 
 .cardTitle {
   margin: 0;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text-primary);
 }
 
@@ -581,61 +605,15 @@
 .cardBody {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px 12px 12px;
-}
-
-/*
- * The header row and the strips below it are SEPARATE grids that must line up,
- * so they share one template per card (.providerGrid / .routeGrid /
- * .definedGrid) and one horizontal inset. The inset is 15px, not 14px, because
- * a strip carries a 1px border and the header does not — with border-box that
- * is 1px of content-box offset the header has to match.
- */
-.columns {
-  display: grid;
-  gap: 14px;
-  padding: 2px 15px 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.rows {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin: 0;
   padding: 0;
-  list-style: none;
 }
 
-/* A row is its strip plus whatever the strip owns: its diagnostics and, while
-   it is expanded, its editor. */
-.row {
-  display: flex;
-  flex-direction: column;
+.table {
+  display: block;
 }
 
-.strip {
-  display: grid;
-  gap: 14px;
-  align-items: center;
-  padding: 9px 14px;
-  border: 1px solid var(--surface-border-subtle);
-  border-radius: 8px;
-  background-color: var(--surface-frame);
-}
-
-/*
- * Each cell names its own column, because the visible header row above the
- * strips is decorative. Visually hidden while that header row is showing, and
- * promoted to a real stacked label under the narrow container query below — one
- * element serving both, so nothing is announced twice.
- */
-.cellLabel {
+/* Visually hidden, never removed: the column names stay in the tree at every width. */
+.headRow {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -647,68 +625,171 @@
   border: 0;
 }
 
-/*
- * The expanded strip is the open editor's MASTHEAD: the record's title bar,
- * not another row of the editable surface below. It takes one surface step up
- * from the strips' frame fill (the same header idiom .cardHead uses), keeps
- * its full-width hairline beneath, and shares the editor's accent edge.
- * Closed strips stay on the flat frame fill, so the open row is the one that
- * pops.
- */
-.strip[data-expanded] {
-  border-color: var(--accent);
-  border-bottom-color: var(--surface-border-subtle);
-  border-radius: 8px 8px 0 0;
-  background-color: var(--surface-hover);
-}
-
-/* The record's identity leads the masthead — one size up from every other
-   cell in the row (weight is already 700 on the base class). */
-.strip[data-expanded] .useCase {
-  font-size: 13px;
-}
-
-/* The metadata trail (provider, model) steps back to secondary ink so the
-   name and the live state carry the row. .meta cells are muted already. */
-.strip[data-expanded] .value {
-  color: var(--text-muted);
-}
-
-/* The live-state signal: "editing…" reads in accent, dot and text, so the
-   eye lands on the state after the name. Copy still carries the meaning. */
-.strip[data-expanded] .status {
-  color: var(--accent);
-}
-
-.strip[data-expanded] .statusDot {
-  background-color: var(--accent);
-}
-
-/*
- * Every template below ends in a FIXED actions track, never `auto`. An `auto`
- * track sizes to its content, and the header's actions cell is empty while a
- * strip's holds a status and one or two buttons — so `auto` resolved to 0 in
- * the header and ~60-160px in the rows, and the `1fr` column swallowed the
- * difference. That pushed every column AFTER the `1fr` to the right in the
- * header only, which is exactly the drift Keith saw on THINK and STATUS.
- *
- * ponytail: a fixed reserve, sized to each card's ordinary row. The rare wide
- * row (a staged provider's extra Unstage, a defined model's "Unstage removal"
- * beside "Needs review") wraps inside .rowActions rather than widening the
- * track. `grid-template-columns: subgrid` is the real fix and needs the header
- * and the strips to share one grid container — a DOM change that would break
- * the list semantics the rows carry, so it waits for a reason bigger than this.
- */
-.providerGrid {
-  grid-template-columns: 130px 1fr 110px 150px 172px;
-}
-
-.rowActions {
+/* A record: name + status + Edit on line 1, the long value on line 2, mono labels on line 3. */
+.row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 4px 10px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.table > .row:nth-child(even) {
+  background-color: rgba(2, 6, 23, 0.32);
+}
+
+.table > .row:hover,
+.editGroup > .row:hover {
+  background-color: var(--surface-hover);
+}
+
+.table > .row:last-child {
+  border-bottom: 0;
+}
+
+.cell {
+  min-width: 0;
+}
+
+.recordLabel {
+  display: inline;
+  margin-right: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/*
+ * [A3] Identifiers can be 256 bytes: they wrap, never nowrap. Scoped to `.row`,
+ * because the shipped `.identifier` also dresses the grant prompt's model cell
+ * and the provider editor's fixed name — neither of which is a record field,
+ * and both of which an `order` would silently reshuffle.
+ */
+.row > .identifier,
+.row > .useCase {
+  flex: 1 1 auto;
+  order: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.statusCell {
+  order: 2;
+}
+
+.actionsCell {
+  order: 3;
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
+}
+
+.endpointCell {
+  flex: 1 1 100%;
+  order: 4;
+}
+
+.providerCell {
+  order: 4;
+  flex: 0 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.providerCell::after {
+  content: '›';
+  margin-left: 8px;
+  color: var(--text-disabled);
+}
+
+.modelCell {
+  order: 5;
+  flex: 1 1 auto;
+}
+
+.metaCell {
+  order: 6;
+}
+
+.endpointCell,
+.modelCell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.providerCell,
+.metaCell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Groups and detail rows stack in the record form. */
+.noticeGroup,
+.editGroup,
+.detailRow {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ruling 6: the open row and its editor are ONE outlined group, inset from the card edges. */
+.editGroup {
+  margin: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background-color: var(--surface-elevated);
+  /* One value, not two: prettier splits any multi-value box-shadow across lines,
+     and the accent halo is the group's whole elevation signal anyway. */
+  box-shadow: 0 0 0 3px rgba(18, 181, 205, 0.12);
+}
+
+.editGroup > .row {
+  border-bottom: 1px solid var(--surface-border);
+  border-radius: 7px 7px 0 0;
+}
+
+.editGroup + .row {
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+.row[data-expanded] .useCase,
+.row[data-expanded] .identifier {
+  color: var(--accent);
+}
+
+.editingTag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background-color: rgba(18, 181, 205, 0.14);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  color: var(--accent);
+  vertical-align: 1px;
+}
+
+.editorCell {
+  min-width: 0;
 }
 
 /* ── row editor ─────────────────────────────────────────────────────────── */
@@ -716,10 +797,9 @@
 .editor {
   margin: 0;
   padding: 12px 14px 14px;
-  border: 1px solid var(--accent);
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
-  background-color: var(--surface-frame);
+  border: 0;
+  border-radius: 0 0 7px 7px;
+  background-color: var(--surface-elevated);
 }
 
 .editorLegend {
@@ -738,7 +818,7 @@
  */
 .editorGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px 18px;
   align-items: start;
 }
@@ -1443,11 +1523,12 @@ select.input {
 }
 
 .rowDiagnostic {
+  grid-column: 1 / -1;
   margin: 0;
   padding: 7px 14px;
-  border: 1px solid var(--surface-border);
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
+  border: 0;
+  border-top: 1px solid var(--surface-border-subtle);
+  border-radius: 0;
   background-color: var(--surface-panel);
   font-size: 12px;
   line-height: 1.5;
@@ -1666,57 +1747,11 @@ select.input {
   gap: 8px;
 }
 
-/* Routing rows carry exactly one button (Edit or Assign): a narrow reserve. */
-.routeGrid {
-  grid-template-columns: 90px 120px 1fr 70px 120px 76px;
-}
-
-/*
- * THINK holds one short enumerated value, or an em-dash when there is none. Left
- * ragged in a 70px column it lands under the first letters of its own header and
- * reads as misaligned, so the column centres — header and values together, so
- * `auto` and the placeholder sit in the same place.
- */
-.routeGrid > *:nth-child(4) {
-  text-align: center;
-}
-
-.thinkCell {
-  align-items: center;
-}
-
-.definedGrid {
-  grid-template-columns: 130px 130px 1fr 152px;
-}
-
 .identifier {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-primary);
   overflow-wrap: anywhere;
-}
-
-.useCase {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.value {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .metaSub {
@@ -1752,7 +1787,7 @@ select.input {
 
 .subgroup {
   margin: 10px 0 0;
-  padding: 0 2px;
+  padding: 0 14px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -1790,8 +1825,8 @@ select.input {
 
 .diagnostic {
   display: grid;
-  grid-template-columns: 74px 1fr;
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 4px;
   align-items: baseline;
   padding: 8px 14px;
   border: 1px solid var(--surface-border);
@@ -1854,7 +1889,7 @@ select.input {
   border: 0;
 }
 
-/* ── narrow container: strips stack, nothing scrolls sideways ───────────── */
+/* ── narrow container: the route editor's master-detail strip stacks ─────── */
 
 @container golem-config (max-width: 720px) {
   /* The strip stacks: facts over exposure, the hairline becoming a rule. */
@@ -1868,56 +1903,6 @@ select.input {
     padding-left: 0;
     border-top: 1px solid var(--surface-border-subtle);
     border-left: none;
-  }
-
-  /* Stacked rows have no column header to centre under. */
-  .routeGrid > *:nth-child(4) {
-    text-align: left;
-  }
-
-  .thinkCell {
-    align-items: flex-start;
-  }
-
-  .columns {
-    display: none;
-  }
-
-  .providerGrid,
-  .routeGrid,
-  .definedGrid {
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
-
-  .rowActions {
-    justify-content: flex-start;
-  }
-
-  .editorGrid {
-    grid-template-columns: 1fr;
-  }
-
-  /* The column header row is gone, so each cell's own label becomes visible. */
-  .cellLabel {
-    position: static;
-    display: block;
-    width: auto;
-    height: auto;
-    padding: 0;
-    margin: 0;
-    overflow: visible;
-    clip: auto;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .diagnostic {
-    grid-template-columns: 1fr;
-    gap: 4px;
   }
 }
 
@@ -1993,5 +1978,112 @@ select.input {
 
   .actions {
     flex: none;
+  }
+}
+
+/* ── the table upgrade: column-aligned rows, header band, bounded identifier
+   columns. [A7][C19] Last block in the file on purpose: the masthead guard
+   matches the FIRST `@container golem-config (min-width: 600px)`, which must
+   stay the masthead's — and the stylesheet guard proves the upgrade's only
+   mechanism never leaks outside this feature query. */
+
+@supports (grid-template-columns: subgrid) {
+  @container golem-config (min-width: 600px) {
+    .table {
+      display: grid;
+    }
+
+    /* Only the long, variable-length columns are fluid; identifiers are bounded (A3). */
+    .providerTable {
+      grid-template-columns: fit-content(200px) minmax(0, 1fr) max-content max-content max-content;
+    }
+
+    .routeTable {
+      /* Kept on one line: prettier would fold the six tracks past 80 columns
+         into an unreadable split, and the stylesheet guard pins the template. */
+      /* prettier-ignore */
+      grid-template-columns: fit-content(200px) fit-content(200px) minmax(0, 1fr) max-content max-content max-content;
+    }
+
+    .definedTable {
+      grid-template-columns: fit-content(200px) fit-content(200px) minmax(0, 1fr) max-content;
+    }
+
+    .row,
+    .headRow {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      align-items: baseline;
+      column-gap: 18px;
+      padding: 10px 14px;
+    }
+
+    /* Three tones: title band (elevated) > header band (frame) > rows (panel, alternating). */
+    .headRow {
+      position: static;
+      width: auto;
+      height: auto;
+      margin: 0;
+      overflow: visible;
+      clip: auto;
+      padding: 8px 14px;
+      background-color: var(--surface-frame);
+      border-bottom: 1px solid var(--surface-border);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      line-height: 1.4;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .recordLabel {
+      display: none;
+    }
+
+    .row > .identifier,
+    .row > .useCase,
+    .statusCell,
+    .actionsCell,
+    .endpointCell,
+    .providerCell,
+    .modelCell,
+    .metaCell {
+      order: 0;
+      flex: none;
+    }
+
+    .providerCell::after {
+      content: none;
+    }
+
+    .noticeGroup,
+    .editGroup,
+    .detailRow {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
+
+    .editGroup {
+      margin: 6px 8px;
+    }
+
+    .editorCell {
+      grid-column: 1 / -1;
+    }
+
+    /* The editor's own two-column belowgrid and the page diagnostics list join
+       the upgrade here: the base stacks both. */
+    .editorGrid {
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+
+    .diagnostic {
+      grid-template-columns: 74px 1fr;
+      gap: 10px;
+    }
   }
 }

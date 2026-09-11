@@ -103,16 +103,46 @@ describe('GolemConfig stylesheet', () => {
     expect(css()).not.toContain('data-blocking');
   });
 
-  // The open editor's masthead (the expanded strip): its own surface step, the
-  // use case promoted, the metadata demoted, the live state in accent. Whether
-  // the contrast READS is Keith's call — this pins that the knobs exist.
-  it('elevates the expanded strip into a masthead band', () => {
-    expect(css()).toMatch(
-      /\.strip\[data-expanded\] \{[^}]*background-color: var\(--surface-hover\)/s
+  it('upgrades records to subgrid tables only where subgrid exists, squeezing only the long columns', () => {
+    const text = css();
+    // [A7] The BASE is the record form: the header row is hidden VISUALLY (never removed
+    // from the tree) and the inline labels show.
+    expect(text.match(/^\.headRow \{[^}]*\}/ms)?.[0]).toMatch(/clip: rect\(0, 0, 0, 0\)/);
+    expect(text.match(/^\.headRow \{[^}]*\}/ms)?.[0]).not.toMatch(/display: none/);
+    expect(text.match(/^\.recordLabel \{[^}]*\}/ms)?.[0]).toMatch(/display: inline/);
+    // The table form lives inside @supports (subgrid) AND the >= 600 container query.
+    const supports =
+      text.match(/@supports \(grid-template-columns: subgrid\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(supports).toMatch(/@container golem-config \(min-width: 600px\)/);
+    // [A3] Identifier columns are bounded and wrap; only short enumerated columns are max-content.
+    expect(supports).toMatch(
+      /\.providerTable \{[^}]*grid-template-columns: fit-content\(200px\) minmax\(0, 1fr\) max-content max-content max-content/s
     );
-    expect(css()).toMatch(/\.strip\[data-expanded\] \.useCase \{[^}]*font-size: 13px/s);
-    expect(css()).toMatch(/\.strip\[data-expanded\] \.value \{[^}]*color: var\(--text-muted\)/s);
-    expect(css()).toMatch(/\.strip\[data-expanded\] \.status \{[^}]*color: var\(--accent\)/s);
+    expect(supports).toMatch(
+      /\.routeTable \{[^}]*grid-template-columns: fit-content\(200px\) fit-content\(200px\) minmax\(0, 1fr\) max-content max-content max-content/s
+    );
+    expect(supports).toMatch(
+      /\.definedTable \{[^}]*grid-template-columns: fit-content\(200px\) fit-content\(200px\) minmax\(0, 1fr\) max-content/s
+    );
+    expect(supports).toMatch(/\.row,\s*\.headRow \{[^}]*grid-template-columns: subgrid/s);
+    expect(supports).toMatch(/\.headRow \{[^}]*position: static/s);
+    expect(supports).toMatch(/\.recordLabel \{[^}]*display: none/s);
+    expect(text).not.toMatch(/\.(identifier|useCase|providerCell) \{[^}]*white-space: nowrap/s);
+    // Editing group outline and the three tones.
+    expect(text).toMatch(/\.editGroup \{[^}]*border: 1px solid var\(--accent\)/s);
+    expect(text).toMatch(/\.editGroup \{[^}]*box-shadow: 0 0 0 3px rgba\(18, 181, 205, 0\.12\)/s);
+    expect(text).toMatch(/\.cardHead \{[^}]*background-color: var\(--surface-elevated\)/s);
+    expect(supports).toMatch(/\.headRow \{[^}]*background-color: var\(--surface-frame\)/s);
+    expect(text).toMatch(/\.table > \.row:nth-child\(even\) \{[^}]*rgba\(2, 6, 23, 0\.32\)/s);
+  });
+
+  it('never relies on subgrid outside the @supports block', () => {
+    // [A7][C19] A Safari 15 WebKit gets the record form at every width — usable, aligned by
+    // construction — instead of independently sized rows pretending to be a table.
+    const text = css();
+    const outside = text.replace(/@supports \(grid-template-columns: subgrid\) \{[\s\S]*?\n\}/, '');
+    expect(outside).not.toMatch(/subgrid/);
+    expect(text).not.toMatch(/@supports not/);
   });
 
   // One control box for every single-line field, on the BASE class: a
@@ -262,34 +292,86 @@ describe('GolemConfigWorkspace', () => {
     expect(within(row).getByText('Ready')).toBeInTheDocument();
   });
 
-  it('gives every strip a row boundary and names each column inside it', async () => {
+  it('renders each card as a table whose header names the columns once', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
 
     const providerRow = await screen.findByTestId('provider-row-llama-swap');
-    const providers = screen.getByRole('list', { name: 'Providers' });
-    expect(within(providers).getAllByRole('listitem')).toEqual([providerRow]);
-    for (const column of ['Provider', 'Endpoint', 'Type', 'API key']) {
-      expect(within(providerRow).getByText(column)).toBeInTheDocument();
-    }
+    const providers = screen.getByRole('table', { name: 'Providers' });
+    expect(within(providers).getAllByRole('row').slice(1)).toEqual([providerRow]);
+    expect(
+      within(providers)
+        .getAllByRole('columnheader')
+        .map((h) => h.textContent)
+    ).toEqual(['Provider', 'Endpoint', 'Type', 'API key', 'Actions']);
+    expect(within(providerRow).getAllByRole('cell')).toHaveLength(5);
 
     const routeRow = screen.getByTestId('route-row-agent');
-    const routes = screen.getByRole('list', { name: 'Model routing' });
+    const routes = screen.getByRole('table', { name: 'Model routing' });
     // §4.1: the rows are Firn's known use cases plus the authored ones, so a
     // known use case with no route is an offer rather than an omission.
-    expect(within(routes).getAllByRole('listitem')).toEqual([
+    expect(within(routes).getAllByRole('row').slice(1)).toEqual([
       routeRow,
       screen.getByTestId('route-row-chat'),
       screen.getByTestId('route-row-embedding'),
       screen.getByTestId('route-row-planning'),
     ]);
-    for (const column of ['Use case', 'Provider', 'Model', 'Think', 'Status']) {
-      expect(within(routeRow).getByText(column)).toBeInTheDocument();
+    expect(
+      within(routes)
+        .getAllByRole('columnheader')
+        .map((h) => h.textContent)
+    ).toEqual(['Use case', 'Provider', 'Model', 'Think', 'Status', 'Actions']);
+    // The record-form inline labels are visual echoes only — never a second announcement.
+    for (const label of within(routeRow).queryAllByText(/^(Think|Type|API key)$/)) {
+      expect(label).toHaveAttribute('aria-hidden', 'true');
     }
+  });
 
-    // The visible header row is decorative, so the per-cell labels are the only
-    // column names the accessibility tree carries — no double announcement.
-    expect(providers.previousElementSibling).toHaveAttribute('aria-hidden', 'true');
-    expect(routes.previousElementSibling).toHaveAttribute('aria-hidden', 'true');
+  it('wraps an open route row and its editor in one rowgroup', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await userEvent.click(
+      within(await screen.findByTestId('route-row-agent')).getByRole('button', { name: /^Edit/ })
+    );
+    // [C6] Re-query after expansion: the row is re-rendered inside a NEW wrapper (distinct React
+    // key), so a reference captured before the click must not be reused — and the group must be a
+    // different node from the row, or "contains" would be self-containment.
+    const row = screen.getByTestId('route-row-agent');
+    const group = screen.getByRole('rowgroup');
+    expect(group).not.toBe(row);
+    expect(row).toHaveAttribute('role', 'row');
+    expect(group).toContainElement(row);
+    const editor = screen.getByRole('group', { name: 'Route agent' });
+    expect(group).toContainElement(editor);
+    expect(editor.closest('[role="cell"]')).toHaveAttribute('aria-colspan', '6');
+    expect(within(row).getByText('editing')).toBeInTheDocument();
+  });
+
+  it('Cancel returns focus to the row Edit button in both cards', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const providerEdit = within(await screen.findByTestId('provider-row-llama-swap')).getByRole(
+      'button',
+      { name: /^Edit/ }
+    );
+    await userEvent.click(providerEdit);
+    await userEvent.click(
+      within(screen.getByRole('group', { name: 'Edit provider llama-swap' })).getByRole('button', {
+        name: 'Cancel',
+      })
+    );
+    // [C22] Re-query: the row remounted when its rowgroup wrapper went away.
+    expect(
+      within(screen.getByTestId('provider-row-llama-swap')).getByRole('button', { name: /^Edit/ })
+    ).toHaveFocus();
+    await userEvent.click(
+      within(screen.getByTestId('route-row-agent')).getByRole('button', { name: /^Edit/ })
+    );
+    await userEvent.click(
+      within(screen.getByRole('group', { name: 'Route agent' })).getByRole('button', {
+        name: 'Cancel',
+      })
+    );
+    expect(
+      within(screen.getByTestId('route-row-agent')).getByRole('button', { name: /^Edit/ })
+    ).toHaveFocus();
   });
 
   it('keeps meaningful placeholder copy off the disabled-contrast class', async () => {
@@ -315,10 +397,10 @@ describe('GolemConfigWorkspace', () => {
     // bare em-dash. Both of these are the reader's only lead on what is wrong,
     // so they must sit on a class that clears the §4.7 floor.
     const providerRow = await screen.findByTestId('provider-row-llama-swap');
-    expect(within(providerRow).getByText('no endpoint')).toHaveClass('value');
+    expect(within(providerRow).getByText('no endpoint')).toHaveClass('endpointCell');
 
     const routeRow = screen.getByTestId('route-row-embedding');
-    expect(within(routeRow).getByText('role ghost has no model')).toHaveClass('value');
+    expect(within(routeRow).getByText('role ghost has no model')).toHaveClass('modelCell');
   });
 
   it('marks a route with no resolvable model as No model', async () => {
@@ -442,8 +524,10 @@ describe('GolemConfigWorkspace', () => {
     // §4.3 puts its diagnostic there — which is the same disambiguation by a
     // different route: neither reader ever sees a bare "agent".
     expect(await screen.findByText('provider agent')).toBeInTheDocument();
+    // [C6] A row-owned diagnostic is a sibling `detailRow` inside the row's
+    // rowgroup, not a child of the row: the rowgroup is the scope that owns both.
     expect(
-      within(screen.getByTestId('route-row-agent')).getByText(
+      within(screen.getByTestId('route-row-agent').parentElement!).getByText(
         'The agent model must support chat, stream, and tool_call.'
       )
     ).toBeInTheDocument();

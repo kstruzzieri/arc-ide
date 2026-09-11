@@ -58,9 +58,12 @@ it('keeps an unstaged route edit mounted when Edit is clicked again', async () =
   await userEvent.type(modelName, '-edited');
   expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('chat'), true);
 
-  await userEvent.click(edit);
+  // [C6] Re-query: expanding wrapped the row in a rowgroup keyed differently,
+  // so the node captured above is detached.
+  const reopened = screen.getByRole('button', { name: 'Edit route chat' });
+  await userEvent.click(reopened);
 
-  expect(edit).toHaveAttribute('aria-expanded', 'true');
+  expect(reopened).toHaveAttribute('aria-expanded', 'true');
   expect(editor).toHaveFocus();
   expect(screen.getByLabelText('Model name')).toBe(modelName);
   expect(modelName).toHaveValue('draft-model-edited');
@@ -93,9 +96,10 @@ it('keeps an unstaged route assignment mounted when Assign is clicked again', as
   await userEvent.type(modelName, '-edited');
   expect(screen.getByRole('button', { name: 'Done' })).toHaveAttribute('data-unstaged', 'true');
 
-  await userEvent.click(assign);
+  const reopened = screen.getByRole('button', { name: 'Assign route embedding' });
+  await userEvent.click(reopened);
 
-  expect(assign).toHaveAttribute('aria-expanded', 'true');
+  expect(reopened).toHaveAttribute('aria-expanded', 'true');
   expect(editor).toHaveFocus();
   expect(screen.getByLabelText('Model name')).toBe(modelName);
   expect(modelName).toHaveValue('draft-embedding-edited');
@@ -120,13 +124,13 @@ describe('route editor Done (firn-ide#284)', () => {
    * While an editor is open, ModelBand mounts its OWN `role="status"` live
    * region for the filter match count — a second `status` role that makes a
    * plain `getByRole('status')` ambiguous. The card's persistent region is
-   * the one that lives outside the routing rows list; that structural fact,
+   * the one that lives outside the routing table; that structural fact,
    * not its text, is what picks it out.
    */
   const announcementRegion = () =>
     screen
       .getAllByRole('status')
-      .find((region) => !screen.getByRole('list', { name: 'Model routing' }).contains(region));
+      .find((region) => !screen.getByRole('table', { name: 'Model routing' }).contains(region));
 
   it('closes the editor, restores focus to Edit, and announces from a region that survives', async () => {
     const user = userEvent.setup();

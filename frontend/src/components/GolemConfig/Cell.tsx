@@ -1,13 +1,8 @@
 /**
- * One labelled cell of a row strip.
- *
- * The visible column-header row is decorative (`aria-hidden`), so each cell
- * carries its own column name. The label is a real element rather than
- * generated `::before` content: it is the accessible name of the cell at every
- * width, and it simply stops being visually hidden under the narrow container
- * query, where the header row is dropped and the strip stacks. One mechanism
- * instead of a screen-reader label plus a CSS-only visual label that would
- * double-announce.
+ * One cell of a table row. The header row carries the column names for
+ * assistive technology at every width (it is visually hidden, never removed,
+ * below 600 container px), so the optional `label` here is an aria-hidden
+ * visual echo (`TYPE`, `API KEY`, `THINK`) shown only in the record form.
  */
 
 import type { ReactNode } from 'react';
@@ -18,13 +13,17 @@ export function Cell({
   className,
   children,
 }: {
-  label: string;
+  label?: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <span className={className}>
-      <span className={styles.cellLabel}>{label}</span>
+    <span role="cell" className={`${styles.cell} ${className ?? ''}`}>
+      {label !== undefined && (
+        <b className={styles.recordLabel} aria-hidden="true">
+          {label}
+        </b>
+      )}
       {children}
     </span>
   );

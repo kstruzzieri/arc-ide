@@ -109,7 +109,7 @@ const STATE_LABEL: Record<SettingsProjection['state'], string> = {
 
 const STATE_TONE: Record<SettingsProjection['state'], StatusTone> = {
   ready: 'ok',
-  limited: 'warn',
+  limited: 'limited',
   invalid: 'bad',
   missing: 'dim',
 };

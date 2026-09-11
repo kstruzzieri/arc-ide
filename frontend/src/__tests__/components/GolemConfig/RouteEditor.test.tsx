@@ -206,7 +206,8 @@ describe('RoutingCard rows', () => {
       ],
     });
     const text = 'This model does not meet every affected use-case requirement.';
-    expect(within(routeCells('chat')).getByText(text)).toBeInTheDocument();
+    // [C6] A row-owned diagnostic is a sibling detail row in the row's rowgroup.
+    expect(within(routeCells('chat').parentElement!).getByText(text)).toBeInTheDocument();
     expect(within(routeCells('agent')).queryByText(text)).not.toBeInTheDocument();
   });
 
@@ -276,10 +277,11 @@ describe('RoutingCard defined models', () => {
       providers: [providerRow(), providerRow({ name: 'zeta-local' })],
     });
 
-    const defined = screen.getByRole('list', { name: 'Defined models' });
+    const defined = screen.getByRole('table', { name: 'Defined models' });
     expect(
       within(defined)
-        .getAllByRole('listitem')
+        .getAllByRole('row')
+        .slice(1)
         .map((row) => row.getAttribute('data-testid'))
     ).toEqual([
       'defined-model-row-a-hosted',
@@ -316,7 +318,12 @@ describe('RouteEditor', () => {
     const edit = screen.getByRole('button', { name: 'Edit route chat' });
     expect(edit).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(edit);
-    expect(edit).toHaveAttribute('aria-expanded', 'true');
+    // [C6] Re-query: expanding wrapped the row in a rowgroup keyed differently,
+    // so the node captured above is detached.
+    expect(screen.getByRole('button', { name: 'Edit route chat' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
 
     const editor = screen.getByRole('group', { name: 'Route chat' });
     expect(within(editor).getByLabelText('Provider')).toHaveValue('hosted');
@@ -1132,7 +1139,10 @@ describe('GolemConfigWorkspace route editing', () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
     const row = await screen.findByTestId('route-row-chat');
 
-    expect(within(row).getByText('Model eligibility is still unverified.')).toBeInTheDocument();
+    // [C6] The row-owned diagnostic is a sibling `detailRow` in the row's rowgroup.
+    expect(
+      within(row.parentElement!).getByText('Model eligibility is still unverified.')
+    ).toBeInTheDocument();
     const page = screen.getByRole('list', { name: 'Configuration diagnostics' });
     expect(within(page).getAllByRole('listitem')).toHaveLength(1);
     expect(within(page).getByText('use case ghost')).toBeInTheDocument();

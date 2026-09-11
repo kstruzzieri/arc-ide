@@ -387,7 +387,7 @@ describe('terminal apply results', () => {
     const order = (el: Element | null) =>
       [...page.children].findIndex((child) => child === el || child.contains(el as Node));
 
-    const routing = screen.getByRole('list', { name: 'Model routing' });
+    const routing = screen.getByRole('table', { name: 'Model routing' });
     expect(order(notice)).toBeGreaterThan(order(routing));
     expect(order(screen.getByRole('button', { name: 'Retry' }))).toBeGreaterThan(order(routing));
     // And the bar it belongs to is last.
@@ -543,7 +543,10 @@ describe('terminal apply results', () => {
     await clickApply();
 
     const row = await screen.findByTestId('provider-row-hosted');
-    expect(within(row).getByText('This provider is still used by a model.')).toBeVisible();
+    // [C6] The row-owned diagnostic is a sibling `detailRow` in the row's rowgroup.
+    expect(
+      within(row.parentElement!).getByText('This provider is still used by a model.')
+    ).toBeVisible();
     expect(
       screen.getByText('Destination approval may have been saved; configuration was not applied.')
     ).toBeVisible();
@@ -1745,7 +1748,9 @@ describe('bootstrap through the Source picker', () => {
       within(screen.getByTestId('provider-row-local')).getByText('http://127.0.0.1:9292/v1')
     ).toBeInTheDocument();
     expect(
-      within(screen.getByRole('list', { name: 'Providers' })).getAllByRole('listitem')
+      within(screen.getByRole('table', { name: 'Providers' }))
+        .getAllByRole('row')
+        .slice(1)
     ).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /→ new provider$/ })).toHaveLength(1);
   });
