@@ -95,6 +95,7 @@ import {
   sourceSelectValue,
   type ProfileListState,
 } from './profileSelect';
+import { SourcePicker, SOURCE_DESCRIPTION_ID, SOURCE_LOADING_ID } from './SourcePicker';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard, routingOwnsDiagnostic } from './RoutingCard';
 import { StatusText, type StatusTone } from './StatusText';
@@ -1287,7 +1288,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
            * what is above the last item in a column, so nothing needs to
            * fake a same-height label row over the menu trigger any more.
            *
-           * The select's own width is now fixed (`.profileSelect`) rather
+           * The source picker's own width is now fixed (`.picker`) rather
            * than shrink-to-fit, and the loading affordance / selected
            * profile's description render OUTSIDE this group entirely (see
            * `.selectDescription` below) — so neither the selected value's
@@ -1295,49 +1296,30 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
            * size, its wrap point, or the position of anything inside it.
            */}
           <span className={styles.controlGroup}>
-            <span className={styles.profileSource}>
-              <label className={styles.sourceLabel} htmlFor="golem-profile-select">
-                Source
-              </label>
-              <select
-                id="golem-profile-select"
-                className={styles.profileSelect}
-                value={selectModel.value}
-                disabled={projection === null || sourceLocked || saving}
-                aria-describedby={
-                  selectModel.description !== '' ? 'golem-profile-select-desc' : undefined
-                }
-                onChange={(event) => void selectSource(event.target.value)}
-              >
-                <option value={selectModel.applied.value}>{selectModel.applied.label}</option>
-                {selectModel.blank !== null && (
-                  <option value={selectModel.blank.value}>{selectModel.blank.label}</option>
-                )}
-                {selectModel.retained !== null && (
-                  <option value={selectModel.retained.value} disabled>
-                    {selectModel.retained.label}
-                  </option>
-                )}
-                {selectModel.curated.length > 0 && (
-                  <optgroup label="Curated">
-                    {selectModel.curated.map((option) => (
-                      <option key={option.value} value={option.value} disabled={option.disabled}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {selectModel.yours.length > 0 && (
-                  <optgroup label="Yours">
-                    {selectModel.yours.map((option) => (
-                      <option key={option.value} value={option.value} disabled={option.disabled}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </span>
+            <SourcePicker
+              model={selectModel}
+              disabled={projection === null || sourceLocked || saving}
+              describedBy={
+                [
+                  sourceLoading ? SOURCE_LOADING_ID : '',
+                  selectModel.description !== '' ? SOURCE_DESCRIPTION_ID : '',
+                ]
+                  .filter((id) => id !== '')
+                  .join(' ') || undefined
+              }
+              startRefusal={startRefusal}
+              listNotice={
+                profileList.kind === 'unavailable'
+                  ? profileList.message
+                  : profileList.kind === 'unloaded'
+                    ? 'Loading profiles…'
+                    : ''
+              }
+              onOpen={() => void refreshProfileList()}
+              onSelect={(value) => void selectSource(value)}
+              onStartBlank={() => void startBlank()}
+              onStartFromProfile={(id) => void selectSource(id)}
+            />
             {/*
              * §4.8: the one naming flow and the two bootstrap actions, behind a
              * single menu. `disabled` composes the SHIPPED lock conditions:
@@ -1433,12 +1415,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
            * and can never widen or heighten the control row above it.
            */}
           {sourceLoading && (
-            <span className={styles.selectDescription} role="status">
+            <span id={SOURCE_LOADING_ID} className={styles.selectDescription} role="status">
               Loading profile…
             </span>
           )}
           {selectModel.description !== '' && (
-            <span id="golem-profile-select-desc" className={styles.selectDescription}>
+            <span id={SOURCE_DESCRIPTION_ID} className={styles.selectDescription}>
               {selectModel.description}
             </span>
           )}

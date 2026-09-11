@@ -1,9 +1,13 @@
 import {
   APPLIED_SOURCE_VALUE,
   BLANK_SOURCE_VALUE,
+  START_BLANK_VALUE,
   buildProfileSelectModel,
+  startFromProfileId,
+  startFromValue,
   type ProfileListState,
 } from '../../../components/GolemConfig/profileSelect';
+import type { ProfileInfo } from '../../../types/golemConfig';
 
 const REV_A = 'a'.repeat(64);
 const REV_B = 'b'.repeat(64);
@@ -231,5 +235,79 @@ describe('buildProfileSelectModel', () => {
       });
       expect(model.retained).toEqual({ value: 'user/mine', label: 'mine', disabled: true });
     }
+  });
+});
+
+describe('picker groups (#312)', () => {
+  const rows: ProfileInfo[] = [
+    { id: 'curated/local', curated: true, description: 'Vetted local lineup' },
+    { id: 'user/local', curated: false },
+    { id: 'user/cloud', curated: false },
+  ];
+  const list = { kind: 'loaded' as const, profiles: rows };
+
+  it('names the selected profile group for the closed trigger', () => {
+    const user = buildProfileSelectModel({
+      source: { kind: 'profile', profileId: 'user/local', sourceRevision: 'r' },
+      list,
+      provenance: null,
+      appliedRevision: 'a',
+      state: 'ready',
+    });
+    expect(user.group).toBe('Yours');
+    const curated = buildProfileSelectModel({
+      source: { kind: 'profile', profileId: 'curated/local', sourceRevision: 'r' },
+      list,
+      provenance: null,
+      appliedRevision: 'a',
+      state: 'ready',
+    });
+    expect(curated.group).toBe('Curated');
+    const applied = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list,
+      provenance: null,
+      appliedRevision: 'a',
+      state: 'ready',
+    });
+    expect(applied.group).toBe('');
+  });
+
+  it('always offers START FROM: Blank draft plus one entry per curated row', () => {
+    const model = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list,
+      provenance: null,
+      appliedRevision: 'a',
+      state: 'ready',
+    });
+    expect(model.startFrom.blank).toEqual({
+      value: START_BLANK_VALUE,
+      label: 'Blank draft',
+      disabled: false,
+    });
+    expect(model.startFrom.curated).toEqual([
+      { value: startFromValue('curated/local'), label: 'Curated local', disabled: false },
+    ]);
+    expect(startFromProfileId(startFromValue('curated/local'))).toBe('curated/local');
+    expect(startFromProfileId('curated/local')).toBeNull();
+  });
+
+  it('while Missing lists no profiles but keeps START FROM and disables the current entry', () => {
+    const model = buildProfileSelectModel({
+      source: { kind: 'applied' },
+      list,
+      provenance: null,
+      appliedRevision: undefined,
+      state: 'missing',
+    });
+    expect(model.curated).toEqual([]);
+    expect(model.yours).toEqual([]);
+    expect(model.applied).toEqual({
+      value: APPLIED_SOURCE_VALUE,
+      label: 'No applied configuration',
+      disabled: true,
+    });
+    expect(model.startFrom.curated).toHaveLength(1);
   });
 });

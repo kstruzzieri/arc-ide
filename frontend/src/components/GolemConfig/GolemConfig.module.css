@@ -110,14 +110,6 @@
   min-width: 0;
 }
 
-.profileSource {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 6px;
-  width: min(280px, 100%);
-  min-width: 0;
-}
-
 .sourceLabel {
   font-size: 11px;
   font-weight: 700;
@@ -126,50 +118,8 @@
   color: var(--text-muted);
 }
 
-/* §4.1: a FIXED width — capped at 280px and the available pane width, same as
-   before, but no longer shrink-to-fit (#263 Slice C) — so neither the
-   selected value's length nor (previously) the description below it could
-   widen this column and move the masthead's wrap point. Overflow still
-   ellipsizes rather than widening. Token set matches .button: it is a
-   control on the same masthead, not a native select dropped among flat,
-   tokenized ones. `appearance: none` is required for the ellipsis triple to
-   mean anything on a <select>, so the caret is redrawn the same way
-   `select.input` redraws it below. */
-.profileSelect {
-  width: min(280px, 100%);
-  padding: 5px 26px 5px 10px;
-  border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  background-color: var(--surface-elevated);
-  color: var(--text-primary);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-  appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2390a0b6'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 9px center;
-  cursor: pointer;
-}
-
-.profileSelect:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.profileSelect:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.profileSelect:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
 /* #263 Slice C: rendered OUTSIDE .controlGroup (a masthead sibling, not a
-   child of .profileSource any more) so it can never affect the control row's
+   child of .picker any more) so it can never affect the control row's
    width or height — `flex: 0 0 100%` claims a full new masthead line for
    whichever of the loading affordance / selected-profile description is
    present, instead of growing a fixed-width column's height the way it used
@@ -182,6 +132,183 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* ── Source picker (#312): trigger + listbox popover ─────────────────────── */
+
+.picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.pickerTrigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickerTrigger:hover:not(:disabled),
+.pickerTrigger[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+.pickerTrigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pickerTrigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pickerValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerGroup {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.pickerGroup::after {
+  content: ' · ';
+  color: var(--text-disabled);
+}
+
+.pickerEmpty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.pickerFlag {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pickerCaret {
+  flex: none;
+  width: 8px;
+  height: 5px;
+  fill: var(--text-muted);
+}
+
+/* Clamps against the CONTAINER (.root), never the viewport — same reasoning as
+   .menuPanel above; the guard test asserts both. */
+.pickerList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: min(320px, calc(100cqw - 32px));
+  min-width: 100%;
+  /* [A4] 256 profiles must scroll, not run off the pane. */
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+  box-shadow: var(--shadow-panel);
+  outline: none;
+}
+
+.pickerHeading {
+  padding: 8px 8px 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pickerGroupBlock + .pickerGroupBlock,
+.pickerOption + .pickerGroupBlock {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+.pickerOption {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 26px;
+  border-radius: 5px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.pickerOption[data-active],
+.pickerOption:hover {
+  background-color: var(--surface-hover);
+}
+
+.pickerOption[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 9px;
+  height: 5px;
+  border: 2px solid var(--accent);
+  border-top: 0;
+  border-right: 0;
+  transform: translateY(-70%) rotate(-45deg);
+}
+
+.pickerOption[aria-disabled='true'] {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.pickerOption[aria-disabled='true']:hover {
+  background-color: transparent;
+}
+
+.pickerAnnotation {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pickerStart::before {
+  content: '+';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-55%);
+  border: 0;
+  width: auto;
+  height: auto;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ── buttons: the only filled elements on the page ──────────────────────── */
@@ -1680,5 +1807,13 @@ select.input {
   .diagnostic {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+}
+
+/* ── TWO-ROW form: >= 600 container px ─────────────────────────────────── */
+
+@container golem-config (min-width: 600px) {
+  .picker {
+    flex: 0 0 280px;
   }
 }

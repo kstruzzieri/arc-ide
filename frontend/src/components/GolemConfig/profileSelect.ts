@@ -16,6 +16,12 @@ export type ProfileListState =
 export const APPLIED_SOURCE_VALUE = 'applied';
 export const BLANK_SOURCE_VALUE = '__blank__';
 
+/** START FROM sentinels: profile ids contain '/' and never ':', so the prefix cannot collide. */
+export const START_BLANK_VALUE = 'start:__blank__';
+export const startFromValue = (profileId: string): string => `start:${profileId}`;
+export const startFromProfileId = (value: string): string | null =>
+  value.startsWith('start:') && value !== START_BLANK_VALUE ? value.slice('start:'.length) : null;
+
 /** §5.6 bounded copy shared by the select, the menu, and the workspace. */
 export const LIST_LIMITED_COPY = 'Too many profiles to display.';
 export const TRANSPORT_UNAVAILABLE_COPY =
@@ -35,6 +41,10 @@ export interface ProfileSelectModel {
   curated: ProfileSelectOption[];
   yours: ProfileSelectOption[];
   description: string;
+  /** Closed-trigger eyebrow (#312 ruling 3): the namespace of the selected profile. */
+  group: 'Curated' | 'Yours' | '';
+  /** START FROM group (#312): state-independent commands, built from ALL list rows. */
+  startFrom: { blank: ProfileSelectOption; curated: ProfileSelectOption[] };
 }
 
 export interface BuildProfileSelectArgs {
@@ -79,7 +89,7 @@ export function buildProfileSelectModel(args: BuildProfileSelectArgs): ProfileSe
   const applied: ProfileSelectOption = {
     value: APPLIED_SOURCE_VALUE,
     label: state === 'missing' ? 'No applied configuration' : `Applied${ancestry}`,
-    disabled: false,
+    disabled: state === 'missing' && source.kind === 'applied',
   };
 
   const rows = list.kind === 'loaded' || list.kind === 'limited' ? list.profiles : [];
@@ -127,5 +137,23 @@ export function buildProfileSelectModel(args: BuildProfileSelectArgs): ProfileSe
       ? (rows.find((row) => row.id === source.profileId)?.description ?? '')
       : '';
 
-  return { value, applied, blank, retained, curated, yours, description };
+  const group: ProfileSelectModel['group'] =
+    source.kind === 'profile'
+      ? source.profileId.startsWith('curated/')
+        ? 'Curated'
+        : 'Yours'
+      : '';
+  // #312: START FROM is built from `rows`, not `listed` — the Missing state hides
+  // selectable profiles, but the bootstrap commands are exactly what it needs.
+  const startFrom = {
+    blank: { value: START_BLANK_VALUE, label: 'Blank draft', disabled: false },
+    curated: rows
+      .filter((row) => row.curated)
+      .map((row) => ({
+        value: startFromValue(row.id),
+        label: `Curated ${slugOf(row.id)}`,
+        disabled: false,
+      })),
+  };
+  return { value, applied, blank, retained, curated, yours, description, group, startFrom };
 }

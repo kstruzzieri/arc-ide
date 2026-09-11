@@ -211,6 +211,23 @@ const startCuratedViaMenu = async () => {
   await userEvent.click(screen.getByRole('button', { name: 'local' }));
 };
 
+/** #312: the picker replaced the native select. [C3] Query the trigger by ROLE — while the
+ *  list is open the listbox answers to the label "Source" too. This file drives interactions
+ *  through the static `userEvent` export (not a `.setup()` session), so the helper does too. */
+const sourceTrigger = () => screen.getByRole('button', { name: 'Source' });
+/** Choose an option by name, optionally inside a group; closes the list afterwards even when
+ *  the option was disabled (a disabled click leaves the list open). */
+const pickSource = async (name: string | RegExp, group?: string) => {
+  await userEvent.click(sourceTrigger());
+  const list = await screen.findByRole('listbox', { name: 'Source' });
+  const scope =
+    group === undefined ? within(list) : within(within(list).getByRole('group', { name: group }));
+  await userEvent.click(scope.getByRole('option', { name }));
+  if (screen.queryByRole('listbox', { name: 'Source' }) !== null)
+    await userEvent.keyboard('{Escape}');
+};
+const sourceValue = () => sourceTrigger().getAttribute('data-value');
+
 /** Stages one provider-key-set on `hosted`, the change every key assertion uses. */
 async function stageKey(): Promise<void> {
   await openProvider();
@@ -1476,7 +1493,7 @@ describe('bootstrap through the Configuration menu', () => {
     // surface — so it cannot be reopened at all, which subsumes the two former
     // CTAs' own disabled attributes.
     expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
-    expect(screen.getByLabelText('Source')).toBeDisabled();
+    expect(sourceTrigger()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
 
     settleProfile(loadedProfile);
@@ -1543,11 +1560,12 @@ describe('bootstrap through the Configuration menu', () => {
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
     expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
-    expect(select).toBeEnabled();
+    expect(sourceTrigger()).toBeEnabled();
 
-    await userEvent.selectOptions(select, 'applied');
+    // This bootstrap never reaches Ready, so the applied entry reads "No
+    // applied configuration" rather than "Applied" — match either.
+    await pickSource(/applied/i);
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1555,14 +1573,14 @@ describe('bootstrap through the Configuration menu', () => {
     );
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
 
-    expect(select).toBeDisabled();
+    expect(sourceTrigger()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
 
     settleCancel({ status: 'cancelled' });
     await waitFor(() => expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument());
-    expect(select.value).toBe('applied');
+    expect(sourceValue()).toBe('applied');
   });
 
   // The one test in this describe that starts from a LOADED document. The
@@ -1591,8 +1609,7 @@ describe('bootstrap through the Configuration menu', () => {
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    const select = screen.getByLabelText('Source') as HTMLSelectElement;
-    await userEvent.selectOptions(select, 'user/mine');
+    await pickSource(/mine/, 'Yours');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1618,7 +1635,7 @@ describe('bootstrap through the Configuration menu', () => {
     // unsaved (draftChangeCount counts a non-applied source as one change), so
     // the guard intercepts this next switch too, and the third load resolves
     // onto curated/local again.
-    await userEvent.selectOptions(select, 'user/mine');
+    await pickSource(/mine/, 'Yours');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
