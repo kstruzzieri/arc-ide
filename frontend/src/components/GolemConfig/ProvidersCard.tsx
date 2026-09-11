@@ -182,8 +182,8 @@ export function ProvidersCard({
     setFlash(rowKey === ADD_ROW_KEY ? null : { key: name, nonce: focusRequest.nonce });
     const timer = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(timer);
-    // Both lists are stable for the life of one card mount (the workspace
-    // remounts it when the document moves), so the request alone drives this.
+    // The request alone drives this effect; both lists are read at request
+    // time from that render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest]);
 

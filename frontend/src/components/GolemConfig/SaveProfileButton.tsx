@@ -219,8 +219,10 @@ export function SaveProfileButton({
       // mid-save, and the user can reach an editor and start typing before the
       // RPC settles; a request held unconditionally would then yank focus back
       // here. Something else holding focus means the request is stale — drop it.
-      if (ownedElsewhere()) setPendingFocus(null);
-      else held.current = pendingFocus.elementId;
+      if (ownedElsewhere()) {
+        setPendingFocus(null);
+        held.current = null;
+      } else held.current = pendingFocus.elementId;
       return;
     }
     // [N1] A HELD request is spent on the commit that re-enables the target — which

@@ -1311,8 +1311,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     state: projection?.state ?? null,
   });
 
-  // [C25] The SAME gate as the picker's START FROM entries — `saving` included,
-  // since a pending Save can overlap a Refresh that returns Missing.
+  // [C25] Two rungs: `sourceLoading`, then `sourceLocked || saving` (a pending
+  // Save can overlap a Refresh that returns Missing). This is the trigger-level
+  // gate, not the picker's — the trigger's own gate is `sourceTriggerDisabled`,
+  // which also folds in `projection === null`; the picker's START FROM rows are
+  // gated separately by `pickerRefusal`.
   // [K12][C2] …and the ladder that NAMES which of those it is, so a greyed-out
   // Start button is never a dead end. `disabled` derives from the reason, so the
   // two can never disagree. [N7] Two rungs, not four: the buttons this reason
