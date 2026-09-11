@@ -39,7 +39,7 @@ import {
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
-import { Cell } from './Cell';
+import { Cell, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
 import { StatusText, type StatusTone } from './StatusText';
@@ -109,6 +109,12 @@ export interface RoutingCardProps {
   rows: ReadonlyMap<string, RowMarkers>;
   /** Role-identity row markers from `projectDraft`. */
   roleRows: ReadonlyMap<string, RowMarkers>;
+  /**
+   * Staged use case → every use case its selector governs (`projectDraft`).
+   * A shared-selector change retargets siblings; the row says so before the
+   * editor is opened.
+   */
+  selectorUseCases: ReadonlyMap<string, readonly string[]>;
   diagnostics: readonly SettingsDiagnostic[];
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
@@ -129,6 +135,7 @@ export function RoutingCard({
   changes,
   rows,
   roleRows,
+  selectorUseCases,
   diagnostics,
   editable,
   focusRequest = null,
@@ -143,6 +150,8 @@ export function RoutingCard({
    * so the live region is the card's, mounted for the card's whole life.
    */
   const [announcement, setAnnouncement] = useState('');
+  /** The use case a jump just landed on, for ~1.4s (ruling 7). */
+  const [flash, setFlash] = useState<string | null>(null);
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -180,18 +189,32 @@ export function RoutingCard({
   // mounted. A `role-remove` chip has no editor at all, so it lands on the
   // defined-model row itself.
   useEffect(() => {
-    if (focusRequest === null) return;
+    // [A1] The shared boundary: a request can never open editable controls on a
+    // locked, consenting, busy, Limited/Invalid or read-only surface.
+    if (focusRequest === null || !editable) return;
     const separator = focusRequest.changeId.indexOf(':');
     const namespace = focusRequest.changeId.slice(0, separator);
     const name = focusRequest.changeId.slice(separator + 1);
     if (namespace === 'role') {
+      setFlash(null);
       setPendingFocus({ elementId: definedRowId(name) });
       return;
     }
-    if (namespace !== 'route') return;
+    if (namespace !== 'route') {
+      setFlash(null); // the jump landed in the other card: no stale flash here
+      return;
+    }
     const index = routeUseCases(routes).indexOf(name);
     if (index < 0) return;
-    openEditor(name, `golem-route-editor-${index}`);
+    const editorId = `golem-route-editor-${index}`;
+    openEditor(name, `${editorId}-filter`); // the Model field, not the fieldset
+    // [C26] Never interpolate an identifier into a selector (quotes are legal in
+    // use-case names); the row carries an index-derived id instead.
+    // `scrollIntoView` is optional-called because jsdom does not implement it.
+    document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
+    setFlash(name);
+    const timer = window.setTimeout(() => setFlash(null), 1400);
+    return () => window.clearTimeout(timer);
     // Routes are stable for the life of one card mount (the workspace remounts
     // it when the document moves), so the request alone drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -292,14 +315,45 @@ export function RoutingCard({
               staged?.kind === 'route'
                 ? []
                 : (applied?.routedUseCases ?? []).filter((other) => other !== useCase);
+            // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
+            // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
+            // row marker — the shipped definition of "this row has a staged change" — so
+            // think-only, exposure-only and assign-into-empty changes stripe too.
+            const changed = markers?.modified === true || markers?.keyStaged === true;
+            const wasModel =
+              staged?.kind === 'route' &&
+              applied !== null &&
+              staged.modelFacts.model !== applied.modelName
+                ? applied.modelName
+                : null;
+            const wasProvider =
+              staged?.kind === 'route' &&
+              applied !== null &&
+              staged.modelFacts.provider !== applied.provider
+                ? applied.provider
+                : null;
+            const wasThink =
+              staged?.kind === 'route' && applied !== null && staged.thinkMode !== applied.thinkMode
+                ? applied.thinkMode === ''
+                  ? '—'
+                  : applied.thinkMode
+                : null;
+            const wasAssigned =
+              staged?.kind === 'route-unassign' && applied !== null ? applied.modelName : null;
+            const alsoAffects = (selectorUseCases.get(useCase) ?? []).filter(
+              (other) => other !== useCase
+            );
 
             const row = (
               <div
                 key={useCase}
+                id={`${editorId}-row`}
                 role="row"
                 data-testid={`route-row-${useCase}`}
                 className={styles.row}
                 data-expanded={expanded || undefined}
+                data-changed={changed || undefined}
+                data-flash={flash === useCase || undefined}
               >
                 <Cell className={styles.useCase}>
                   {useCase}
@@ -307,6 +361,7 @@ export function RoutingCard({
                 </Cell>
                 <Cell className={styles.providerCell}>
                   {view ? view.provider : <span className={styles.absent}>—</span>}
+                  {wasProvider !== null && <Was value={wasProvider} />}
                 </Cell>
                 <Cell className={styles.modelCell}>
                   {/* The role a broken route still names is the only lead a
@@ -330,6 +385,14 @@ export function RoutingCard({
                   ) : (
                     <span className={styles.absent}>—</span>
                   )}
+                  {(wasModel ?? wasAssigned) !== null && <Was value={(wasModel ?? wasAssigned)!} />}
+                  {/* Shared-selector changes retarget siblings: the fact the
+                      editor's disclosure already tells, surfaced on the row. */}
+                  {changed && alsoAffects.length > 0 && (
+                    <small
+                      className={styles.usedBy}
+                    >{`also affects ${alsoAffects.join(', ')}`}</small>
+                  )}
                 </Cell>
                 <Cell label="Think" className={styles.metaCell}>
                   {view && view.think !== '' ? (
@@ -337,6 +400,7 @@ export function RoutingCard({
                   ) : (
                     <span className={styles.absent}>—</span>
                   )}
+                  {wasThink !== null && <Was value={wasThink} />}
                 </Cell>
                 {/* Ruling 6: an open row carries the EDITING tag beside its use
                     case, so the status column reports nothing while it edits. */}

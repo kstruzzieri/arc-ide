@@ -517,14 +517,14 @@ describe('Save as profile', () => {
     // Stage one change; the Apply bar appears.
     await user.click(screen.getByRole('button', { name: /edit route/i }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
-    await screen.findByText(/1 change waiting for Apply/i);
+    await screen.findByText(/1 staged change/i);
 
     await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
     // §4.8: the staged configuration draft is untouched.
-    expect(screen.getByText(/1 change waiting for Apply/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 staged change/i)).toBeInTheDocument();
   });
 
   it('save leaves staged keys in the vault for the next Apply', async () => {

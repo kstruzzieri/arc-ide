@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import type { ComponentProps } from 'react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ProvidersCard } from '../../../components/GolemConfig/ProvidersCard';
 import type { ProviderProjection } from '../../../types/golem';
-import { KeyVault } from '../../../types/golemConfig';
+import { KeyVault, type Change } from '../../../types/golemConfig';
 
 const provider: ProviderProjection = {
   name: 'llama-swap',
@@ -12,6 +13,96 @@ const provider: ProviderProjection = {
   credentialState: 'none',
 };
 
+const cardProps = (over: Partial<ComponentProps<typeof ProvidersCard>> = {}) => ({
+  providers: [provider],
+  usage: new Map<string, readonly string[]>(),
+  usedProviders: [],
+  changes: [] as Change[],
+  rows: new Map(),
+  diagnostics: [],
+  vault: new KeyVault(new Map<string, string>()),
+  editable: true,
+  onStage: () => {},
+  onUnstagedChange: () => {},
+  ...over,
+});
+
+describe('usage and change trace (ruling 7)', () => {
+  it('says which routes use each provider', () => {
+    render(
+      <ProvidersCard {...cardProps({ usage: new Map([['llama-swap', ['agent', 'chat']]]) })} />
+    );
+    expect(
+      within(screen.getByTestId('provider-row-llama-swap')).getByText('used by agent, chat')
+    ).toBeInTheDocument();
+  });
+
+  it('marks an unrouted provider', () => {
+    render(<ProvidersCard {...cardProps()} />);
+    expect(
+      within(screen.getByTestId('provider-row-llama-swap')).getByText('not routed')
+    ).toBeInTheDocument();
+  });
+
+  it('names the applied endpoint under a staged endpoint change', () => {
+    const staged: Change = {
+      kind: 'provider-update',
+      name: 'llama-swap',
+      endpoint: 'https://new.example/v1',
+    };
+    render(
+      <ProvidersCard
+        {...cardProps({
+          changes: [staged],
+          rows: new Map([['llama-swap', { modified: true, keyStaged: false, needsReview: false }]]),
+        })}
+      />
+    );
+    const row = screen.getByTestId('provider-row-llama-swap');
+    expect(row).toHaveAttribute('data-changed', 'true');
+    expect(within(row).getByText('https://new.example/v1')).toBeInTheDocument();
+    expect(within(row).getByText(/^was$/i).parentElement).toHaveTextContent(
+      `was${provider.endpoint}`
+    );
+  });
+
+  it('shows a staged endpoint as Pending, never the stale classification', () => {
+    const staged: Change = {
+      kind: 'provider-update',
+      name: 'llama-swap',
+      endpoint: 'https://remote.example/v1',
+    };
+    render(
+      <ProvidersCard
+        {...cardProps({
+          changes: [staged],
+          rows: new Map([['llama-swap', { modified: true, keyStaged: false, needsReview: false }]]),
+        })}
+      />
+    );
+    const row = screen.getByTestId('provider-row-llama-swap');
+    expect(within(row).getByText('Pending')).toBeInTheDocument();
+    expect(within(row).queryByText('Local')).toBeNull();
+    expect(within(row).getByText('openai-compat')).toBeInTheDocument(); // the Type sub-line survives
+  });
+
+  it('leaves a jump inert while the card cannot be edited', () => {
+    // [A1] The shared boundary: a standing request must never open editable controls.
+    const { rerender } = render(
+      <ProvidersCard {...cardProps({ editable: false, focusRequest: null })} />
+    );
+    rerender(
+      <ProvidersCard
+        {...cardProps({
+          editable: false,
+          focusRequest: { changeId: 'provider:llama-swap', nonce: 1 },
+        })}
+      />
+    );
+    expect(screen.queryByRole('group', { name: 'Edit provider llama-swap' })).toBeNull();
+  });
+});
+
 it('keeps an unstaged provider edit mounted when Edit is clicked again', async () => {
   const onUnstagedChange = jest.fn();
   render(
@@ -20,6 +111,7 @@ it('keeps an unstaged provider edit mounted when Edit is clicked again', async (
       usedProviders={[]}
       changes={[]}
       rows={new Map()}
+      usage={new Map()}
       diagnostics={[]}
       vault={new KeyVault(new Map<string, string>())}
       editable
@@ -53,6 +145,7 @@ it('keeps an unstaged provider addition mounted when Add provider is clicked aga
       usedProviders={[]}
       changes={[]}
       rows={new Map()}
+      usage={new Map()}
       diagnostics={[]}
       vault={new KeyVault(new Map<string, string>())}
       editable

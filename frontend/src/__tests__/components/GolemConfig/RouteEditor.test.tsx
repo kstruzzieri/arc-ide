@@ -78,6 +78,7 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
   const routes = over.routes ?? [{ useCase: 'chat', role: 'chat-role' }];
   const models = over.models ?? [model(), other];
   const draft = over.draft ?? cleanDraft(testRevision);
+  const projection = projectDraft({ routes, models }, draft);
   const props: RoutingCardProps = {
     routes,
     models,
@@ -85,9 +86,10 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
     draft,
     // Exactly what the workspace hands over: the COALESCED changes, so every
     // test below exercises the same values Apply would send.
-    changes: projectDraft({ routes, models }, draft).changes,
+    changes: projection.changes,
     rows: new Map(),
     roleRows: new Map(),
+    selectorUseCases: projection.selectorUseCases,
     diagnostics: [],
     editable: true,
     onStage,
@@ -1017,7 +1019,7 @@ describe('GolemConfigWorkspace route editing', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     await stage();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
     expect(
       screen.queryByText(/Apply is unavailable while an editor has unstaged changes/)
     ).not.toBeInTheDocument();
@@ -1035,7 +1037,7 @@ describe('GolemConfigWorkspace route editing', () => {
     // §4.2: an open row reports only that it is being edited; the collapsed row
     // is where the staged state shows.
     expect(within(screen.getByTestId('route-row-chat')).getByText('Modified')).toBeInTheDocument();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
   });
 
   it('marks every selector sibling Modified from the projected draft', async () => {
@@ -1112,7 +1114,7 @@ describe('GolemConfigWorkspace route editing', () => {
     expect(
       within(screen.getByTestId('route-row-chat')).queryByText('auto')
     ).not.toBeInTheDocument();
-    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('2 staged changes')).toBeInTheDocument();
   });
 
   it('keeps a route diagnostic on its row and the rest on the page', async () => {

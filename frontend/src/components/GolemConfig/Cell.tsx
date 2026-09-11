@@ -28,3 +28,20 @@ export function Cell({
     </span>
   );
 }
+
+/**
+ * `WAS <applied value>` — a mono sub-line beneath a changed cell (ruling 7).
+ * One definition, because both cards trace their changes the same way.
+ *
+ * The value is a DIRECT text child of the `<small>`, so the cell above still
+ * matches `getByText(<current value>)`: Testing Library reads only an
+ * element's own text nodes.
+ */
+export function Was({ value }: { value: string }) {
+  return (
+    <small className={styles.was}>
+      <b>was</b>
+      {value}
+    </small>
+  );
+}

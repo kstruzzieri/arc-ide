@@ -296,8 +296,8 @@ describe('Apply bar', () => {
     expect(within(masthead).getByText('Modified')).toBeInTheDocument();
 
     const bar = screen.getByTestId('golem-config-draft');
-    expect(within(bar).getByText('1 change waiting for Apply')).toBeInTheDocument();
-    expect(within(bar).getByRole('button', { name: 'hosted → new API key' })).toBeEnabled();
+    expect(within(bar).getByText('1 staged change')).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'hosted · API key' })).toBeEnabled();
     expect(within(bar).getByRole('button', { name: 'Apply' })).toBeEnabled();
     expect(within(bar).getByRole('button', { name: 'Discard' })).toBeEnabled();
   });
@@ -307,7 +307,7 @@ describe('Apply bar', () => {
     await stageKey();
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'hosted → new API key' }));
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
     expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Edit provider hosted' })).toHaveFocus();
   });
@@ -321,7 +321,7 @@ describe('Apply bar', () => {
     });
     await mountWorkspace();
     await stageKey();
-    await userEvent.click(screen.getByRole('button', { name: 'hosted → new API key' }));
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
     expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
 
     await clickApply();
@@ -710,7 +710,7 @@ describe('nonterminal apply results', () => {
     await screen.findByRole('button', { name: 'Retry' });
 
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'hosted → new API key' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted · API key' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Edit provider hosted' })).not.toBeInTheDocument();
     // The ways out stay open.
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
@@ -850,7 +850,7 @@ describe('nonterminal apply results', () => {
     await screen.findByRole('button', { name: 'Confirm destination' });
 
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'hosted → new API key' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted · API key' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Edit provider hosted' })).not.toBeInTheDocument();
     // The panel's own actions, and the cancel-then-transition paths, stay live.
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeEnabled();
@@ -1331,7 +1331,7 @@ describe('unsaved-work transitions', () => {
     await stageEndpoint();
     await clickApply();
     await screen.findByRole('button', { name: 'Reload & review draft' });
-    await userEvent.click(screen.getByRole('button', { name: 'hosted → updated' }));
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · endpoint' }));
     expect(screen.getByLabelText('Endpoint')).toBeEnabled();
     (ReloadGolemSettings as jest.Mock).mockImplementationOnce(
       () =>
@@ -1343,7 +1343,7 @@ describe('unsaved-work transitions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
 
     await waitFor(() => expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'hosted → updated' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted · endpoint' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
 
     settleReload({
@@ -1351,7 +1351,7 @@ describe('unsaved-work transitions', () => {
       projection: { ...readyProjection, revision: movedRevision },
     });
     await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
-    expect(screen.getByRole('button', { name: 'hosted → updated' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'hosted · endpoint' })).toBeEnabled();
   });
 
   it('acknowledges a clean shutdown without mounting a dialog', async () => {
@@ -1685,7 +1685,7 @@ describe('bootstrap through the Source picker', () => {
     await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
 
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
     const applyButton = screen.getByRole('button', { name: 'Apply' });
     expect(applyButton).toBeEnabled();
     expect(screen.queryByText(/Stage at least one change/)).not.toBeInTheDocument();
@@ -1743,7 +1743,7 @@ describe('bootstrap through the Source picker', () => {
 
     // Still ONE change on the provider identity, carrying the correction, and
     // exactly one strip — no fork into a second provider.
-    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('2 staged changes')).toBeInTheDocument();
     expect(
       within(screen.getByTestId('provider-row-local')).getByText('http://127.0.0.1:9292/v1')
     ).toBeInTheDocument();
@@ -1752,7 +1752,7 @@ describe('bootstrap through the Source picker', () => {
         .getAllByRole('row')
         .slice(1)
     ).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: /→ new provider$/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /· new provider$/ })).toHaveLength(1);
   });
 
   it('unstages a provider-add from its own strip', async () => {
@@ -1765,7 +1765,7 @@ describe('bootstrap through the Source picker', () => {
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
     await userEvent.type(screen.getByLabelText('New API key'), KEY);
     await stage();
-    expect(screen.getByRole('button', { name: 'local → new API key' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'local · API key' })).toBeInTheDocument();
 
     await userEvent.click(
       within(screen.getByTestId('provider-row-local')).getByRole('button', {
@@ -1776,9 +1776,9 @@ describe('bootstrap through the Source picker', () => {
     // The provider AND the key operation it carried are both gone — no full
     // Discard required.
     expect(screen.queryByTestId('provider-row-local')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'local → new provider' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'local → new API key' })).not.toBeInTheDocument();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument(); // the source
+    expect(screen.queryByRole('button', { name: 'local · new provider' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'local · API key' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument(); // the source
   });
 
   // Same one-shot rule as a draft reset, different trigger: a source switch
@@ -1794,7 +1794,7 @@ describe('bootstrap through the Source picker', () => {
     await stage();
 
     // The chip lands on that strip, which reopens on the STAGED values.
-    await userEvent.click(screen.getByRole('button', { name: 'local → new provider' }));
+    await userEvent.click(screen.getByRole('button', { name: 'local · new provider' }));
     expect(screen.getByRole('group', { name: 'Staged provider local' })).toBeInTheDocument();
 
     await startCuratedViaMenu();

@@ -1995,6 +1995,121 @@ select.input {
   }
 }
 
+/* ── change trace, usage, jumps (ruling 7) ─────────────────────────────── */
+
+.row[data-changed] {
+  position: relative;
+}
+
+/* Inset 9px top/bottom so the stripe never meets a rounded corner; 5px further
+   in inside the editing group. */
+.row[data-changed]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background-color: var(--status-warning);
+}
+
+.editGroup > .row[data-changed]::before {
+  left: 5px;
+  border-radius: 2px;
+}
+
+.was {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.was b {
+  margin-right: 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--status-warning);
+}
+
+.usedBy {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* [A2] The backend classifies a staged endpoint on Apply; until then the row
+   says so. Information, not an inert placeholder, so --text-muted. */
+.pending {
+  color: var(--text-muted);
+}
+
+.chip::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background-color: var(--status-warning);
+  vertical-align: 1px;
+}
+
+.bannerRef {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.bannerRef:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.bannerRef:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
+.bannerRef:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.row[data-flash] {
+  outline: 2px solid transparent;
+  outline-offset: -3px;
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  from {
+    outline-color: var(--focus-ring);
+  }
+
+  to {
+    outline-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row[data-flash] {
+    animation: none;
+    outline-color: var(--focus-ring);
+  }
+}
+
 /* ── the table upgrade: column-aligned rows, header band, bounded identifier
    columns. [A7][C19] Last block in the file on purpose: the masthead guard
    matches the FIRST `@container golem-config (min-width: 600px)`, which must

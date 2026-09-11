@@ -407,6 +407,56 @@ describe('GolemConfigWorkspace', () => {
     expect(within(routeRow).getByText('role ghost has no model')).toHaveClass('modelCell');
   });
 
+  it('the blocking banner subject jumps to the route and focuses its Model field', async () => {
+    resolve({
+      ...readyProjection,
+      diagnostics: [
+        {
+          code: 'agent_capabilities_insufficient',
+          subjectKind: 'model',
+          subjectName: readyProjection.models[0].role,
+          blocking: true,
+        },
+      ],
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const link = await screen.findByRole('button', {
+      name: `model ${readyProjection.models[0].role}`,
+    });
+    await userEvent.click(link);
+    expect(await screen.findByLabelText('Filter models')).toHaveFocus();
+  });
+
+  it('a diagnostic jump is inert while the surface cannot be edited', async () => {
+    resolve({
+      ...readyProjection,
+      // The contract forbids a read-only `ready` projection (golem.ts:1030); `limited`
+      // with `readOnly` IS the shipped loaded-but-unwritable state.
+      state: 'limited',
+      readOnly: true,
+      editable: false,
+      diagnostics: [
+        {
+          code: 'agent_capabilities_insufficient',
+          subjectKind: 'model',
+          subjectName: readyProjection.models[0].role,
+          blocking: true,
+        },
+      ],
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const link = await screen.findByRole('button', {
+      name: `model ${readyProjection.models[0].role}`,
+    });
+    expect(link).toBeDisabled();
+    expect(link).toHaveAttribute(
+      'title',
+      'Editing is unavailable while this configuration cannot be changed.'
+    );
+    await userEvent.click(link);
+    expect(screen.queryByRole('group', { name: /^Route / })).toBeNull();
+  });
+
   it('marks a route with no resolvable model as No model', async () => {
     resolve({
       ...readyProjection,

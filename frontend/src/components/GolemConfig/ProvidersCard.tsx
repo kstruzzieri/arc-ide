@@ -21,7 +21,7 @@ import {
 } from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
-import { Cell } from './Cell';
+import { Cell, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { ProviderEditor } from './ProviderEditor';
 import { StatusText, type StatusTone } from './StatusText';
@@ -55,6 +55,12 @@ export interface ProvidersCardProps {
   providers: ProviderProjection[];
   /** Providers a defined model still references; removal is refused for these. */
   usedProviders: readonly string[];
+  /**
+   * [A2] provider → the use cases that reach it AFTER Apply, from the one
+   * derived view (`providerUsage(effectiveRoutes(base, changes))`). A provider
+   * absent from the map is routed by nothing.
+   */
+  usage: ReadonlyMap<string, readonly string[]>;
   /** Staged changes, so a reopened editor shows what is waiting for Apply. */
   changes: readonly Change[];
   /** Provider-identity row markers from `projectDraft`. */
@@ -80,6 +86,7 @@ export interface ProvidersCardProps {
 export function ProvidersCard({
   providers,
   usedProviders,
+  usage,
   changes,
   rows,
   diagnostics,
@@ -97,6 +104,8 @@ export function ProvidersCard({
    * that row's Edit button, so one effect serves both directions.
    */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
+  /** The provider a jump just landed on, for ~1.4s (ruling 7). */
+  const [flash, setFlash] = useState<string | null>(null);
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -125,10 +134,15 @@ export function ProvidersCard({
   // mounted. Applied and staged providers both have strips, so a chip lands on
   // its own row; only a name with neither falls back to the add form.
   useEffect(() => {
-    if (focusRequest === null) return;
+    // [A1] The shared boundary: a request can never open editable controls on a
+    // locked, consenting, busy, Limited/Invalid or read-only surface.
+    if (focusRequest === null || !editable) return;
     const separator = focusRequest.changeId.indexOf(':');
     const namespace = focusRequest.changeId.slice(0, separator);
-    if (namespace !== 'provider' && namespace !== 'provider-key') return;
+    if (namespace !== 'provider' && namespace !== 'provider-key') {
+      setFlash(null); // the jump landed in the other card: no stale flash here
+      return;
+    }
     const name = focusRequest.changeId.slice(separator + 1);
     const applied = providers.findIndex((entry) => entry.name === name);
     const staged = stagedProviders.findIndex((entry) => entry.name === name);
@@ -140,7 +154,24 @@ export function ProvidersCard({
           : ADD_EDITOR_ID;
     const rowKey = applied < 0 && staged < 0 ? ADD_ROW_KEY : name;
     setOpen((current) => (current.has(rowKey) ? current : new Set(current).add(rowKey)));
-    setPendingFocus({ elementId: editorId });
+    // [C24] Land on an ENABLED control named by the change itself. A staged key
+    // clear disables the key input, so a key change lands on the editor fieldset
+    // — the honest target — rather than on something that cannot take focus.
+    const change = stagedFor(focusRequest.changeId);
+    setPendingFocus({
+      elementId:
+        change?.kind === 'provider-update' && change.endpoint !== undefined
+          ? `${editorId}-endpoint`
+          : change?.kind === 'provider-update' && change.apiFormat !== undefined
+            ? `${editorId}-format`
+            : editorId,
+    });
+    // [C26] Never interpolate an identifier into a selector; the row carries an
+    // index-derived id. `scrollIntoView` is optional-called: jsdom lacks it.
+    document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
+    setFlash(rowKey === ADD_ROW_KEY ? null : name);
+    const timer = window.setTimeout(() => setFlash(null), 1400);
+    return () => window.clearTimeout(timer);
     // Both lists are stable for the life of one card mount (the workspace
     // remounts it when the document moves), so the request alone drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -233,23 +264,59 @@ export function ProvidersCard({
               const markers = rows.get(provider.name);
               const expanded = open.has(provider.name);
               const notices = rowDiagnostics(provider.name);
+              const usedBy = usage.get(provider.name) ?? [];
+              const stagedUpdate = stagedFor(`provider:${provider.name}`);
+              // The row shows what is WAITING for Apply, as the routing card already does.
+              const update = stagedUpdate?.kind === 'provider-update' ? stagedUpdate : undefined;
+              const endpoint = update?.endpoint ?? provider.endpoint;
+              const apiFormat = update?.apiFormat ?? provider.apiFormat;
+              // Ruling 7: a `WAS` line per field whose DRAFT BASE value differs [A2].
+              const wasEndpoint =
+                update?.endpoint !== undefined &&
+                applied !== null &&
+                update.endpoint !== applied.endpoint
+                  ? applied.endpoint
+                  : null;
+              const wasFormat =
+                update?.apiFormat !== undefined &&
+                applied !== null &&
+                update.apiFormat !== applied.apiFormat
+                  ? applied.apiFormat
+                  : null;
+              // [C23] Stripe from the projected marker (covers adds, removes, key-only changes).
+              const changed = markers?.modified === true || markers?.keyStaged === true;
               const row = (
                 <div
                   key={provider.name}
+                  id={`${editorId}-row`}
                   role="row"
                   data-testid={`provider-row-${provider.name}`}
                   className={styles.row}
                   data-expanded={expanded || undefined}
+                  data-changed={changed || undefined}
+                  data-flash={flash === provider.name || undefined}
                 >
                   <Cell className={styles.identifier}>{provider.name}</Cell>
                   <Cell className={styles.endpointCell}>
                     {/* Meaningful, not inert: an empty endpoint is the whole
                         misconfiguration signal, so it keeps readable copy. */}
-                    {provider.endpoint === '' ? 'no endpoint' : provider.endpoint}
+                    {endpoint === '' ? 'no endpoint' : endpoint}
+                    {wasEndpoint !== null && <Was value={wasEndpoint} />}
+                    {/* [C30] `not routed` is information, not an inert placeholder. */}
+                    <small className={styles.usedBy}>
+                      {usedBy.length > 0 ? `used by ${usedBy.join(', ')}` : 'not routed'}
+                    </small>
                   </Cell>
                   <Cell label="Type" className={styles.metaCell}>
-                    {CLASSIFICATION_LABEL[provider.classification]}
-                    <span className={styles.metaSub}>{provider.apiFormat}</span>
+                    {/* [A2] A staged endpoint is classified by the backend on Apply, so
+                        the row says Pending rather than repeating a stale verdict. */}
+                    {wasEndpoint !== null ? (
+                      <span className={styles.pending}>Pending</span>
+                    ) : (
+                      CLASSIFICATION_LABEL[provider.classification]
+                    )}
+                    <span className={styles.metaSub}>{apiFormat}</span>
+                    {wasFormat !== null && <Was value={wasFormat} />}
                   </Cell>
                   <Cell label="API key" className={styles.metaCell}>
                     {markers?.keyStaged === true ? (

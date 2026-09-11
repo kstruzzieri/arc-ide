@@ -43,6 +43,7 @@ function renderCard(over: Partial<ProvidersCardProps> = {}) {
   const onUnstagedChange = jest.fn();
   const props: ProvidersCardProps = {
     providers: [provider()],
+    usage: new Map(),
     usedProviders: [],
     changes: [],
     rows: new Map(),
@@ -524,7 +525,7 @@ describe('GolemConfigWorkspace provider editing', () => {
     await openEditor();
     await userEvent.type(screen.getByLabelText('New API key'), 'sk-live-value');
     await stage();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
     expect(screen.queryByText(/unstaged/i)).not.toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('Endpoint'), '-more');
@@ -536,7 +537,7 @@ describe('GolemConfigWorkspace provider editing', () => {
     expect(
       screen.queryByText(/Apply is unavailable while an editor has unstaged changes/)
     ).not.toBeInTheDocument();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
   });
 
   it('keeps a staged key when the same editor then stages another field', async () => {
@@ -557,7 +558,7 @@ describe('GolemConfigWorkspace provider editing', () => {
     await stage();
 
     expect(vault.has('llama-swap')).toBe(true);
-    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('2 staged changes')).toBeInTheDocument();
     expect(
       within(screen.getByTestId('provider-row-llama-swap')).getByText('Key staged')
     ).toBeInTheDocument();
@@ -620,7 +621,7 @@ describe('GolemConfigWorkspace provider editing', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(vault.has('llama-swap')).toBe(false);
-    expect(screen.queryByText('1 change waiting for Apply')).not.toBeInTheDocument();
+    expect(screen.queryByText('1 staged change')).not.toBeInTheDocument();
     // §3.3: a discarded draft also resets the editors it was staged from.
     expect(screen.queryByLabelText('New API key')).not.toBeInTheDocument();
     expect(

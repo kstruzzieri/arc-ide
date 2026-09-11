@@ -1476,6 +1476,49 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
 }
 
 /**
+ * [A2] The routes as they WILL stand after Apply: the staged route wins, a
+ * staged unassign empties the slot, everything else is the base. ONE derivation
+ * for row values, provider usage and impact copy, so no card computes a
+ * different partial answer.
+ */
+export function effectiveRoutes(
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Map<string, { provider: string; model: string } | null> {
+  const byRole = new Map(base.models.map((model) => [model.role, model]));
+  const out = new Map<string, { provider: string; model: string } | null>();
+  for (const route of base.routes) {
+    const model = byRole.get(route.role);
+    out.set(
+      route.useCase,
+      model === undefined ? null : { provider: model.provider, model: model.modelName }
+    );
+  }
+  for (const change of changes) {
+    if (change.kind === 'route')
+      out.set(change.useCase, {
+        provider: change.modelFacts.provider,
+        model: change.modelFacts.model,
+      });
+    if (change.kind === 'route-unassign') out.set(change.useCase, null);
+  }
+  return out;
+}
+
+/** provider → use cases that reach it, sorted; providers nothing reaches are absent. */
+export function providerUsage(
+  routes: ReadonlyMap<string, { provider: string; model: string } | null>
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [useCase, target] of routes) {
+    if (target === null) continue;
+    out.set(target.provider, [...(out.get(target.provider) ?? []), useCase]);
+  }
+  for (const list of out.values()) list.sort(compareString);
+  return out;
+}
+
+/**
  * The request the draft currently means, validated by the same parser that
  * guards inbound payloads: a drafting bug (a stray key ref, a missing
  * targetRevision, a non-canonical capability array) fails here, at the boundary

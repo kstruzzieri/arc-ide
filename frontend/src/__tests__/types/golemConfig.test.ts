@@ -13,6 +13,7 @@ import {
   changeStableID,
   cleanDraft,
   draftChangeCount,
+  effectiveRoutes,
   isDraftDirty,
   KeyVault,
   meetsUseCaseFloor,
@@ -26,6 +27,7 @@ import {
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
   projectDraft,
+  providerUsage,
   readActiveProfile,
   recordApplyProvenance,
   replaceSource,
@@ -1006,5 +1008,46 @@ describe('use-case floors', () => {
     ['planning', ['chat', 'stream', 'tool_call'], true],
   ])('meetsUseCaseFloor(%s, %j) is %s', (useCase, caps, expected) => {
     expect(meetsUseCaseFloor(useCase as string, caps as CapabilityName[])).toBe(expected);
+  });
+});
+
+describe('effectiveRoutes / providerUsage (one derived view)', () => {
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'a' },
+      { useCase: 'chat', role: 'c' },
+    ],
+    models: [
+      modelRow({ role: 'a', provider: 'llama-swap', modelName: 'm1' }),
+      modelRow({ role: 'c', provider: 'zen', modelName: 'm2' }),
+    ],
+  };
+
+  it('reflects staged moves and unassigns, not only the base', () => {
+    const changes: Change[] = [
+      {
+        kind: 'route',
+        useCase: 'agent',
+        modelFacts: { provider: 'zen', model: 'm3', type: 'dense' },
+        capabilityFacts: { caps: [], knownCaps: [] },
+        exposedCaps: [],
+        thinkMode: '',
+        confirmUnknown: false,
+      },
+      { kind: 'route-unassign', useCase: 'chat' },
+    ];
+    const routes = effectiveRoutes(base, changes);
+    expect(routes.get('agent')).toEqual({ provider: 'zen', model: 'm3' });
+    expect(routes.get('chat')).toBeNull();
+    expect(providerUsage(routes)).toEqual(new Map([['zen', ['agent']]]));
+  });
+
+  it('with no changes equals the base', () => {
+    expect(providerUsage(effectiveRoutes(base, []))).toEqual(
+      new Map([
+        ['llama-swap', ['agent']],
+        ['zen', ['chat']],
+      ])
+    );
   });
 });

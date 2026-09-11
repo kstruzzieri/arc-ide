@@ -52,6 +52,7 @@ import {
   changeStableID,
   cleanDraft,
   draftChangeCount,
+  effectiveRoutes,
   isDraftDirty,
   meetsUseCaseFloor,
   parseCancelSettingsApplyResult,
@@ -62,6 +63,7 @@ import {
   parseSaveGolemProfileAsRequest,
   parseSettingsApplyResult,
   projectDraft,
+  providerUsage,
   readActiveProfile,
   recordApplyProvenance,
   retainsKeys,
@@ -874,6 +876,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     () => projectDraft(body ?? { routes: [], models: [] }, draft),
     [body, draft]
   );
+  /**
+   * [A2] The ONE derived view of the routes as they will stand after Apply.
+   * Both cards read from it, so provider usage and route values can never
+   * disagree.
+   */
+  const usage = useMemo(
+    () => providerUsage(effectiveRoutes(body ?? { routes: [], models: [] }, projected.changes)),
+    [body, projected]
+  );
 
   const receive = (result: SettingsApplyResult): void => {
     switch (result.status) {
@@ -1514,6 +1525,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     diagnostic.subjectKind,
                     diagnostic.subjectName
                   );
+                  // A diagnostic about a model names no row of its own; the route
+                  // that resolves to it is the only place the reader can act.
+                  const jump =
+                    diagnostic.subjectKind === 'model'
+                      ? (body?.routes.find((route) => route.role === diagnostic.subjectName)
+                          ?.useCase ?? null)
+                      : null;
                   return (
                     <li
                       key={`${diagnostic.code}-${diagnostic.subjectKind}-${diagnostic.subjectName}-${index}`}
@@ -1528,7 +1546,30 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                         {subject !== '' && (
                           <>
                             {' — '}
-                            <span className={styles.subject}>{subject}</span>
+                            {jump !== null ? (
+                              // [A1] Navigation stays visible while locked, but it must
+                              // not open editable controls.
+                              <button
+                                type="button"
+                                className={styles.bannerRef}
+                                disabled={!canEdit}
+                                title={
+                                  canEdit
+                                    ? `Jump to the ${jump} route and open its editor`
+                                    : 'Editing is unavailable while this configuration cannot be changed.'
+                                }
+                                onClick={() =>
+                                  setFocusRequest((current) => ({
+                                    changeId: `route:${jump}`,
+                                    nonce: (current?.nonce ?? 0) + 1,
+                                  }))
+                                }
+                              >
+                                {subject}
+                              </button>
+                            ) : (
+                              <span className={styles.subject}>{subject}</span>
+                            )}
                           </>
                         )}
                       </span>
@@ -1556,6 +1597,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               key={`providers-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
               providers={body.providers}
               usedProviders={usedProviders}
+              usage={usage}
               changes={draft.changes}
               rows={projected.providerRows}
               diagnostics={diagnostics}
@@ -1580,6 +1622,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               changes={projected.changes}
               rows={projected.routeRows}
               roleRows={projected.roleRows}
+              selectorUseCases={projected.selectorUseCases}
               diagnostics={diagnostics}
               editable={canEdit}
               focusRequest={focusRequest}
