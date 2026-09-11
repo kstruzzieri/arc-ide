@@ -1219,9 +1219,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           : null;
 
   // Hoisted out of the masthead JSX (was an inline IIFE) so the description
-  // it carries can render on its OWN full-width line, outside .controlGroup,
-  // instead of only inside the select's column — see the masthead comment
-  // below (#263 Slice C control-group follow-up).
+  // it carries can render on its own full-width line beneath `.controls`,
+  // instead of only inside the select's column — see the masthead's
+  // `.controls`/`.actions` layout below.
   const selectModel = buildProfileSelectModel({
     source: draft.source,
     list: profileList,
@@ -1318,31 +1318,31 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
              * dirty-draft guard intercepts it while a challenge or drop set
              * stands.
              */}
-            <SaveProfileButton
-              saveRefusal={saveRefusal}
-              createRefusal={createRefusal}
-              disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
-              reason={
-                projection === null || projection.state === 'missing'
-                  ? 'Nothing to save until a configuration is applied.'
-                  : sourceLoading
-                    ? 'Wait for the profile to finish loading.'
-                    : saving
-                      ? 'A save is already in progress.'
-                      : saveRefusal !== ''
-                        ? saveRefusal
-                        : createRefusal !== ''
-                          ? createRefusal
-                          : locked || outcome.drops !== null
-                            ? 'Unavailable while a write, approval, or review is in progress.'
-                            : ''
-              }
-              saving={saving}
-              appliedRevision={projection?.revision}
-              saveProfileAs={saveProfileAs}
-              acquireProfileRevision={acquireProfileRevision}
-            />
             <div className={styles.actions}>
+              <SaveProfileButton
+                saveRefusal={saveRefusal}
+                createRefusal={createRefusal}
+                disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
+                reason={
+                  projection === null || projection.state === 'missing'
+                    ? 'Nothing to save until a configuration is applied.'
+                    : sourceLoading
+                      ? 'Wait for the profile to finish loading.'
+                      : saving
+                        ? 'A save is already in progress.'
+                        : saveRefusal !== ''
+                          ? saveRefusal
+                          : createRefusal !== ''
+                            ? createRefusal
+                            : locked || outcome.drops !== null
+                              ? 'Unavailable while a write, approval, or review is in progress.'
+                              : ''
+                }
+                saving={saving}
+                appliedRevision={projection?.revision}
+                saveProfileAs={saveProfileAs}
+                acquireProfileRevision={acquireProfileRevision}
+              />
               {recovery ? (
                 <button
                   type="button"

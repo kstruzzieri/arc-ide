@@ -560,6 +560,20 @@ describe('GolemConfigWorkspace', () => {
     expect(close.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('keeps Save as profile inside the actions row beside Refresh and Check destinations', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const masthead = await screen.findByTestId('golem-config-masthead');
+    const save = within(masthead).getByRole('button', { name: 'Save as profile…' });
+    const refresh = within(masthead).getByRole('button', { name: 'Refresh' });
+    const check = within(masthead).getByRole('button', { name: 'Approve missing destinations' });
+    // All three share ONE actions container, and Save's wrapper is its first child so the
+    // `.actions > .menuRoot` sizing rules can match.
+    const actions = refresh.parentElement!;
+    expect(actions).toContainElement(check);
+    expect(actions).toContainElement(save);
+    expect(actions.firstElementChild).toContainElement(save);
+  });
+
   it('renders no draft bar until something is staged', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByTestId('provider-row-llama-swap');
