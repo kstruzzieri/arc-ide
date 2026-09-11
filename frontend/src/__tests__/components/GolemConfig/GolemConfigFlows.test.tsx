@@ -929,7 +929,7 @@ const prepareReturns = (result: unknown) =>
   (PrepareGolemDestinationGrants as jest.Mock).mockResolvedValue(result);
 
 const approve = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Check destinations…' }));
 
 describe('grant-only destination approval', () => {
   it('preserves unstaged provider fields until they are staged before approval', async () => {
@@ -939,7 +939,7 @@ describe('grant-only destination approval', () => {
     await userEvent.type(screen.getByLabelText('Endpoint'), '-edited');
     await userEvent.type(screen.getByLabelText('New API key'), KEY);
 
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeDisabled();
     await userEvent.click(action);
     expect(PrepareGolemDestinationGrants).not.toHaveBeenCalled();
@@ -957,10 +957,20 @@ describe('grant-only destination approval', () => {
     await approve();
 
     const consent = await screen.findByRole('alert');
-    // Pluralized copy, the grant-only lead (no write is pending), and the word
-    // "remote" — the user is approving egress, not a local write.
-    expect(within(consent).getByText(/Approve these 2 remote destinations\./)).toBeVisible();
-    expect(within(consent).getByText(/Nothing is written to your configuration/)).toBeVisible();
+    // The grant-only explainer (no write is pending) and the destination-check
+    // rationale — not the old "Approve these N remote destinations" lead.
+    expect(
+      within(consent).getByText(
+        /Remote destinations your agent route can reach that have no approval yet/
+      )
+    ).toBeInTheDocument();
+    // [C13] The ticking countdown is aria-hidden; the alert announces the expiry once, statically.
+    expect(within(consent).getByText(/expires in \d+:\d{2}/)).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    );
+    expect(within(consent).getByText(/^Expires at /)).toBeInTheDocument();
+    expect(within(consent).getAllByText('remote')).toHaveLength(2);
     // One line per destination: endpoint, provider, and the model only when the
     // entry names one.
     expect(within(consent).getByText('https://api.example.com/v1')).toBeVisible();
@@ -970,12 +980,14 @@ describe('grant-only destination approval', () => {
     expect(within(consent).getByText('Reached by agent')).toBeVisible();
     expect(within(consent).getByText('Reached by agent (recommendation)')).toBeVisible();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Approve 2 destinations' }));
     await waitFor(() =>
       expect(ConfirmGolemDestinationGrants).toHaveBeenCalledWith('grant-token-1')
     );
     expect(await screen.findByText(/Destinations approved/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
     // Nothing about the configuration was written, and Call 1 ran exactly once.
     expect(ApplyGolemSettings).not.toHaveBeenCalled();
     expect(ConfirmGolemSettingsApply).not.toHaveBeenCalled();
@@ -1000,12 +1012,12 @@ describe('grant-only destination approval', () => {
     staged();
 
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
     expect(await screen.findByText(/Destinations approved/)).toBeVisible();
     staged();
 
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
     expect(await screen.findByText(/approval request was cancelled/)).toBeVisible();
     staged();
@@ -1017,7 +1029,7 @@ describe('grant-only destination approval', () => {
       challenge: grantChallenge({ expiresAt: Date.now() - 1 }),
     });
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
     expect(await screen.findByText(/approval request expired/)).toBeVisible();
     expect(ConfirmGolemDestinationGrants).toHaveBeenCalledTimes(1); // never the lapsed token
     staged();
@@ -1044,7 +1056,7 @@ describe('grant-only destination approval', () => {
     await mountWorkspace();
     await stageKey();
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
     expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1');
@@ -1075,7 +1087,7 @@ describe('grant-only destination approval', () => {
     await clickApply();
 
     expect(await screen.findByText(/slots/)).toBeVisible();
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeDisabled();
 
     // A disabled control fires nothing: Prepare never runs, and the
@@ -1090,13 +1102,15 @@ describe('grant-only destination approval', () => {
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'conflict' });
     await mountWorkspace();
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
 
     expect(
       await screen.findByText(/configuration changed while this approval was open/)
     ).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeEnabled();
 
     // And it prepares afresh rather than reusing the spent challenge.
@@ -1122,8 +1136,10 @@ describe('grant-only destination approval', () => {
     await approve();
 
     expect(await screen.findByText(copy)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).toBeEnabled();
     if (status === 'config_invalid') {
       expect(screen.queryByText(/Nothing to approve/)).not.toBeInTheDocument();
     }
@@ -1135,7 +1151,9 @@ describe('grant-only destination approval', () => {
     await approve();
 
     expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
   });
 
   it.each(['rejected', 'malformed'])(
@@ -1151,13 +1169,15 @@ describe('grant-only destination approval', () => {
       await mountWorkspace();
       await stageKey();
       await approve();
-      await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
 
       await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
       expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId('golem-grant-notice')).toBeVisible();
-      expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+      expect(
+        screen.queryByRole('button', { name: 'Approve 2 destinations' })
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Check destinations…' })).toBeEnabled();
 
       applyReturns({ status: 'applied', projection: readyProjection });
       await clickApply();
@@ -1175,7 +1195,7 @@ describe('grant-only destination approval', () => {
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
     await mountWorkspace();
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
     expect(await screen.findByTestId('golem-grant-notice')).toHaveTextContent(
       'Destinations approved. Your configuration was not changed.'
     );
@@ -1384,7 +1404,7 @@ describe('unsaved-work transitions', () => {
     await mountWorkspace();
     expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
     await approve();
-    await screen.findByRole('button', { name: 'Confirm destination' });
+    await screen.findByRole('button', { name: 'Approve 2 destinations' });
     expect(hasUnsavedConfigWork()).toBe(true);
 
     const pending = confirmConfigClose('close');

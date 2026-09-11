@@ -1560,6 +1560,77 @@ select.input {
   font-family: var(--font-mono);
 }
 
+/* ── destination approval prompt (grant-only, D13) ──────────────────────── */
+
+.grant {
+  border-color: var(--accent);
+}
+
+.grantHead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.grantTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.grantTtl {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.grantList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+/* [A7] Mobile-first BASE: stacked flex rows. The grid upgrade lives in the
+   `min-width: 600px` container query below. */
+.grantList li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  font-size: 12px;
+}
+
+.grantProvider {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.grantEndpoint {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  flex: 1 1 100%;
+}
+
+.grantClass {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--status-warning);
+}
+
+.grantActions .button {
+  flex: 1 1 auto;
+}
+
 /* ── confirmation dialog (§4.6a) ────────────────────────────────────────── */
 
 .dialog {
@@ -1885,6 +1956,31 @@ select.input {
   .body {
     padding: 16px 22px 18px;
     gap: 18px;
+  }
+
+  /* ── destination approval prompt: grid rows, actions right-aligned ─────── */
+
+  .grantList li {
+    display: grid;
+    /* [A3] provider and model are identifiers (up to 256 bytes): bounded, wrapping. */
+    grid-template-columns: fit-content(160px) fit-content(160px) minmax(0, 1fr) max-content;
+    column-gap: 16px;
+    align-items: baseline;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--surface-border-subtle);
+    font-size: 12px;
+  }
+
+  .grantList li .metaSub {
+    grid-column: 1 / -1;
+  }
+
+  .grantActions {
+    justify-content: flex-end;
+  }
+
+  .grantActions .button {
+    flex: none;
   }
 }
 

@@ -944,7 +944,7 @@ describe('Save as profile', () => {
     // shipped clean-draft write: it approves destinations for the ACTIVE
     // configuration, writes no document, and never touches the draft. Its
     // Prepare call is deferred by the mock (resolveGrants below).
-    await user.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+    await user.click(screen.getByRole('button', { name: 'Check destinations…' }));
     await waitFor(() => expect(PrepareGolemDestinationGrants).toHaveBeenCalled());
 
     await act(async () => {
@@ -997,7 +997,7 @@ describe('Save as profile', () => {
 
     // The LATER write registers while the EARLIER (Save) write is still
     // pending — same as the drain test above.
-    await user.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+    await user.click(screen.getByRole('button', { name: 'Check destinations…' }));
     await waitFor(() => expect(PrepareGolemDestinationGrants).toHaveBeenCalled());
 
     // Unlike the drain test above: the LATER write settles FIRST, and the

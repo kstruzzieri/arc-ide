@@ -207,12 +207,12 @@ describe('GolemConfigWorkspace', () => {
 
     // Before the first load lands there is nothing to approve against yet, so
     // the action is present and waiting rather than absent.
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeInTheDocument();
     expect(action).toBeDisabled();
 
     await screen.findByTestId('provider-row-llama-swap');
-    expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).toBeEnabled();
     // A permanent action asks nothing on its own.
     expect(PrepareGolemDestinationGrants).not.toHaveBeenCalled();
   });
@@ -222,9 +222,16 @@ describe('GolemConfigWorkspace', () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
 
     await screen.findByRole('button', { name: 'Retry' });
-    expect(
-      screen.getByRole('button', { name: 'Approve missing destinations' })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).toBeInTheDocument();
+  });
+
+  it('explains the destination check before the click', async () => {
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const action = await screen.findByRole('button', { name: 'Check destinations…' });
+    expect(action).toHaveAttribute(
+      'title',
+      'Lists remote destinations your agent route can reach that are not yet approved. Approving writes only the consent store; your configuration is unchanged.'
+    );
   });
 
   it('moves focus to the heading when the tab opens', async () => {
@@ -565,7 +572,7 @@ describe('GolemConfigWorkspace', () => {
     const masthead = await screen.findByTestId('golem-config-masthead');
     const save = within(masthead).getByRole('button', { name: 'Save as profile…' });
     const refresh = within(masthead).getByRole('button', { name: 'Refresh' });
-    const check = within(masthead).getByRole('button', { name: 'Approve missing destinations' });
+    const check = within(masthead).getByRole('button', { name: 'Check destinations…' });
     // All three share ONE actions container, and Save's wrapper is its first child so the
     // `.actions > .menuRoot` sizing rules can match.
     const actions = refresh.parentElement!;

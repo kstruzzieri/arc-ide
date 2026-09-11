@@ -185,7 +185,12 @@ const BOOTSTRAP_GATE =
  * only about approval — and none of them mentions the draft, because none of
  * them touches it.
  */
-const APPROVE_ACTION = 'Approve missing destinations';
+const APPROVE_ACTION = 'Check destinations…';
+/** Ruling 5: D13 forbids a mount-time probe, so the click is a QUERY — the verb and the tooltip say so. */
+const APPROVE_TITLE =
+  'Lists remote destinations your agent route can reach that are not yet approved. Approving writes only the consent store; your configuration is unchanged.';
+const GRANT_PROMPT_EXPLAINER =
+  'Remote destinations your agent route can reach that have no approval yet. Approving records consent only; your configuration is not changed.';
 const GRANT_NONE =
   'Nothing to approve. Every remote destination the agent route reaches is already approved.';
 /** Never "nothing to approve": a configuration that would not load answered
@@ -1151,6 +1156,26 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     inFlight || sourceLoading || sending || recovery || outcome.busy || outcome.challenge !== null;
   const sourceLocked = inFlight || sourceLoading || sending || recovery || outcome.busy;
 
+  /**
+   * [C28] One source of truth for the Check-destinations button's `disabled`
+   * and `title`: the reason named here IS the reason shown, in the order the
+   * conditions are checked.
+   */
+  const checkDisabledReason: string =
+    projection === null
+      ? 'Nothing to check until a configuration is loaded.'
+      : inFlight || sourceLoading || sending
+        ? 'Wait for the current operation to finish.'
+        : recovery
+          ? 'Recover state first.'
+          : unstagedEditors.size > 0
+            ? 'Finish or cancel the open editor first.'
+            : outcome.challenge !== null
+              ? 'An approval is already open.'
+              : outcome.drops !== null || outcome.busy || outcome.conflict !== null
+                ? 'Resolve the pending Apply result first.'
+                : '';
+
   const listLimited = profileList.kind === 'limited';
   // Two refusals on purpose: the STATE refusal blocks every Save (create and
   // overwrite alike), while the LIMIT refusal blocks only creation — §5.6
@@ -1381,24 +1406,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 className={`${styles.button} ${styles.checkDestinations}`}
-                disabled={
-                  projection === null ||
-                  inFlight ||
-                  sourceLoading ||
-                  sending ||
-                  recovery ||
-                  // Locking remounts the editors, so their fields must be staged first.
-                  unstagedEditors.size > 0 ||
-                  outcome.challenge !== null ||
-                  // A settings-apply disclosure is still on screen: the dropped-
-                  // fields panel is the ONLY copy of `outcome.drops` (restageDrops
-                  // reads it), and a busy Retry keeps a request retryable. A fresh
-                  // Prepare here would replace the whole outcome and destroy either
-                  // one, so the action stays off until the user has resolved it.
-                  outcome.drops !== null ||
-                  outcome.busy ||
-                  outcome.conflict !== null
-                }
+                disabled={checkDisabledReason !== ''}
+                title={checkDisabledReason !== '' ? checkDisabledReason : APPROVE_TITLE}
                 onClick={approveDestinations}
               >
                 {APPROVE_ACTION}
@@ -1586,54 +1595,66 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
              * local refusal — landed out of view and Apply read as doing nothing.
              */}
             {outcome.challenge !== null && (
-              <div className={styles.panel} data-tone="caution" role="alert">
+              // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
+              // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
+              <div className={`${styles.panel} ${styles.grant}`} role="alert">
+                <div className={styles.grantHead}>
+                  <h3 className={styles.grantTitle}>
+                    {outcome.intent === 'grant-only'
+                      ? 'Approve destinations'
+                      : 'Approve before writing'}
+                  </h3>
+                  <Countdown expiresAt={outcome.challenge.expiresAt} />
+                </div>
                 <p className={styles.panelText}>
-                  {promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a
-                  settings approval, separate from run approval.
+                  {outcome.intent === 'grant-only'
+                    ? GRANT_PROMPT_EXPLAINER
+                    : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
                 </p>
-                {/* One line per destination, in the digest order the backend
-                    sent, with the routing hops that reach it beneath. Every
-                    entry is remote — a local destination never challenges —
-                    and the lead sentence above already says so, so the row
-                    itself does not repeat the classification. */}
-                <ul className={styles.dropList}>
+                {/* One row per destination in the digest order the backend sent:
+                    provider · model · endpoint · remote (every entry is remote —
+                    a local destination never challenges — the class is the
+                    row's fourth cell rather than a repeated sentence). */}
+                <ul className={styles.grantList}>
                   {outcome.challenge.destinations.map((destination) => (
-                    <li key={`${destination.endpoint} ${destination.provider} ${destination.model}`}>
-                      <p className={styles.destination}>
-                        <span className={styles.value}>{destination.endpoint}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className={styles.identifier}>{destination.provider}</span>
-                        {/* Absent on a recommendation entry, which names a
-                            provider and no model at all. */}
-                        {destination.model !== '' && (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className={styles.identifier}>{destination.model}</span>
-                          </>
+                    // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
+                    <li
+                      key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+                    >
+                      <span className={styles.grantProvider}>{destination.provider}</span>
+                      <span className={styles.identifier}>
+                        {destination.model !== '' ? (
+                          destination.model
+                        ) : (
+                          <span className={styles.absent}>—</span>
                         )}
-                      </p>
-                      <span className={styles.metaSub}>
-                        {`Reached by ${destination.provenance.join(', ')}`}
                       </span>
+                      <span className={styles.grantEndpoint}>{destination.endpoint}</span>
+                      <span className={styles.grantClass}>remote</span>
+                      <span
+                        className={styles.metaSub}
+                      >{`Reached by ${destination.provenance.join(', ')}`}</span>
                     </li>
                   ))}
                 </ul>
-                <div className={styles.panelActions}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.primary}`}
-                    disabled={inFlight || sourceLoading || sending}
-                    onClick={confirmDestination}
-                  >
-                    Confirm destination
-                  </button>
+                <div className={`${styles.panelActions} ${styles.grantActions}`}>
                   <button
                     type="button"
                     className={`${styles.button} ${styles.quiet}`}
                     disabled={inFlight || sourceLoading || sending}
                     onClick={() => void cancelDestination()}
                   >
-                    Cancel approval
+                    {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.primary}`}
+                    disabled={inFlight || sourceLoading || sending}
+                    onClick={confirmDestination}
+                  >
+                    {outcome.intent === 'grant-only'
+                      ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
+                      : 'Confirm destination'}
                   </button>
                 </div>
               </div>
@@ -1732,6 +1753,34 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
       {prompt !== null && <ConfirmDialog prompt={prompt} onAnswer={answer} />}
     </div>
+  );
+}
+
+/**
+ * `expires in m:ss`, ticking once a second while the prompt stands; `lapsed()` still decides
+ * behaviour. [C13] The prompt is role="alert" (assertive + atomic), so the ticking text is
+ * aria-hidden and a static sr-only sentence announces the expiry once with the prompt.
+ */
+function Countdown({ expiresAt }: { expiresAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const remaining = Math.max(0, Math.round((expiresAt - now) / 1000));
+  const text =
+    remaining === 0
+      ? 'expired'
+      : `expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
+  return (
+    <>
+      <span className={styles.grantTtl} aria-hidden="true">
+        {text}
+      </span>
+      <span
+        className={styles.srOnly}
+      >{`Expires at ${new Date(expiresAt).toLocaleTimeString()}.`}</span>
+    </>
   );
 }
 
