@@ -702,6 +702,9 @@
 .providerCell {
   order: 4;
   flex: 0 1 auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -716,8 +719,17 @@
   flex: 1 1 auto;
 }
 
+/* A stack, not a line: the Type cell carries its apiFormat under the
+   classification at every width. Harmless for the single-child Think cell. */
 .metaCell {
   order: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
 
 .endpointCell,
@@ -725,13 +737,6 @@
   font-family: var(--font-mono);
   font-size: 12px;
   overflow-wrap: anywhere;
-}
-
-.providerCell,
-.metaCell {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .small {
@@ -754,9 +759,10 @@
   border: 1px solid var(--accent);
   border-radius: 8px;
   background-color: var(--surface-elevated);
-  /* One value, not two: prettier splits any multi-value box-shadow across lines,
-     and the accent halo is the group's whole elevation signal anyway. */
-  box-shadow: 0 0 0 3px rgba(18, 181, 205, 0.12);
+  /* Kept on one line: prettier would split the two shadows across lines, and the
+     stylesheet guard pins the halo. */
+  /* prettier-ignore */
+  box-shadow: 0 0 0 3px rgba(18, 181, 205, 0.12), var(--shadow-panel);
 }
 
 .editGroup > .row {
@@ -790,6 +796,14 @@
 
 .editorCell {
   min-width: 0;
+}
+
+/* The Add-provider form renders outside the table, with no editGroup wrapper to
+   outline it, so it carries the accent boundary and the inset itself. */
+.cardBody > .editor {
+  margin: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
 }
 
 /* ── row editor ─────────────────────────────────────────────────────────── */
@@ -2057,6 +2071,10 @@ select.input {
 
     .providerCell::after {
       content: none;
+    }
+
+    .metaCell {
+      font-size: 12px;
     }
 
     .noticeGroup,

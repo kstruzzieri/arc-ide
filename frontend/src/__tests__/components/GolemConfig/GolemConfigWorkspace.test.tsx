@@ -134,6 +134,10 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toMatch(/\.cardHead \{[^}]*background-color: var\(--surface-elevated\)/s);
     expect(supports).toMatch(/\.headRow \{[^}]*background-color: var\(--surface-frame\)/s);
     expect(text).toMatch(/\.table > \.row:nth-child\(even\) \{[^}]*rgba\(2, 6, 23, 0\.32\)/s);
+    // The Type cell stacks its apiFormat under the classification at EVERY width.
+    expect(text.match(/^\.metaCell \{[^}]*\}/ms)?.[0]).toMatch(/flex-direction: column/);
+    // The Add form renders outside the table, so it carries its own accent boundary.
+    expect(text).toMatch(/\.cardBody > \.editor \{[^}]*border: 1px solid var\(--accent\)/s);
   });
 
   it('never relies on subgrid outside the @supports block', () => {
