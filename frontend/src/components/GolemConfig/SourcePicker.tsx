@@ -24,8 +24,6 @@ const LABEL_ID = `${SOURCE_PICKER_ID}-label`;
  *  and reach it through `aria-describedby`. */
 const REFUSAL_ID = `${LIST_ID}-refusal`;
 const NOTICE_ID = `${LIST_ID}-notice`;
-/** [K8] The second refusal: why the PROFILE rows are unselectable. */
-const SELECT_REFUSAL_ID = `${LIST_ID}-select-refusal`;
 
 type Group = '' | 'Curated' | 'Yours' | 'Start from';
 /** [C2] ids may not contain spaces: `aria-labelledby` splits on them. */
@@ -50,14 +48,13 @@ export interface SourcePickerProps {
   disabled: boolean;
   /** Space-separated ids of the description / loading lines, or undefined. */
   describedBy: string | undefined;
-  /** '' or the Invalid/Limited refusal; disables the START FROM entries. */
-  startRefusal: string;
   /**
-   * [K8] '' or the reason the profile rows (which the MODEL disables off `ready`)
-   * cannot be chosen. It names an existing refusal rather than causing one: the
-   * picker never disables a row on the strength of this string.
+   * [K8][N5] '' or the ONE Invalid/Limited refusal, covering both unselectable
+   * halves of the list: it disables the START FROM entries, and it names (never
+   * causes) the refusal the MODEL already applies to the profile rows off `ready`.
+   * The two conditions are the same two states, so they are one notice and one id.
    */
-  selectRefusal: string;
+  refusal: string;
   /** [A5] `Loading profiles…` while the list is unloaded, the bounded message while unavailable, '' otherwise. */
   listNotice: string;
   onOpen: () => void;
@@ -66,7 +63,7 @@ export interface SourcePickerProps {
   onStartFromProfile: (profileId: string) => void;
 }
 
-function flatten(model: ProfileSelectModel, startRefusal: string): Row[] {
+function flatten(model: ProfileSelectModel, refusal: string): Row[] {
   const plain = (
     option: ProfileSelectOption,
     group: Group,
@@ -88,7 +85,7 @@ function flatten(model: ProfileSelectModel, startRefusal: string): Row[] {
   if (model.retained !== null) rows.push(plain(model.retained, ''));
   for (const option of model.curated) rows.push(plain(option, 'Curated'));
   for (const option of model.yours) rows.push(plain(option, 'Yours'));
-  const startDisabled = startRefusal !== '';
+  const startDisabled = refusal !== '';
   rows.push(
     plain({ ...model.startFrom.blank, disabled: startDisabled }, 'Start from', 'new draft', true)
   );
@@ -102,8 +99,7 @@ export function SourcePicker({
   model,
   disabled,
   describedBy,
-  startRefusal,
-  selectRefusal,
+  refusal,
   listNotice,
   onOpen,
   onSelect,
@@ -119,7 +115,7 @@ export function SourcePicker({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const rows = flatten(model, startRefusal);
+  const rows = flatten(model, refusal);
   const selectedIndex = Math.max(
     0,
     rows.findIndex((row) => row.option.value === model.value)
@@ -261,9 +257,8 @@ export function SourcePicker({
     );
 
   function renderOption(row: Row, index: number) {
-    // [K8] A disabled row says WHY it is disabled, from the refusal that owns it:
-    // the START FROM entries by `startRefusal`, the profile rows by `selectRefusal`.
-    const refusal = row.start ? startRefusal : selectRefusal;
+    // [K8][N5] A disabled row says WHY it is disabled — the same sentence the list's
+    // one refusal notice carries, on the row the user actually pointed at.
     return (
       <div
         key={row.option.value}
@@ -354,11 +349,7 @@ export function SourcePicker({
             role="listbox"
             aria-labelledby={LABEL_ID}
             aria-describedby={
-              [
-                startRefusal !== '' ? REFUSAL_ID : '',
-                selectRefusal !== '' ? SELECT_REFUSAL_ID : '',
-                listNotice !== '' ? NOTICE_ID : '',
-              ]
+              [refusal !== '' ? REFUSAL_ID : '', listNotice !== '' ? NOTICE_ID : '']
                 .filter((id) => id !== '')
                 .join(' ') || undefined
             }
@@ -369,14 +360,9 @@ export function SourcePicker({
           >
             {items}
           </div>
-          {startRefusal !== '' && (
+          {refusal !== '' && (
             <p id={REFUSAL_ID} className={styles.menuHint}>
-              {startRefusal}
-            </p>
-          )}
-          {selectRefusal !== '' && (
-            <p id={SELECT_REFUSAL_ID} className={styles.menuHint}>
-              {selectRefusal}
+              {refusal}
             </p>
           )}
           {listNotice !== '' && (

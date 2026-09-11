@@ -403,6 +403,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     if (sendingRef.current) return false;
     sendingRef.current = true;
     setSending(true);
+    // [K5][N4] Every operation flips `locked`, which REMOUNTS both cards — and a
+    // fresh card replays whatever `focusRequest` still stands, reopening an editor
+    // the user closed a round trip ago. The request belongs to the surface the
+    // operation just replaced, so it is spent HERE, once, for every lock cycle —
+    // an Apply that lands `consent_required` or `busy` included.
+    setFocusRequest(null);
     return true;
   };
 
@@ -1051,27 +1057,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         // one branch covers both without a second, contradictable check.
         if (challenge !== undefined) {
           setOutcome({ ...NO_OUTCOME, challenge, intent: 'grant-only' });
-          // [K5] This landing flips `locked`, which REMOUNTS both cards — and a
-          // fresh card replays whatever `focusRequest` still stands, reopening an
-          // editor the user closed a round trip ago. The request is spent; drop it
-          // in the same commit as the state that remounts.
-          setFocusRequest(null);
           setGrantNotice('');
           return;
         }
         // Busy consumed nothing: the token stays retryable, so the prompt stays
         // up and its own Confirm is the retry. Every other status spent it.
-        if (status !== 'busy') {
-          setOutcome(NO_OUTCOME);
-          setFocusRequest(null); // [K5] same remount, same spent request
-        }
+        if (status !== 'busy') setOutcome(NO_OUTCOME);
         setGrantNotice(GRANT_NOTICE[status]);
       } catch (err) {
         // The approval outcome is unknown; preserve the draft and best-effort
         // cancel any known challenge.
         if (token !== null) void CancelGolemSettingsApply(token).catch(() => undefined);
         setOutcome(NO_OUTCOME);
-        setFocusRequest(null); // [K5] same remount, same spent request
         setGrantNotice(boundedGolemMessage(err));
       } finally {
         endOperation();
@@ -1225,6 +1222,10 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 ? 'Resolve the pending Apply result first.'
                 : '';
 
+  /** The picker's ONE gate (§4.8 amended), named once: the trigger's `disabled` and
+   *  the [N6] bootstrap focus effect must agree on when it can take focus. */
+  const sourceTriggerDisabled = projection === null || sourceLocked || saving;
+
   const listLimited = profileList.kind === 'limited';
   // Two refusals on purpose: the STATE refusal blocks every Save (create and
   // overwrite alike), while the LIMIT refusal blocks only creation — §5.6
@@ -1235,15 +1236,21 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       ? 'Save needs a Ready applied configuration.'
       : '';
   const createRefusal = listLimited ? 'Too many profiles exist to create another.' : '';
-  // startRefusal deliberately ignores listLimited (Ruling 13): §5.6 scopes the
+  // [K8][N5] ONE refusal for the picker's two unselectable halves. §4.6 disables
+  // profile SELECTION off `ready` and §5.6's Invalid/Limited states disable the
+  // START FROM entries — the same two states, so two near-identical notices under
+  // one list said the same thing twice and both landed in `aria-describedby`.
+  // `missing` is excluded on purpose: it renders no profile rows at all, and its
+  // START FROM entries are exactly the bootstrap path a Missing user needs.
+  // The refusal deliberately ignores listLimited (Ruling 13): §5.6 scopes the
   // profile-count limit to CREATION, never to the Start actions. Start blank
   // is purely local and never reads the store, and the curated block always
   // sorts inside the first maxProjectionEntries rows, so "Start from curated"
   // has its rows regardless of the limit — a limited list must never leave a
   // Missing-state user with zero bootstrap path.
-  const startRefusal =
+  const pickerRefusal =
     projection !== null && (projection.state === 'invalid' || projection.state === 'limited')
-      ? 'Unavailable while the configuration is Invalid or Limited.'
+      ? 'Profiles and Start from are unavailable while the configuration is Invalid or Limited.'
       : '';
 
   const changeCount = draftChangeCount(draft);
@@ -1308,24 +1315,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // since a pending Save can overlap a Refresh that returns Missing.
   // [K12][C2] …and the ladder that NAMES which of those it is, so a greyed-out
   // Start button is never a dead end. `disabled` derives from the reason, so the
-  // two can never disagree.
-  const startDisabledReason =
-    projection === null
-      ? 'Nothing to start from until a configuration loads.'
-      : sourceLoading
-        ? 'Wait for the profile to finish loading.'
-        : sourceLocked || saving
-          ? 'Wait for the current operation to finish.'
-          : startRefusal;
-  const startGateBlocked = startDisabledReason !== '';
-
-  // [K8] §4.6 disables profile SELECTION off `ready`; the picker rows carried no
-  // reason for it. `missing` is excluded on purpose — it renders no profile rows
-  // at all, so there is nothing there to explain.
-  const selectRefusal =
-    projection !== null && projection.state !== 'ready' && projection.state !== 'missing'
-      ? 'Profiles cannot be selected while the configuration is Invalid or Limited.'
+  // two can never disagree. [N7] Two rungs, not four: the buttons this reason
+  // serves render ONLY while `projection.state === 'missing'`, so the
+  // `projection === null` and Invalid/Limited rungs were unreachable there.
+  const startDisabledReason = sourceLoading
+    ? 'Wait for the profile to finish loading.'
+    : sourceLocked || saving
+      ? 'Wait for the current operation to finish.'
       : '';
+  const startGateBlocked = startDisabledReason !== '';
 
   // [C7] `flatMap` narrows `description` by control flow — the filter/map pair
   // needed a cast to re-assert what the filter had already proven.
@@ -1349,15 +1347,23 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [bootstrapFocusPending, setBootstrapFocusPending] = useState(false);
   useEffect(() => {
     if (!bootstrapFocusPending) return;
-    setBootstrapFocusPending(false);
     // [K1] Only when nothing holds focus. The §4.6a dialog hands focus back to
     // whatever opened the start — an empty-state Start button that a refusal leaves
     // on screen keeps it — and the user may have moved on during the load. The
     // check belongs HERE, after the commit: a successful start unmounts the control
     // it was launched from, and until that commit lands it is still the active one.
-    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    if (document.activeElement !== null && document.activeElement !== document.body) {
+      setBootstrapFocusPending(false);
+      return;
+    }
+    // [N6] A disabled control cannot take focus, and a start that ends while its own
+    // write is still settling leaves the trigger disabled. Hold the request across
+    // those commits — the effect re-runs when the gate clears — instead of spending
+    // it on a no-op focus() and stranding focus on <body>.
+    if (sourceTriggerDisabled) return;
+    setBootstrapFocusPending(false);
     document.getElementById(SOURCE_PICKER_ID)?.focus();
-  }, [bootstrapFocusPending]);
+  }, [bootstrapFocusPending, sourceTriggerDisabled]);
   const bootstrapFrom = async (start: () => Promise<boolean>): Promise<void> => {
     // [K1] Not only on success: a start that FAILED (diagnostics, a transport
     // catch, a cancellation that would not cancel) left the picker closed and focus
@@ -1423,7 +1429,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           <div className={styles.controls}>
             <SourcePicker
               model={selectModel}
-              disabled={projection === null || sourceLocked || saving}
+              disabled={sourceTriggerDisabled}
               describedBy={
                 [
                   sourceLoading ? SOURCE_LOADING_ID : '',
@@ -1432,8 +1438,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   .filter((id) => id !== '')
                   .join(' ') || undefined
               }
-              startRefusal={startRefusal}
-              selectRefusal={selectRefusal}
+              refusal={pickerRefusal}
               listNotice={
                 profileList.kind === 'unavailable'
                   ? profileList.message

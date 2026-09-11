@@ -24,12 +24,16 @@ const model = (over: Partial<Parameters<typeof buildProfileSelectModel>[0]> = {}
     state: 'ready',
     ...over,
   });
+/** [N5] The exact sentence GolemConfigWorkspace composes for `pickerRefusal`: one
+ *  refusal covering both unselectable halves of the list. */
+const REFUSAL =
+  'Profiles and Start from are unavailable while the configuration is Invalid or Limited.';
+
 const props = () => ({
   model: model(),
   disabled: false,
   describedBy: undefined,
-  startRefusal: '',
-  selectRefusal: '',
+  refusal: '',
   listNotice: '',
   onOpen: jest.fn(),
   onSelect: jest.fn(),
@@ -198,21 +202,22 @@ describe('SourcePicker', () => {
   });
 
   it('disables START FROM entries with the refusal while Invalid/Limited', async () => {
-    const p = {
-      ...props(),
-      startRefusal: 'Unavailable while the configuration is Invalid or Limited.',
-    };
+    // [N5] Driven by the REAL composition: the workspace derives ONE refusal from the
+    // same Invalid/Limited states the model disables the profile rows on, so a limited
+    // model and a non-empty refusal always arrive together.
+    const p = { ...props(), model: model({ state: 'limited' }), refusal: REFUSAL };
     const user = userEvent.setup();
     render(<SourcePicker {...p} />);
     await user.click(trigger());
     const blank = screen.getByRole('option', { name: /Blank draft/ });
     expect(blank).toHaveAttribute('aria-disabled', 'true');
+    expect(blank).toHaveAttribute('title', REFUSAL);
     await user.click(blank);
     expect(p.onStartBlank).not.toHaveBeenCalled();
     // [F1] The refusal is a <p>: illegal inside a listbox, so it sits in the popover
     // wrapper beside it and reaches the listbox through aria-describedby.
     const list = screen.getByRole('listbox', { name: 'Source' });
-    const refusal = screen.getByText('Unavailable while the configuration is Invalid or Limited.');
+    const refusal = screen.getByText(REFUSAL);
     expect(list).not.toContainElement(refusal);
     expect(list.parentElement).toContainElement(refusal);
     expect(list.getAttribute('aria-describedby')?.split(' ')).toContain(refusal.id);
@@ -221,8 +226,8 @@ describe('SourcePicker', () => {
   it('names why the profile rows cannot be chosen while Invalid or Limited', async () => {
     // [K8] §4.6 disables replacement off `ready` in the MODEL; the rows said nothing
     // about why, so a Limited configuration looked like a broken picker.
-    const refusal = 'Profiles cannot be selected while the configuration is Invalid or Limited.';
-    const p = { ...props(), model: model({ state: 'limited' }), selectRefusal: refusal };
+    const refusal = REFUSAL;
+    const p = { ...props(), model: model({ state: 'limited' }), refusal };
     const user = userEvent.setup();
     render(<SourcePicker {...p} />);
     await user.click(trigger());
@@ -234,6 +239,9 @@ describe('SourcePicker', () => {
     expect(row).toHaveAttribute('title', refusal);
     // Same shape as the START FROM refusal: a <p> beside the listbox, reached
     // through aria-describedby, because a <p> is an illegal listbox child.
+    // [N5] ONE notice for both halves, not two near-identical <p>s under one list.
+    expect(screen.getAllByText(refusal)).toHaveLength(1);
+    expect(list.getAttribute('aria-describedby')?.split(' ')).toHaveLength(1);
     const notice = screen.getByText(refusal);
     expect(list).not.toContainElement(notice);
     expect(list.parentElement).toContainElement(notice);

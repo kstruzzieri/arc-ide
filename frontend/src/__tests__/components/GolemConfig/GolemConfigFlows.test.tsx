@@ -1232,6 +1232,31 @@ describe('grant-only destination approval', () => {
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
   });
 
+  it('does not replay a chip click when an Apply lands a drop disclosure', async () => {
+    // [N4] The twin of the grant path above, on the settings path the clear was MISSING
+    // from. `drop_confirmation_required` RETAINS the keys, so its settle skips
+    // `resetCards` — and the landing releases `sending`, which remounts both cards with
+    // editing available again. A `focusRequest` left standing reopened the editor the
+    // user had closed a round trip ago. The clear now happens once, in `beginOperation`,
+    // for every lock cycle.
+    applyReturns({
+      status: 'drop_confirmation_required',
+      drops: [{ changeId: 'route:chat', fields: ['slots', 'think_tags'] }],
+    });
+    await mountWorkspace();
+    await stageKey();
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
+    expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
+    await cancelEditor();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+
+    await clickApply();
+    expect(await screen.findByText(/slots/)).toBeVisible();
+    // Editing is available again beside the disclosure — and nothing reopened on its own.
+    expect(screen.getByRole('button', { name: 'Edit provider hosted' })).toBeEnabled();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+  });
+
   // The grant-only notice never reaches `settle` on its own, so a later
   // settings apply must clear it explicitly — otherwise "Destinations
   // approved. Your configuration was not changed." would still be on screen
