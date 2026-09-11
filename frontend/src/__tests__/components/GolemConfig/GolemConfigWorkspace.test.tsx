@@ -122,15 +122,19 @@ describe('GolemConfig stylesheet', () => {
       text.match(/@supports \(grid-template-columns: subgrid\) \{[\s\S]*?\n\}/)?.[0] ?? '';
     expect(supports).toMatch(/@container golem-config \(min-width: 600px\)/);
     // [A3] Identifier columns are bounded and wrap; only short enumerated columns are max-content.
+    // [X4] The identifier cap is itself container-relative, and the fluid column keeps a
+    // floor, so one 256-byte identifier can never squeeze its neighbour to nothing.
     expect(supports).toMatch(
-      /\.providerTable \{[^}]*grid-template-columns: fit-content\(200px\) minmax\(0, 1fr\) max-content max-content max-content/s
+      /\.providerTable \{[^}]*grid-template-columns: fit-content\(min\(200px, 22cqw\)\) minmax\(8ch, 1fr\) max-content max-content max-content/s
     );
     expect(supports).toMatch(
-      /\.routeTable \{[^}]*grid-template-columns: fit-content\(200px\) fit-content\(200px\) minmax\(0, 1fr\) max-content max-content max-content/s
+      /\.routeTable \{[^}]*grid-template-columns: fit-content\(min\(200px, 22cqw\)\) fit-content\(min\(200px, 22cqw\)\) minmax\(8ch, 1fr\) max-content max-content max-content/s
     );
     expect(supports).toMatch(
-      /\.definedTable \{[^}]*grid-template-columns: fit-content\(200px\) fit-content\(200px\) minmax\(0, 1fr\) max-content/s
+      /\.definedTable \{[^}]*grid-template-columns: fit-content\(min\(200px, 22cqw\)\) fit-content\(min\(200px, 22cqw\)\) minmax\(8ch, 1fr\) max-content/s
     );
+    // [X4] The last resort is a scrolling CARD, never a scrolling page.
+    expect(text).toMatch(/\.cardBody \{[^}]*overflow-x: auto/s);
     expect(supports).toMatch(/\.row,\s*\.headRow \{[^}]*grid-template-columns: subgrid/s);
     expect(supports).toMatch(/\.headRow \{[^}]*position: static/s);
     expect(supports).toMatch(/\.recordLabel \{[^}]*display: none/s);
@@ -206,6 +210,26 @@ describe('GolemConfig stylesheet', () => {
     // [C18] A container query can never style its own container: no `.root` rule may live inside one.
     for (const block of text.match(/@container golem-config[^{]*\{[\s\S]*?\n\}/g) ?? []) {
       expect(block).not.toMatch(/\n\s*\.root \{/);
+    }
+  });
+
+  // [X8] Equal-specificity modules cascade by ORDER: a base rule declared after an
+  // upgrade silently cancels it. Every mobile-first base must precede the queries.
+  it('declares the missing-state base before any container upgrade can build on it', () => {
+    const text = css();
+    expect(text.indexOf('\n.emptyState {')).toBeGreaterThan(-1);
+    // The at-rule itself, anchored to column 0 — the prose above the base rule names
+    // the query too, and a bare substring search would find that comment first.
+    expect(text.indexOf('\n.emptyState {')).toBeLessThan(text.indexOf('\n@container golem-config'));
+  });
+
+  // [X9] Same cascade rule for the button modifiers: `.button` would otherwise
+  // re-assert its padding, border and colour over anything declared earlier.
+  it('declares every button modifier after the base button rules', () => {
+    const text = css();
+    const base = text.indexOf('\n.button {');
+    for (const modifier of ['.closeIcon', '.warn', '.quiet', '.small', '.primary', '.danger']) {
+      expect(text.indexOf(`\n${modifier} {`)).toBeGreaterThan(base);
     }
   });
 

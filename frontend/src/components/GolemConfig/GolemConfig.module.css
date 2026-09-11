@@ -104,22 +104,6 @@
   color: var(--text-muted);
 }
 
-.closeIcon {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
-  padding: 5px;
-}
-
-.closeIcon svg {
-  width: 12px;
-  height: 12px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-}
-
 /* [A7] Mobile-first: the BASE is the stacked form (picker full width, actions
    wrapping, the check button on its own row). The min-width container queries
    at the bottom of this file upgrade to the two-row and one-row forms. */
@@ -195,16 +179,6 @@
     animation: none;
     border-top-color: var(--accent);
   }
-}
-
-.warn {
-  border-color: var(--status-warning);
-  color: var(--status-warning);
-}
-
-.warn:hover:not(:disabled) {
-  border-color: var(--status-warning);
-  background-color: rgba(245, 158, 11, 0.08);
 }
 
 /* ── Source picker (#312): trigger + listbox popover ─────────────────────── */
@@ -289,21 +263,28 @@
 
 /* Clamps against the CONTAINER (.root), never the viewport — same reasoning as
    .menuPanel above; the guard test asserts both. */
+/* [F1] The popover WRAPPER: the listbox below holds only options, and the
+   notices render beside it. [X5] Plain fallback first, then the cqw clamp —
+   a runtime without container queries keeps a usable 320px popover. */
 .pickerList {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
   z-index: 30;
+  width: 320px;
   width: min(320px, calc(100cqw - 32px));
   min-width: 100%;
-  /* [A4] 256 profiles must scroll, not run off the pane. */
-  max-height: 320px;
-  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--surface-border);
   border-radius: 8px;
   background-color: var(--surface-panel);
   box-shadow: var(--shadow-panel);
+}
+
+.pickerListbox {
+  /* [A4] 256 profiles must scroll, not run off the pane. */
+  max-height: 320px;
+  overflow-y: auto;
   outline: none;
 }
 
@@ -420,6 +401,37 @@
   color: var(--text-secondary);
 }
 
+/* [X9] Every `.button` MODIFIER lives after the base rules above: CSS-module class
+   names carry equal specificity, so a modifier declared earlier in the file loses
+   the cascade to `.button` / `.button:hover` — which is what silently reverted the
+   close icon's square padding and the warn tone's border and colour. */
+
+.closeIcon {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}
+
+.closeIcon svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.warn {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.warn:hover:not(:disabled) {
+  border-color: var(--status-warning);
+  background-color: rgba(245, 158, 11, 0.08);
+}
+
 /* ── save as profile button (§4.8) ───────────────────────────────────────── */
 
 /* The panel positions against its OWN trigger span (`position: relative`
@@ -449,15 +461,17 @@
 .menuPanel {
   position: absolute;
   top: calc(100% + 4px);
-  /* [C15] Save is the FIRST masthead action below the 800px one-row form
-     (stacked/two-row layouts put it ahead of the picker), so a right-anchored
-     320px panel would extend past the pane's left edge there. Left-anchored
+  /* [C15] Save is the first item of the wrapped actions row, so below the
+     800px one-row form its trigger sits near the pane's LEFT edge and a
+     right-anchored 320px panel would extend past that edge. Left-anchored
      against the trigger works at every width the trigger itself can occupy. */
   left: 0;
   right: auto;
   z-index: 30;
   width: max-content;
   min-width: 0;
+  /* [X5] Plain fallback first; the cqw clamp wins wherever it parses. */
+  max-width: 320px;
   max-width: min(320px, calc(100cqw - 32px));
   display: flex;
   flex-direction: column;
@@ -606,6 +620,9 @@
   display: flex;
   flex-direction: column;
   padding: 0;
+  /* [X4] The last resort when even the bounded columns cannot fit: a pathological
+     pair of 256-byte identifiers scrolls THIS card, never the whole page. */
+  overflow-x: auto;
 }
 
 .table {
@@ -1903,6 +1920,55 @@ select.input {
   border: 0;
 }
 
+/* ── Missing-state empty body (#312 ruling 4) ───────────────────────────── */
+
+/* [A7][X8] Mobile-first BASE: stacked actions, full-width buttons. It sits
+   BEFORE every `@container golem-config` block on purpose — CSS-module classes
+   carry equal specificity, so declaring the base after the >= 600px upgrade
+   cancelled that upgrade's wider padding and `flex: none` buttons outright. */
+.emptyState {
+  padding: 18px 14px 16px;
+  border: 1px dashed var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.emptyTitle {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.emptyText,
+.emptyNote {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.emptyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 12px;
+}
+
+.emptyActions .button {
+  flex: 1 1 auto;
+}
+
+.emptyNote {
+  font-size: 11.5px;
+}
+
+.emptyNote b {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 /* ── narrow container: the route editor's master-detail strip stacks ─────── */
 
 @container golem-config (max-width: 720px) {
@@ -2120,54 +2186,6 @@ select.input {
   }
 }
 
-/* ── Missing-state empty body (#312 ruling 4) ───────────────────────────── */
-
-/* [A7] Mobile-first BASE: stacked actions, full-width buttons. The
-   @container golem-config (min-width: 600px) upgrade above restores the
-   wider padding and stops the buttons stretching. */
-.emptyState {
-  padding: 18px 14px 16px;
-  border: 1px dashed var(--surface-border);
-  border-radius: 8px;
-  background-color: var(--surface-panel);
-}
-
-.emptyTitle {
-  margin: 0 0 6px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.emptyText,
-.emptyNote {
-  margin: 0;
-  max-width: 60ch;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
-.emptyActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 0 12px;
-}
-
-.emptyActions .button {
-  flex: 1 1 auto;
-}
-
-.emptyNote {
-  font-size: 11.5px;
-}
-
-.emptyNote b {
-  margin-right: 6px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
 /* ── the table upgrade: column-aligned rows, header band, bounded identifier
    columns. [A7][C19] Last block in the file on purpose: the masthead guard
    matches the FIRST `@container golem-config (min-width: 600px)`, which must
@@ -2180,20 +2198,26 @@ select.input {
       display: grid;
     }
 
-    /* Only the long, variable-length columns are fluid; identifiers are bounded (A3). */
+    /* Only the long, variable-length columns are fluid; identifiers are bounded (A3).
+       [X4] The 200px cap is itself capped against the CONTAINER (`22cqw`), so a narrow
+       pane cannot let one 256-byte identifier claim a third of the row and squeeze the
+       fluid column to nothing; that column keeps an `8ch` floor rather than `0`, and
+       `.cardBody` scrolls when even those minimums exceed the pane. */
     .providerTable {
-      grid-template-columns: fit-content(200px) minmax(0, 1fr) max-content max-content max-content;
+      /* prettier-ignore */
+      grid-template-columns: fit-content(min(200px, 22cqw)) minmax(8ch, 1fr) max-content max-content max-content;
     }
 
     .routeTable {
       /* Kept on one line: prettier would fold the six tracks past 80 columns
          into an unreadable split, and the stylesheet guard pins the template. */
       /* prettier-ignore */
-      grid-template-columns: fit-content(200px) fit-content(200px) minmax(0, 1fr) max-content max-content max-content;
+      grid-template-columns: fit-content(min(200px, 22cqw)) fit-content(min(200px, 22cqw)) minmax(8ch, 1fr) max-content max-content max-content;
     }
 
     .definedTable {
-      grid-template-columns: fit-content(200px) fit-content(200px) minmax(0, 1fr) max-content;
+      /* prettier-ignore */
+      grid-template-columns: fit-content(min(200px, 22cqw)) fit-content(min(200px, 22cqw)) minmax(8ch, 1fr) max-content;
     }
 
     .row,
