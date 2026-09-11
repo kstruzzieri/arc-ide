@@ -241,6 +241,17 @@ export function Editor() {
     prevShowDiffRef.current = showDiff;
   }, [showDiff]);
 
+  // #309: a narrow tab strip scrolls (`.tabBar { overflow-x: auto }`), so the
+  // active configuration tab must never stay scrolled out of view — on
+  // activation AND on re-activation (clicking the tab again while active).
+  const revealConfigTab = () =>
+    document
+      .getElementById('tab-golem-config')
+      ?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+  useEffect(() => {
+    if (showConfig) revealConfigTab();
+  }, [showConfig]);
+
   // The one choke point for closing the configuration surface, so the §4.6a
   // prompt cannot be routed around. A dirty surface is revealed first: the
   // dialog it raises lives inside that pane, and a hidden pane cannot show one.
@@ -441,7 +452,10 @@ export function Editor() {
           <div
             className={`${styles.tab} ${showConfig ? styles.active : ''}`}
             title={'Golem Configuration\nApplies to every workspace'}
-            onClick={focusConfigTab}
+            onClick={() => {
+              focusConfigTab();
+              revealConfigTab();
+            }}
           >
             <div
               id="tab-golem-config"
