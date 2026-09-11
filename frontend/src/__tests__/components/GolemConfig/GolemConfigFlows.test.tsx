@@ -1842,4 +1842,34 @@ describe('bootstrap through the Source picker', () => {
     expect(request.source).toEqual({ kind: 'blank' });
     expect(ApplyGolemSettings).not.toHaveBeenCalled();
   });
+
+  // [A6] regression: `reviewConflict()`'s 'target' branch reloads unconditionally
+  // (no unsaved guard — it calls `load(true)` directly) and keeps every retained
+  // change for review, so it is the one organic way to land the bootstrap empty
+  // state on top of a still-dirty draft whose source was never touched (`applied`
+  // the whole time). Clicking a bootstrap button there must still run the §4.6a
+  // dirty-draft guard, and answering "Keep editing" must leave focus exactly
+  // where it was — the guard refused the start, so `bootstrapFrom` must not
+  // move focus to the Source trigger.
+  it('does not move focus off a bootstrap button when the dirty-draft guard is Kept', async () => {
+    reload(readyProjection);
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await stageEndpoint();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+
+    reload(missingProjection);
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    const startBlankButton = within(empty).getByRole('button', { name: 'Start blank' });
+
+    await userEvent.click(startBlankButton);
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Keep editing' })
+    );
+
+    expect(startBlankButton).toHaveFocus();
+    expect(screen.getByRole('region', { name: 'No applied configuration' })).toBeInTheDocument();
+  });
 });

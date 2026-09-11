@@ -781,7 +781,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const startBlank = async () => {
+  const startBlank = async (): Promise<boolean> => {
     if (
       unsavedRef.current &&
       !(await clearForTransition(
@@ -789,19 +789,20 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         'Discard & switch'
       ))
     )
-      return;
+      return false;
     settle({ kind: 'discard' });
     setSourceError('');
     setPreview(BLANK_PREVIEW);
     setDraft((current) => ({ ...current, source: { kind: 'blank' } }));
+    return true;
   };
 
   /** §4.8 source switching. The select's value derives from draft.source, so a
    *  refused guard or failed load never moves it — React re-renders the prior
    *  value and the transient native choice is discarded. */
-  const selectSource = async (value: string): Promise<void> => {
+  const selectSource = async (value: string): Promise<boolean> => {
     const current = sourceSelectValue(draft.source);
-    if (value === current || value === BLANK_SOURCE_VALUE) return;
+    if (value === current || value === BLANK_SOURCE_VALUE) return false;
     if (
       unsavedRef.current &&
       !(await clearForTransition(
@@ -809,12 +810,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         'Discard & switch'
       ))
     )
-      return;
+      return false;
     if (value === APPLIED_SOURCE_VALUE) {
       await discard();
-      return;
+      return true;
     }
-    await adoptProfile(value, false);
+    return adoptProfile(value, false);
   };
 
   /**
@@ -1284,29 +1285,21 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       : [];
 
   /**
-   * [A6] Both bootstrap buttons unmount on success, so their handlers hand
-   * focus to the control that now names the staged source.
-   *
-   * `startBlank` never awaits a real suspension point (its only `await` is
-   * short-circuited away when nothing is unsaved), so it settles inside the
-   * SAME synchronous dispatch as the click and React's discrete-event flush
-   * already committed `draftRef.current` by the time `start()` resolves.
-   * `selectSource`'s profile path is different: it awaits `LoadGolemProfile`,
-   * a real network round trip, so its state updates land after that — no
-   * longer inside the click's synchronous window — and React schedules that
-   * commit on the task queue rather than flushing it with the microtask
-   * chain this function's own `await`s run on. Microtasks always drain fully
-   * before the next task runs, so no amount of chained `await`s here can
-   * catch up to a same-microtask-turn read of `draftRef.current`; yielding
-   * to the task queue once is what actually waits for the commit.
+   * [A6] Both bootstrap buttons unmount on success, so the handler hands focus to the
+   * control that now names the staged source — only when the start actually landed.
+   * The same two-effect shape the cards' own `focusRequest` uses (see ProvidersCard):
+   * the Source trigger's enabled, focusable state does not exist until the state
+   * change a successful start makes has committed, so the flag is state (picked up
+   * by an effect after that commit), never a synchronous read right after the await.
    */
-  const bootstrapFrom = async (start: () => Promise<void>): Promise<void> => {
-    await start();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    // Only when the source actually moved (the §4.6a guard may have refused): the empty
-    // state is gone and the Source trigger is the natural landing.
-    if (draftRef.current.source.kind !== 'applied')
-      document.getElementById(SOURCE_PICKER_ID)?.focus();
+  const [bootstrapFocusPending, setBootstrapFocusPending] = useState(false);
+  useEffect(() => {
+    if (!bootstrapFocusPending) return;
+    setBootstrapFocusPending(false);
+    document.getElementById(SOURCE_PICKER_ID)?.focus();
+  }, [bootstrapFocusPending]);
+  const bootstrapFrom = async (start: () => Promise<boolean>): Promise<void> => {
+    if (await start()) setBootstrapFocusPending(true);
   };
 
   return (
