@@ -233,6 +233,17 @@ describe('GolemConfig stylesheet', () => {
     }
   });
 
+  // [K7] Hover and the keyboard cursor shared one background, so the pointer
+  // sweeping the list looked exactly like the row Enter would choose.
+  it('tells the keyboard-active option apart from a hovered one', () => {
+    const text = css();
+    const active = text.match(/\.pickerOption\[data-active\] \{[^}]*\}/)?.[0] ?? '';
+    expect(active).toContain('outline: 2px solid var(--focus-ring)');
+    expect(active).toContain('outline-offset: -2px');
+    // The shared hover background stays: the ring ADDS a signal, it does not replace one.
+    expect(text).toContain('.pickerOption[data-active],\n.pickerOption:hover {');
+  });
+
   it('the picker popover clamps to the pane like the save popover', () => {
     const list = css().match(/\.pickerList\s*\{[^}]*\}/)?.[0] ?? '';
     expect(list).toContain('width: min(320px, calc(100cqw - 32px))');
@@ -599,6 +610,31 @@ describe('GolemConfigWorkspace', () => {
     // See the blank-draft test above: the commit that grants focus lands
     // asynchronously relative to the click's own promise chain.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Source' })).toHaveFocus());
+  });
+
+  it('names the reason the bootstrap Start buttons are disabled', async () => {
+    // [K12][C2] A greyed-out Start button on a Missing configuration is the only
+    // thing on screen; without a title it is a dead end. The ladder derives both
+    // `disabled` and the title, so they cannot disagree.
+    resolve(emptyProjection('missing', 'none'));
+    (ListGolemProfiles as jest.Mock).mockResolvedValue({
+      status: 'loaded',
+      profiles: [{ id: 'curated/local', curated: true }],
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    const blank = within(empty).getByRole('button', { name: 'Start blank' });
+    const curated = within(empty).getByRole('button', { name: 'Start from curated local' });
+    expect(blank).toBeEnabled();
+    expect(blank).not.toHaveAttribute('title');
+
+    // A Refresh that has not answered yet owns the surface: `sourceLocked`.
+    (ReloadGolemSettings as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    for (const button of [blank, curated]) {
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', 'Wait for the current operation to finish.');
+    }
   });
 
   it('explains that editing is unavailable while Limited', async () => {

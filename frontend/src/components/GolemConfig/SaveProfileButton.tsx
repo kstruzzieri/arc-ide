@@ -63,6 +63,8 @@ const SAVE_OUTCOME_UNKNOWN =
 // effect and the elements that carry the ids cannot drift apart.
 const OVERWRITE_CONFIRM_ID = 'golem-profile-overwrite-confirm';
 const NOTICE_DONE_ID = 'golem-profile-notice-done';
+/** [K2] The trigger is a focus target like any other step control, so it is named here too. */
+const SAVE_TRIGGER_ID = 'golem-profile-save';
 
 type SaveStep =
   | { step: 'idle' }
@@ -118,7 +120,6 @@ export function SaveProfileButton({
    */
   const appliedRevisionRef = useRef(appliedRevision);
   appliedRevisionRef.current = appliedRevision;
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLSpanElement>(null);
   /**
    * The announcement channel for the visible notice text, mirroring
@@ -143,7 +144,11 @@ export function SaveProfileButton({
     invalidateFlow();
     setOpen(false);
     setSave({ step: 'idle' });
-    if (restoreFocus) triggerRef.current?.focus();
+    // [K2] Never a synchronous focus(): the trigger is DISABLED while a save is in
+    // flight, so the call was a no-op and focus fell to <body>. The request goes
+    // through the pendingFocus effect, which holds it until the trigger is
+    // focusable again.
+    if (restoreFocus) setPendingFocus({ elementId: SAVE_TRIGGER_ID });
   };
 
   useEffect(() => {
@@ -176,6 +181,16 @@ export function SaveProfileButton({
     setAnnouncement(save.step === 'notice' ? save.text : '');
   }, [save]);
 
+  // §4.8 availability, enforced on EVERY descendant and handler — not only the
+  // trigger — so a restriction arriving while the popover is open (a list
+  // refresh resolving limited, a projection transition) takes effect at once.
+  // [K2] Declared above the focus effect, which depends on `createBlocked`.
+  const flowBusy = disabled || saving || pending;
+  const createBlocked = flowBusy || saveRefusal !== '' || createRefusal !== '';
+  // §5.6: replacement by exact id/revision stays available while the list is
+  // limited, so Overwrite gates on the state refusal alone — never the limit.
+  const overwriteBlocked = flowBusy || saveRefusal !== '';
+
   // A step transition currently drops focus to <body> — nothing moves it —
   // so a keyboard user must Tab from the document start to reach the fresh
   // control. Mirrors RoutingCard's pendingFocus + focus effect exactly:
@@ -190,18 +205,15 @@ export function SaveProfileButton({
   // focus() inside the SAME flush that puts the fresh step on screen.
   useEffect(() => {
     if (pendingFocus === null) return;
-    document.getElementById(pendingFocus.elementId)?.focus();
+    const target = document.getElementById(pendingFocus.elementId);
+    // [K2] A disabled control cannot take focus, and the save flow closes the
+    // popover WHILE its own RPC is still in flight — so hold the request across
+    // the commits that keep it disabled and spend it on the one that re-enables
+    // it. `createBlocked` is that bit; the effect re-runs when it clears.
+    if (target instanceof HTMLButtonElement && target.disabled) return;
+    target?.focus();
     setPendingFocus(null);
-  }, [pendingFocus]);
-
-  // §4.8 availability, enforced on EVERY descendant and handler — not only the
-  // trigger — so a restriction arriving while the popover is open (a list
-  // refresh resolving limited, a projection transition) takes effect at once.
-  const flowBusy = disabled || saving || pending;
-  const createBlocked = flowBusy || saveRefusal !== '' || createRefusal !== '';
-  // §5.6: replacement by exact id/revision stays available while the list is
-  // limited, so Overwrite gates on the state refusal alone — never the limit.
-  const overwriteBlocked = flowBusy || saveRefusal !== '';
+  }, [pendingFocus, createBlocked]);
 
   /**
    * Enters the notice step AND focuses Done, in one synchronous call — every
@@ -340,7 +352,7 @@ export function SaveProfileButton({
     <span className={styles.menuRoot} ref={rootRef}>
       <button
         type="button"
-        ref={triggerRef}
+        id={SAVE_TRIGGER_ID}
         className={styles.button}
         aria-haspopup="true"
         aria-expanded={open}

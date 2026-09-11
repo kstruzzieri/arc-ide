@@ -295,11 +295,11 @@ describe('masthead profile select', () => {
     await waitFor(() => expect(sourceTrigger()).toHaveFocus());
   });
 
-  it('never pulls focus back to the Source trigger when the guard refuses the switch', async () => {
-    // [F3] `Keep editing` resolves the start false, so the outcome hands out no focus.
-    // The picker's OWN close already restored the trigger before the guard opened —
-    // that move is the picker's contract and is not what this pins. What must not
-    // happen is a later, outcome-driven steal from wherever the user went next.
+  it('leaves focus on the trigger, and does not steal it later, when the guard refuses', async () => {
+    // [K1] `Keep editing` refuses the start. The picker's OWN close already restored
+    // the trigger before the guard opened, and the dialog hands it back there — so the
+    // trigger legitimately holds focus. What must not happen is a later,
+    // outcome-driven steal from wherever the user went next.
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
     await mountReady();
     const user = userEvent.setup();
@@ -309,11 +309,55 @@ describe('masthead profile select', () => {
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
     expect(sourceValue()).toBe('applied');
     expect(LoadGolemProfile).not.toHaveBeenCalled();
+    expect(sourceTrigger()).toHaveFocus();
 
     const refresh = screen.getByRole('button', { name: 'Refresh' });
     refresh.focus();
     await act(async () => {}); // flush any pending focus effect
     expect(refresh).toHaveFocus();
+  });
+
+  it('returns focus to the Source trigger when the pick FAILS', async () => {
+    // [K1] The failure path is where focus was actually stranded: the picker closed,
+    // the trigger was disabled for the load, and the refusal notice arrived with focus
+    // on <body>. The notice is no use to a reader who cannot get back to the control.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue({
+      status: 'diagnostics',
+      diagnostics: [{ code: 'not_found', profileId: 'user/mine' }],
+    });
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, /mine/, 'Yours');
+    await screen.findByText('That profile no longer exists.');
+    expect(sourceValue()).toBe('applied');
+    await waitFor(() => expect(sourceTrigger()).toHaveFocus());
+  });
+
+  it('re-adopts the profile a START FROM entry names even when it is already the source', async () => {
+    // [K3] `selectSource` short-circuits on `value === current`, so START FROM Curated
+    // local was a silent no-op once `curated/local` WAS the source — exactly when a
+    // user reaches for it, to throw a bad draft away and start over from that profile.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.getByTestId('golem-config-draft')).toBeInTheDocument();
+    (LoadGolemProfile as jest.Mock).mockClear();
+
+    await pickSource(user, /^Curated local/, 'Start from');
+    // §4.6a still guards it: the staged work is discarded, not silently dropped.
+    await user.click(await screen.findByRole('button', { name: 'Discard & switch' }));
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('golem-config-draft')).queryByRole('button', {
+          name: /route/,
+        })
+      ).toBeNull()
+    );
   });
 
   it('guards a source switch while work is unsaved', async () => {
@@ -1099,6 +1143,34 @@ describe('Save as profile', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save as profile…' })).toHaveFocus();
+  });
+
+  it('restores focus to the trigger when Escape closes a save that is still in flight', async () => {
+    // [K2] `close(true)` called `focus()` on the trigger synchronously — while the
+    // in-flight save still had it DISABLED, which makes the call a no-op and drops
+    // focus to <body>. The request now waits for the commit that re-enables it.
+    let settle: ((result: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const trigger = screen.getByRole('button', { name: 'Save as profile…' });
+    expect(trigger).toBeDisabled();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByLabelText('Profile name')).not.toBeInTheDocument();
+    expect(trigger).not.toHaveFocus(); // still disabled: nothing could take it yet
+
+    await act(async () => {
+      settle?.({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toHaveFocus()
+    );
   });
 
   // Fix for the review finding: a `role="status"` mounted together with its

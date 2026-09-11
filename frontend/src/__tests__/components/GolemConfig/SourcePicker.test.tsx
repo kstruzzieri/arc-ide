@@ -29,6 +29,7 @@ const props = () => ({
   disabled: false,
   describedBy: undefined,
   startRefusal: '',
+  selectRefusal: '',
   listNotice: '',
   onOpen: jest.fn(),
   onSelect: jest.fn(),
@@ -215,6 +216,33 @@ describe('SourcePicker', () => {
     expect(list).not.toContainElement(refusal);
     expect(list.parentElement).toContainElement(refusal);
     expect(list.getAttribute('aria-describedby')?.split(' ')).toContain(refusal.id);
+  });
+
+  it('names why the profile rows cannot be chosen while Invalid or Limited', async () => {
+    // [K8] §4.6 disables replacement off `ready` in the MODEL; the rows said nothing
+    // about why, so a Limited configuration looked like a broken picker.
+    const refusal = 'Profiles cannot be selected while the configuration is Invalid or Limited.';
+    const p = { ...props(), model: model({ state: 'limited' }), selectRefusal: refusal };
+    const user = userEvent.setup();
+    render(<SourcePicker {...p} />);
+    await user.click(trigger());
+    const list = screen.getByRole('listbox', { name: 'Source' });
+    const row = within(within(list).getByRole('group', { name: 'Curated' })).getByRole('option', {
+      name: 'local',
+    });
+    expect(row).toHaveAttribute('aria-disabled', 'true');
+    expect(row).toHaveAttribute('title', refusal);
+    // Same shape as the START FROM refusal: a <p> beside the listbox, reached
+    // through aria-describedby, because a <p> is an illegal listbox child.
+    const notice = screen.getByText(refusal);
+    expect(list).not.toContainElement(notice);
+    expect(list.parentElement).toContainElement(notice);
+    expect(list.getAttribute('aria-describedby')?.split(' ')).toContain(notice.id);
+    // Type-ahead onto a profile row, then Enter: the row refuses, nothing is chosen.
+    await user.keyboard('a{Enter}');
+    expect(list).toHaveAttribute('aria-activedescendant');
+    expect(p.onSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole('listbox', { name: 'Source' })).toBeInTheDocument();
   });
 
   it('marks a PROVEN-absent retained profile unavailable and keeps it unchoosable', async () => {

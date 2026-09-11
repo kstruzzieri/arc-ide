@@ -24,6 +24,8 @@ const LABEL_ID = `${SOURCE_PICKER_ID}-label`;
  *  and reach it through `aria-describedby`. */
 const REFUSAL_ID = `${LIST_ID}-refusal`;
 const NOTICE_ID = `${LIST_ID}-notice`;
+/** [K8] The second refusal: why the PROFILE rows are unselectable. */
+const SELECT_REFUSAL_ID = `${LIST_ID}-select-refusal`;
 
 type Group = '' | 'Curated' | 'Yours' | 'Start from';
 /** [C2] ids may not contain spaces: `aria-labelledby` splits on them. */
@@ -50,6 +52,12 @@ export interface SourcePickerProps {
   describedBy: string | undefined;
   /** '' or the Invalid/Limited refusal; disables the START FROM entries. */
   startRefusal: string;
+  /**
+   * [K8] '' or the reason the profile rows (which the MODEL disables off `ready`)
+   * cannot be chosen. It names an existing refusal rather than causing one: the
+   * picker never disables a row on the strength of this string.
+   */
+  selectRefusal: string;
   /** [A5] `Loading profiles…` while the list is unloaded, the bounded message while unavailable, '' otherwise. */
   listNotice: string;
   onOpen: () => void;
@@ -95,6 +103,7 @@ export function SourcePicker({
   disabled,
   describedBy,
   startRefusal,
+  selectRefusal,
   listNotice,
   onOpen,
   onSelect,
@@ -252,6 +261,9 @@ export function SourcePicker({
     );
 
   function renderOption(row: Row, index: number) {
+    // [K8] A disabled row says WHY it is disabled, from the refusal that owns it:
+    // the START FROM entries by `startRefusal`, the profile rows by `selectRefusal`.
+    const refusal = row.start ? startRefusal : selectRefusal;
     return (
       <div
         key={row.option.value}
@@ -259,6 +271,7 @@ export function SourcePicker({
         role="option"
         aria-selected={row.option.value === model.value}
         aria-disabled={row.option.disabled || undefined}
+        title={row.option.disabled && refusal !== '' ? refusal : undefined}
         data-active={index === activeIndex || undefined}
         className={`${styles.pickerOption} ${row.start ? styles.pickerStart : ''}`}
         onPointerMove={() => setActiveValue(row.option.value)}
@@ -341,7 +354,11 @@ export function SourcePicker({
             role="listbox"
             aria-labelledby={LABEL_ID}
             aria-describedby={
-              [startRefusal !== '' ? REFUSAL_ID : '', listNotice !== '' ? NOTICE_ID : '']
+              [
+                startRefusal !== '' ? REFUSAL_ID : '',
+                selectRefusal !== '' ? SELECT_REFUSAL_ID : '',
+                listNotice !== '' ? NOTICE_ID : '',
+              ]
                 .filter((id) => id !== '')
                 .join(' ') || undefined
             }
@@ -355,6 +372,11 @@ export function SourcePicker({
           {startRefusal !== '' && (
             <p id={REFUSAL_ID} className={styles.menuHint}>
               {startRefusal}
+            </p>
+          )}
+          {selectRefusal !== '' && (
+            <p id={SELECT_REFUSAL_ID} className={styles.menuHint}>
+              {selectRefusal}
             </p>
           )}
           {listNotice !== '' && (

@@ -819,6 +819,25 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   };
 
   /**
+   * [K3] START FROM is a COMMAND, not a selection: "start from curated local"
+   * while `curated/local` is already the source is a legitimate request to throw
+   * the staged work away and re-adopt that profile clean. `selectSource` refuses
+   * it (`value === current` short-circuits), so the command runs the same §4.6a
+   * guard and then re-adopts unconditionally.
+   */
+  const startFromProfile = async (profileId: string): Promise<boolean> => {
+    if (
+      unsavedRef.current &&
+      !(await clearForTransition(
+        'Discard your staged changes and switch source?',
+        'Discard & switch'
+      ))
+    )
+      return false;
+    return adoptProfile(profileId, false);
+  };
+
+  /**
    * §4.8: Save never touches the staged draft, the ancestry record, or the
    * KeyVault — no settle, no provenance write, no vault access. It registers
    * in the §5.5 close-wait set through registerWrite, so the close handshake
@@ -1032,18 +1051,27 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         // one branch covers both without a second, contradictable check.
         if (challenge !== undefined) {
           setOutcome({ ...NO_OUTCOME, challenge, intent: 'grant-only' });
+          // [K5] This landing flips `locked`, which REMOUNTS both cards — and a
+          // fresh card replays whatever `focusRequest` still stands, reopening an
+          // editor the user closed a round trip ago. The request is spent; drop it
+          // in the same commit as the state that remounts.
+          setFocusRequest(null);
           setGrantNotice('');
           return;
         }
         // Busy consumed nothing: the token stays retryable, so the prompt stays
         // up and its own Confirm is the retry. Every other status spent it.
-        if (status !== 'busy') setOutcome(NO_OUTCOME);
+        if (status !== 'busy') {
+          setOutcome(NO_OUTCOME);
+          setFocusRequest(null); // [K5] same remount, same spent request
+        }
         setGrantNotice(GRANT_NOTICE[status]);
       } catch (err) {
         // The approval outcome is unknown; preserve the draft and best-effort
         // cancel any known challenge.
         if (token !== null) void CancelGolemSettingsApply(token).catch(() => undefined);
         setOutcome(NO_OUTCOME);
+        setFocusRequest(null); // [K5] same remount, same spent request
         setGrantNotice(boundedGolemMessage(err));
       } finally {
         endOperation();
@@ -1278,13 +1306,36 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   // [C25] The SAME gate as the picker's START FROM entries — `saving` included,
   // since a pending Save can overlap a Refresh that returns Missing.
-  const startGateBlocked = projection === null || sourceLocked || saving || startRefusal !== '';
+  // [K12][C2] …and the ladder that NAMES which of those it is, so a greyed-out
+  // Start button is never a dead end. `disabled` derives from the reason, so the
+  // two can never disagree.
+  const startDisabledReason =
+    projection === null
+      ? 'Nothing to start from until a configuration loads.'
+      : sourceLoading
+        ? 'Wait for the profile to finish loading.'
+        : sourceLocked || saving
+          ? 'Wait for the current operation to finish.'
+          : startRefusal;
+  const startGateBlocked = startDisabledReason !== '';
 
+  // [K8] §4.6 disables profile SELECTION off `ready`; the picker rows carried no
+  // reason for it. `missing` is excluded on purpose — it renders no profile rows
+  // at all, so there is nothing there to explain.
+  const selectRefusal =
+    projection !== null && projection.state !== 'ready' && projection.state !== 'missing'
+      ? 'Profiles cannot be selected while the configuration is Invalid or Limited.'
+      : '';
+
+  // [C7] `flatMap` narrows `description` by control flow — the filter/map pair
+  // needed a cast to re-assert what the filter had already proven.
   const curatedDescriptions: Array<[string, string]> =
     profileList.kind === 'loaded' || profileList.kind === 'limited'
-      ? profileList.profiles
-          .filter((row) => row.curated && row.description !== undefined && row.description !== '')
-          .map((row) => [row.id.slice(row.id.indexOf('/') + 1), row.description as string])
+      ? profileList.profiles.flatMap((row) =>
+          row.curated && row.description !== undefined && row.description !== ''
+            ? [[row.id.slice(row.id.indexOf('/') + 1), row.description] as [string, string]]
+            : []
+        )
       : [];
 
   /**
@@ -1299,10 +1350,25 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!bootstrapFocusPending) return;
     setBootstrapFocusPending(false);
+    // [K1] Only when nothing holds focus. The §4.6a dialog hands focus back to
+    // whatever opened the start — an empty-state Start button that a refusal leaves
+    // on screen keeps it — and the user may have moved on during the load. The
+    // check belongs HERE, after the commit: a successful start unmounts the control
+    // it was launched from, and until that commit lands it is still the active one.
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
     document.getElementById(SOURCE_PICKER_ID)?.focus();
   }, [bootstrapFocusPending]);
   const bootstrapFrom = async (start: () => Promise<boolean>): Promise<void> => {
-    if (await start()) setBootstrapFocusPending(true);
+    // [K1] Not only on success: a start that FAILED (diagnostics, a transport
+    // catch, a cancellation that would not cancel) left the picker closed and focus
+    // on <body>, beside a notice nobody was sent to. What it must NOT do is steal
+    // focus something else already holds — the §4.6a dialog hands focus back to
+    // whatever opened it (the picker trigger, or an empty-state Start button that
+    // is still on screen), and the user may have moved on during the load. So it
+    // claims the trigger only when nothing holds focus (the effect above decides
+    // that, after the commit this start produced).
+    await start();
+    setBootstrapFocusPending(true);
   };
 
   return (
@@ -1367,6 +1433,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   .join(' ') || undefined
               }
               startRefusal={startRefusal}
+              selectRefusal={selectRefusal}
               listNotice={
                 profileList.kind === 'unavailable'
                   ? profileList.message
@@ -1375,13 +1442,14 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     : ''
               }
               onOpen={() => void refreshProfileList()}
-              // [F3] Every start routes through `bootstrapFrom`, so a start that actually
-              // landed hands focus back to the Source trigger — the control that now names
-              // the staged source — once the commit that re-enables it has flushed. A
-              // refused guard resolves false and moves nothing.
+              // [F3][K1] Every start routes through `bootstrapFrom`, so any start that
+              // ENDS — landed or failed — hands focus back to the Source trigger, the
+              // control that names the source either way, once the commit that re-enables
+              // it has flushed. A start whose guard was refused leaves focus wherever the
+              // dialog put it back.
               onSelect={(value) => void bootstrapFrom(() => selectSource(value))}
               onStartBlank={() => void bootstrapFrom(startBlank)}
-              onStartFromProfile={(id) => void bootstrapFrom(() => selectSource(id))}
+              onStartFromProfile={(id) => void bootstrapFrom(() => startFromProfile(id))}
             />
             {/*
              * §4.8: the one write action left behind the masthead — Start
@@ -1653,9 +1721,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                         type="button"
                         className={`${styles.button} ${styles.primary}`}
                         disabled={startGateBlocked}
-                        onClick={() => void bootstrapFrom(() => selectSource(id))}
+                        title={startDisabledReason !== '' ? startDisabledReason : undefined}
+                        onClick={() => void bootstrapFrom(() => startFromProfile(id))}
                       >
-                        {`Start from curated ${option.label.replace(/^Curated /, '')}`}
+                        {/* [C7] The slug comes from the ID, the one place it is
+                            authoritative; stripping a prefix off the display
+                            label breaks the moment that label is reworded. */}
+                        {`Start from curated ${id.slice(id.indexOf('/') + 1)}`}
                       </button>
                     );
                   })}
@@ -1663,6 +1735,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     type="button"
                     className={styles.button}
                     disabled={startGateBlocked}
+                    title={startDisabledReason !== '' ? startDisabledReason : undefined}
                     onClick={() => void bootstrapFrom(startBlank)}
                   >
                     Start blank
@@ -1750,9 +1823,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
                 </p>
                 {/* One row per destination in the digest order the backend sent:
-                    provider · model · endpoint · remote (every entry is remote —
-                    a local destination never challenges — the class is the
-                    row's fourth cell rather than a repeated sentence). */}
+                    provider · model · endpoint · class, the class as the row's
+                    fourth cell rather than a repeated sentence. [C1] It reads the
+                    parsed `classification` rather than repeating the word: the
+                    parser refuses any other value (`readApplyDestination`), so the
+                    cell now says so by construction instead of by coincidence. */}
                 <ul className={styles.grantList}>
                   {outcome.challenge.destinations.map((destination) => (
                     // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
@@ -1768,7 +1843,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                         )}
                       </span>
                       <span className={styles.grantEndpoint}>{destination.endpoint}</span>
-                      <span className={styles.grantClass}>remote</span>
+                      <span className={styles.grantClass}>{destination.classification}</span>
                       <span
                         className={styles.metaSub}
                       >{`Reached by ${destination.provenance.join(', ')}`}</span>
