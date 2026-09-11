@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SourcePicker } from '../../../components/GolemConfig/SourcePicker';
 import {
@@ -89,7 +89,10 @@ describe('SourcePicker', () => {
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('Tab leaves the open list forwards from the trigger, Shift+Tab backwards', async () => {
+  it('Tab closes the list and hands focus to the trigger without cancelling the key (the browser then departs from the trigger)', async () => {
+    // jsdom/user-event cannot model native Tab departure; Task 9's live keyboard pass covers it.
+    // What must hold: focus is on the trigger, the list is closed, and keydown was NOT
+    // default-prevented — so the browser's own Tab / Shift+Tab moves from the trigger.
     const p = props();
     const user = userEvent.setup();
     render(
@@ -100,12 +103,19 @@ describe('SourcePicker', () => {
       </>
     );
     await user.click(trigger());
-    await user.keyboard('{Tab}');
-    expect(screen.getByRole('button', { name: 'after' })).toHaveFocus();
+    const list = screen.getByRole('listbox', { name: 'Source' });
+    expect(list).toHaveFocus();
+    const notPrevented = fireEvent.keyDown(list, { key: 'Tab' });
+    expect(notPrevented).toBe(true); // fireEvent returns false when preventDefault was called
+    expect(trigger()).toHaveFocus();
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
     await user.click(trigger());
-    await user.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(screen.getByRole('button', { name: 'before' })).toHaveFocus();
+    const shifted = fireEvent.keyDown(screen.getByRole('listbox', { name: 'Source' }), {
+      key: 'Tab',
+      shiftKey: true,
+    });
+    expect(shifted).toBe(true);
+    expect(trigger()).toHaveFocus();
     expect(p.onSelect).not.toHaveBeenCalled();
   });
 
