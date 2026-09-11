@@ -259,6 +259,30 @@ describe('route editor Done (firn-ide#284)', () => {
     expect(screen.getByTestId('route-row-chat')).toHaveAttribute('data-flash');
   });
 
+  it('stripes and flashes a defined-model row a role chip jumps to', async () => {
+    // [X11] A `role-remove` chip is the ONLY handle a staged role removal has; the row
+    // it lands on must carry the same staged-change stripe and landing flash every
+    // other jump target does.
+    const unrouted = { ...model, role: 'spare', routedUseCases: [], removable: true };
+    const props = () => ({
+      ...baseProps(),
+      models: [model, unrouted],
+      roleRows: new Map([['spare', { modified: true, keyStaged: false, needsReview: false }]]),
+    });
+    const { rerender } = render(<RoutingCard {...props()} focusRequest={null} />);
+    const row = screen.getByTestId('defined-model-row-spare');
+    expect(row).toHaveAttribute('data-changed', 'true');
+    expect(row).not.toHaveAttribute('data-flash');
+
+    rerender(<RoutingCard {...props()} focusRequest={{ changeId: 'role:spare', nonce: 1 }} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('defined-model-row-spare')).toHaveAttribute('data-flash')
+    );
+    expect(screen.getByTestId('defined-model-row-spare')).toHaveFocus();
+    // The route rows keep their own namespace: a `role:` jump never flashes `route:chat`.
+    expect(screen.getByTestId('route-row-chat')).not.toHaveAttribute('data-flash');
+  });
+
   it('leaves a jump inert while the card cannot be edited', () => {
     // [A1] The shared boundary: a standing request must never open editable controls.
     const { rerender } = render(

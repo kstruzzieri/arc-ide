@@ -53,6 +53,9 @@ const SAVE_ACTIVE_CONFLICT = 'Configuration changed; Refresh and try again.';
 const SAVE_TARGET_CONFLICT = 'The profile changed; reload and try again.';
 const SAVE_COLLIDER_UNREADABLE =
   'That name is taken and the existing profile cannot be read. Choose another name, or repair the file outside Firn.';
+/** [F5] The one cause the workspace's `reason` cannot name: this component's OWN
+ *  in-flight flow (`pending`). The copy matches the workspace's `saving` case. */
+const SAVE_IN_PROGRESS = 'A save is already in progress.';
 const SAVE_OUTCOME_UNKNOWN =
   'The save result is unknown — the profile may already exist. Refresh the profile list before saving again.';
 
@@ -342,7 +345,7 @@ export function SaveProfileButton({
         aria-haspopup="true"
         aria-expanded={open}
         disabled={disabled || createBlocked}
-        title={disabled || createBlocked ? reason : undefined}
+        title={disabled || createBlocked ? reason || SAVE_IN_PROGRESS : undefined}
         onClick={() => {
           if (open) {
             close(false);

@@ -138,6 +138,22 @@ it('keeps an unstaged provider edit mounted when Edit is clicked again', async (
   expect(endpoint).toHaveValue('http://127.0.0.1:9292/v1-draft');
 });
 
+it('returns focus to the header button when the add form is cancelled', async () => {
+  // [F6] Cancel unmounts the form, so without an explicit target focus falls to <body>
+  // and a keyboard user restarts from the top of the document.
+  render(<ProvidersCard {...cardProps({ providers: [] })} />);
+  const add = screen.getByRole('button', { name: 'Add provider' });
+  expect(add).toHaveAttribute('id', 'golem-provider-add-button');
+  await userEvent.click(add);
+  await userEvent.click(
+    within(screen.getByRole('group', { name: 'Add a provider' })).getByRole('button', {
+      name: 'Cancel',
+    })
+  );
+  expect(screen.queryByRole('group', { name: 'Add a provider' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Add provider' })).toHaveFocus();
+});
+
 it('keeps an unstaged provider addition mounted when Add provider is clicked again', async () => {
   render(
     <ProvidersCard

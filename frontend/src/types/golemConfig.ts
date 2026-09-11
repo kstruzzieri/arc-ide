@@ -1505,17 +1505,49 @@ export function effectiveRoutes(
   return out;
 }
 
-/** provider → use cases that reach it, sorted; providers nothing reaches are absent. */
+/**
+ * provider → use cases that reach it, sorted; providers nothing reaches are absent.
+ *
+ * [X3] A direct route is not the only way a use case reaches a provider: the
+ * backend resolves fallback chains and reports the result per model as
+ * `routedUseCases`. Passing `base` folds that fallback-inclusive truth in, so a
+ * provider reached only through a fallback is not reported as `not routed`. A use
+ * case whose route this draft STAGES is answered by the staged target alone — the
+ * base model's claim on it is what the change is replacing.
+ *
+ * ponytail: the fold reuses the backend's applied `routedUseCases`; a STAGED
+ * retarget's own fallback chain is not recomputed client-side, so a use case with
+ * a staged route contributes only its direct target until Apply lands. Recompute
+ * the chain here only if the row's `used by` line proves misleading in practice.
+ */
 export function providerUsage(
-  routes: ReadonlyMap<string, { provider: string; model: string } | null>
+  routes: ReadonlyMap<string, { provider: string; model: string } | null>,
+  base?: DraftBaseProjection,
+  changes: readonly Change[] = []
 ): Map<string, string[]> {
-  const out = new Map<string, string[]>();
+  const out = new Map<string, Set<string>>();
+  const add = (provider: string, useCase: string) => {
+    const seen = out.get(provider);
+    if (seen === undefined) out.set(provider, new Set([useCase]));
+    else seen.add(useCase);
+  };
   for (const [useCase, target] of routes) {
     if (target === null) continue;
-    out.set(target.provider, [...(out.get(target.provider) ?? []), useCase]);
+    add(target.provider, useCase);
   }
-  for (const list of out.values()) list.sort(compareString);
-  return out;
+  if (base !== undefined) {
+    const staged = new Set(
+      changes
+        .filter((change) => change.kind === 'route' || change.kind === 'route-unassign')
+        .map((change) => (change as Extract<Change, { useCase: string }>).useCase)
+    );
+    for (const model of base.models)
+      for (const useCase of model.routedUseCases)
+        if (!staged.has(useCase)) add(model.provider, useCase);
+  }
+  return new Map(
+    [...out].map(([provider, seen]) => [provider, [...seen].sort(compareString)] as const)
+  );
 }
 
 /**

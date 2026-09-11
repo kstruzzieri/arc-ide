@@ -1050,4 +1050,49 @@ describe('effectiveRoutes / providerUsage (one derived view)', () => {
       ])
     );
   });
+
+  it('credits a provider reached only through a fallback chain', () => {
+    // [X3] `agent` routes DIRECTLY to provider A, but the backend resolved its
+    // fallback chain onto provider B and says so on B's model (`routedUseCases`).
+    // Counting only direct routes would report B as `not routed`.
+    const withFallback: DraftBaseProjection = {
+      routes: [{ useCase: 'agent', role: 'a' }],
+      models: [
+        modelRow({ role: 'a', provider: 'A', modelName: 'm1', routedUseCases: ['agent'] }),
+        modelRow({ role: 'b', provider: 'B', modelName: 'm2', routedUseCases: ['agent'] }),
+      ],
+    };
+    expect(providerUsage(effectiveRoutes(withFallback, []), withFallback, [])).toEqual(
+      new Map([
+        ['A', ['agent']],
+        ['B', ['agent']],
+      ])
+    );
+  });
+
+  it('lets a staged route override the base claim on that use case', () => {
+    // The fold answers only use cases this draft is NOT restaging: once `agent` is
+    // retargeted, the applied models' claim on it is exactly what Apply replaces.
+    const withFallback: DraftBaseProjection = {
+      routes: [{ useCase: 'agent', role: 'a' }],
+      models: [
+        modelRow({ role: 'a', provider: 'A', modelName: 'm1', routedUseCases: ['agent'] }),
+        modelRow({ role: 'b', provider: 'B', modelName: 'm2', routedUseCases: ['agent'] }),
+      ],
+    };
+    const changes: Change[] = [
+      {
+        kind: 'route',
+        useCase: 'agent',
+        modelFacts: { provider: 'C', model: 'm3', type: 'dense' },
+        capabilityFacts: { caps: [], knownCaps: [] },
+        exposedCaps: [],
+        thinkMode: '',
+        confirmUnknown: false,
+      },
+    ];
+    expect(providerUsage(effectiveRoutes(withFallback, changes), withFallback, changes)).toEqual(
+      new Map([['C', ['agent']]])
+    );
+  });
 });

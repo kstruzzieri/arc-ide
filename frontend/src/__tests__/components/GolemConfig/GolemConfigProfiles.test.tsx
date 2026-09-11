@@ -283,6 +283,39 @@ describe('masthead profile select', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('returns focus to the Source trigger once a pick lands', async () => {
+    // [F3] The picker's own close focuses the trigger, but the trigger is DISABLED while
+    // the load is in flight — focus falls to <body> there. The start outcome is what
+    // brings it back, in the commit that re-enables the control.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+    await waitFor(() => expect(sourceTrigger()).toHaveFocus());
+  });
+
+  it('never pulls focus back to the Source trigger when the guard refuses the switch', async () => {
+    // [F3] `Keep editing` resolves the start false, so the outcome hands out no focus.
+    // The picker's OWN close already restored the trigger before the guard opened —
+    // that move is the picker's contract and is not what this pins. What must not
+    // happen is a later, outcome-driven steal from wherever the user went next.
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    await mountReady();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await pickSource(user, /mine/, 'Yours');
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(sourceValue()).toBe('applied');
+    expect(LoadGolemProfile).not.toHaveBeenCalled();
+
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    refresh.focus();
+    await act(async () => {}); // flush any pending focus effect
+    expect(refresh).toHaveFocus();
+  });
+
   it('guards a source switch while work is unsaved', async () => {
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
     await mountReady();
@@ -405,6 +438,37 @@ describe('Save as profile', () => {
     const save = await screen.findByRole('button', { name: 'Save as profile…' });
     expect(save).toBeDisabled();
     expect(save).toHaveAttribute('title', 'Nothing to save until a configuration is applied.');
+  });
+
+  it('keeps the Save popover open when the Source picker handles Escape', async () => {
+    // [X7] SaveProfileButton closes on a DOCUMENT-level Escape. The picker handles its
+    // own Escape first and must stop it there, or dismissing the list also throws away
+    // a half-typed profile name.
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    sourceTrigger().focus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('listbox', { name: 'Source' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox', { name: 'Source' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Save as profile' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Profile name')).toHaveValue('mine');
+  });
+
+  it('names its own in-flight save as the reason the trigger is disabled', async () => {
+    // [F5] `pending` is the component's OWN flow bit; the workspace's `reason` cannot
+    // see it, so without a local fallback the disabled trigger carried an empty title.
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const trigger = screen.getByRole('button', { name: 'Save as profile…' });
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAttribute('title', 'A save is already in progress.');
   });
 
   it('saves the applied configuration create-only and reports success', async () => {

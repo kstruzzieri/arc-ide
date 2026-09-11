@@ -150,7 +150,12 @@ export function RoutingCard({
    * so the live region is the card's, mounted for the card's whole life.
    */
   const [announcement, setAnnouncement] = useState('');
-  /** The use case a jump just landed on, for ~1.4s (ruling 7). */
+  /**
+   * The row a jump just landed on, for ~1.4s (ruling 7), held as the change
+   * identity `route:<useCase>` / `role:<role>`. [X11] Both namespaces flash, and a
+   * use case and a model role may legally share a name, so the namespace rides
+   * along rather than the bare name.
+   */
   const [flash, setFlash] = useState<string | null>(null);
 
   // More than one row may be expanded at once: collapsing an editor outside
@@ -196,9 +201,12 @@ export function RoutingCard({
     const namespace = focusRequest.changeId.slice(0, separator);
     const name = focusRequest.changeId.slice(separator + 1);
     if (namespace === 'role') {
-      setFlash(null);
+      // [X11] A `role-remove` chip has no editor, so the defined-model row itself is
+      // the target — and it flashes like any other landed jump.
       setPendingFocus({ elementId: definedRowId(name) });
-      return;
+      setFlash(`role:${name}`);
+      const roleTimer = window.setTimeout(() => setFlash(null), 1400);
+      return () => window.clearTimeout(roleTimer);
     }
     if (namespace !== 'route') {
       setFlash(null); // the jump landed in the other card: no stale flash here
@@ -212,7 +220,7 @@ export function RoutingCard({
     // use-case names); the row carries an index-derived id instead.
     // `scrollIntoView` is optional-called because jsdom does not implement it.
     document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
-    setFlash(name);
+    setFlash(`route:${name}`);
     const timer = window.setTimeout(() => setFlash(null), 1400);
     return () => window.clearTimeout(timer);
     // Routes are stable for the life of one card mount (the workspace remounts
@@ -346,14 +354,14 @@ export function RoutingCard({
 
             const row = (
               <div
-                key={useCase}
+                key={`row:${useCase}`}
                 id={`${editorId}-row`}
                 role="row"
                 data-testid={`route-row-${useCase}`}
                 className={styles.row}
                 data-expanded={expanded || undefined}
                 data-changed={changed || undefined}
-                data-flash={flash === useCase || undefined}
+                data-flash={flash === `route:${useCase}` || undefined}
               >
                 <Cell className={styles.useCase}>
                   {useCase}
@@ -477,10 +485,12 @@ export function RoutingCard({
 
             // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
             // key differs from the bare row's: with the same key React would reuse the row's
-            // DOM node AS the group and slide a new row inside it.
+            // DOM node AS the group and slide a new row inside it. [X1] The discriminator is a
+            // PREFIX, not a suffix: `a` and `a:group` are both legal use-case names, so a
+            // suffix would let one row's group key collide with another row's key.
             return expanded || notices.length > 0 ? (
               <div
-                key={`${useCase}:group`}
+                key={`group:${useCase}`}
                 role="rowgroup"
                 className={expanded ? styles.editGroup : styles.noticeGroup}
               >
@@ -522,12 +532,16 @@ export function RoutingCard({
                 const markers = roleRows.get(model.role);
                 return (
                   <div
-                    key={model.role}
+                    key={`row:${model.role}`}
                     role="row"
                     id={definedRowId(model.role)}
                     tabIndex={-1}
                     data-testid={`defined-model-row-${model.role}`}
                     className={styles.row}
+                    // [X11] A staged `role-remove` stripes its row like every other
+                    // staged change, and a landed `role:` jump flashes it.
+                    data-changed={markers?.modified === true || undefined}
+                    data-flash={flash === `role:${model.role}` || undefined}
                   >
                     <Cell className={styles.identifier}>{model.role}</Cell>
                     <Cell className={styles.providerCell}>{model.provider}</Cell>

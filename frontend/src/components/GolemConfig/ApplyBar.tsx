@@ -51,9 +51,12 @@ export function changeChipLabel(change: Change): string {
     }
     case 'provider-remove':
       return `${change.name} · removed`;
+    // [F7] Setting a key and clearing one are opposite intents; one label for both
+    // left the chip unable to say which of them Apply would send.
     case 'provider-key-set':
-    case 'provider-key-clear':
       return `${change.name} · API key`;
+    case 'provider-key-clear':
+      return `${change.name} · API key cleared`;
     case 'role-remove':
       return `${change.role} · removed`;
   }

@@ -797,9 +797,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     return true;
   };
 
-  /** §4.8 source switching. The select's value derives from draft.source, so a
-   *  refused guard or failed load never moves it — React re-renders the prior
-   *  value and the transient native choice is discarded. */
+  /** §4.8 source switching. The Source picker's value derives from draft.source, so
+   *  a refused guard or failed load never moves it — React re-renders the prior
+   *  value and the transient choice is discarded. */
   const selectSource = async (value: string): Promise<boolean> => {
     const current = sourceSelectValue(draft.source);
     if (value === current || value === BLANK_SOURCE_VALUE) return false;
@@ -823,7 +823,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * KeyVault — no settle, no provenance write, no vault access. It registers
    * in the §5.5 close-wait set through registerWrite, so the close handshake
    * waits it out alongside any settings RPC. The revisions come from the
-   * CALLER (the menu freezes the confirmed overwrite tuple — controller
+   * CALLER (the Save button freezes the confirmed overwrite tuple — controller
    * ruling, plan header): this function never substitutes the live projection
    * revision into a confirmed request. The outbound request is validated by
    * the same parser that guards inbound payloads.
@@ -888,10 +888,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * Both cards read from it, so provider usage and route values can never
    * disagree.
    */
-  const usage = useMemo(
-    () => providerUsage(effectiveRoutes(body ?? { routes: [], models: [] }, projected.changes)),
-    [body, projected]
-  );
+  const usage = useMemo(() => {
+    const base = body ?? { routes: [], models: [] };
+    // [X3] `base` folds in the fallback-inclusive `routedUseCases` the backend
+    // already resolved, so a provider reached only through a fallback chain is
+    // never reported as `not routed`.
+    return providerUsage(effectiveRoutes(base, projected.changes), base, projected.changes);
+  }, [body, projected]);
 
   const receive = (result: SettingsApplyResult): void => {
     switch (result.status) {
@@ -1263,7 +1266,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   // Hoisted out of the masthead JSX (was an inline IIFE) so the description
   // it carries can render on its own full-width line beneath `.controls`,
-  // instead of only inside the select's column — see the masthead's
+  // instead of only inside the Source picker's column — see the masthead's
   // `.controls`/`.actions` layout below.
   const selectModel = buildProfileSelectModel({
     source: draft.source,
@@ -1333,6 +1336,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               className={`${styles.button} ${styles.closeIcon}`}
               aria-label="Close configuration"
               disabled={sending}
+              // [F4] An icon button that greys out with no explanation is a dead end;
+              // name the cause the same way every other disabled action here does.
+              title={sending ? 'Wait for the current operation to finish.' : undefined}
               onClick={onClose}
             >
               <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -1369,9 +1375,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     : ''
               }
               onOpen={() => void refreshProfileList()}
-              onSelect={(value) => void selectSource(value)}
-              onStartBlank={() => void startBlank()}
-              onStartFromProfile={(id) => void selectSource(id)}
+              // [F3] Every start routes through `bootstrapFrom`, so a start that actually
+              // landed hands focus back to the Source trigger — the control that now names
+              // the staged source — once the commit that re-enables it has flushed. A
+              // refused guard resolves false and moves nothing.
+              onSelect={(value) => void bootstrapFrom(() => selectSource(value))}
+              onStartBlank={() => void bootstrapFrom(startBlank)}
+              onStartFromProfile={(id) => void bootstrapFrom(() => selectSource(id))}
             />
             {/*
              * §4.8: the one write action left behind the masthead — Start

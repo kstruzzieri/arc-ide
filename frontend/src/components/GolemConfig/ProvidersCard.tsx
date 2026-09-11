@@ -47,6 +47,8 @@ const CREDENTIAL: Record<
  */
 const ADD_ROW_KEY = '\u0000add';
 const ADD_EDITOR_ID = 'golem-provider-add';
+/** [F6] The control the add form was opened from, so closing it lands focus back there. */
+const ADD_TRIGGER_ID = 'golem-provider-add-button';
 
 const appliedEditorID = (index: number): string => `golem-provider-editor-${index}`;
 const stagedEditorID = (index: number): string => `golem-provider-staged-editor-${index}`;
@@ -228,6 +230,7 @@ export function ProvidersCard({
             <span className={styles.grow} />
             <button
               type="button"
+              id={ADD_TRIGGER_ID}
               className={styles.button}
               aria-expanded={open.has(ADD_ROW_KEY)}
               aria-controls={ADD_EDITOR_ID}
@@ -287,7 +290,7 @@ export function ProvidersCard({
               const changed = markers?.modified === true || markers?.keyStaged === true;
               const row = (
                 <div
-                  key={provider.name}
+                  key={`row:${provider.name}`}
                   id={`${editorId}-row`}
                   role="row"
                   data-testid={`provider-row-${provider.name}`}
@@ -410,10 +413,12 @@ export function ProvidersCard({
               );
               // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
               // key differs from the bare row's: with the same key React would reuse the row's
-              // DOM node AS the group and slide a new row inside it.
+              // DOM node AS the group and slide a new row inside it. [X1] The discriminator is a
+              // PREFIX, not a suffix: `a` and `a:group` are both legal provider names, so a
+              // suffix would let one provider's group key collide with another's row key.
               return expanded || notices.length > 0 ? (
                 <div
-                  key={`${provider.name}:group`}
+                  key={`group:${provider.name}`}
                   role="rowgroup"
                   className={expanded ? styles.editGroup : styles.noticeGroup}
                 >
@@ -440,9 +445,9 @@ export function ProvidersCard({
             // that now exists in the draft.
             onStage={(changes, drop) => {
               onStage(changes, drop);
-              close(ADD_ROW_KEY);
+              close(ADD_ROW_KEY, ADD_TRIGGER_ID);
             }}
-            onClose={() => close(ADD_ROW_KEY)}
+            onClose={() => close(ADD_ROW_KEY, ADD_TRIGGER_ID)}
             onUnstagedChange={onUnstagedChange}
           />
         )}

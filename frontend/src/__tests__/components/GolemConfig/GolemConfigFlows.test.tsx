@@ -302,6 +302,20 @@ describe('Apply bar', () => {
     expect(within(bar).getByRole('button', { name: 'Discard' })).toBeEnabled();
   });
 
+  it('tells a cleared key apart from a set one on the chip', async () => {
+    // [F7] Both key changes once read `name · API key`, so the bar could not say which
+    // of two opposite intents Apply would send.
+    await mountWorkspace();
+    await openProvider();
+    await userEvent.click(screen.getByLabelText('Clear the stored API key'));
+    await stage();
+    await cancelEditor();
+
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByRole('button', { name: 'hosted · API key cleared' })).toBeEnabled();
+    expect(within(bar).queryByRole('button', { name: 'hosted · API key' })).toBeNull();
+  });
+
   it('opens and focuses the editor its chip names', async () => {
     await mountWorkspace();
     await stageKey();
@@ -962,17 +976,20 @@ describe('grant-only destination approval', () => {
     const consent = await screen.findByRole('alert');
     // The grant-only explainer (no write is pending) and the destination-check
     // rationale — not the old "Approve these N remote destinations" lead.
+    // [X13] Visible, not merely present: this explainer replaced one that was asserted
+    // visible, and the whole point of the panel is that the reader can SEE what they
+    // are approving.
     expect(
       within(consent).getByText(
         /Remote destinations your agent route can reach that have no approval yet/
       )
-    ).toBeInTheDocument();
+    ).toBeVisible();
     // [C13] The ticking countdown is aria-hidden; the alert announces the expiry once, statically.
     expect(within(consent).getByText(/expires in \d+:\d{2}/)).toHaveAttribute(
       'aria-hidden',
       'true'
     );
-    expect(within(consent).getByText(/^Expires at /)).toBeInTheDocument();
+    expect(within(consent).getByText(/^Expires at /)).toBeVisible();
     expect(within(consent).getAllByText('remote')).toHaveLength(2);
     // One line per destination: endpoint, provider, and the model only when the
     // entry names one.
