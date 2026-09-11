@@ -1463,31 +1463,33 @@ describe('bootstrap through the Source picker', () => {
 
   // The `no profile picker` clause this test used to carry is gone on purpose:
   // Slice C ships the masthead source select, so asserting its absence would
-  // now be a lie. What replaces it is the §4.8 rule that actually holds here —
-  // Save refuses without a Ready applied configuration, while both Start
-  // actions bootstrap it. (The select's own Missing-state shape is pinned by
+  // now be a lie. Task 8 (ruling 4) then replaced the two empty cards with a
+  // dedicated bootstrap empty state, so the Start actions this test drives
+  // now live there instead of the picker's own START FROM group. What the
+  // test still pins is the §4.8 rule that holds regardless of surface — Save
+  // refuses without a Ready applied configuration, while a Start action
+  // bootstraps one. (The select's own Missing-state shape is pinned by
   // GolemConfigProfiles.test.tsx.)
   it('offers both starting points and refuses Save while Missing', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByText(/nothing is written until you Apply/);
     const masthead = screen.getByTestId('golem-config-masthead');
-    await userEvent.click(sourceTrigger());
-    const startFrom = within(masthead).getByRole('group', { name: 'Start from' });
-    expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).not.toHaveAttribute(
-      'aria-disabled'
-    );
-    expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
-      'aria-disabled'
-    );
-    await userEvent.keyboard('{Escape}');
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    expect(within(empty).getByRole('button', { name: 'Start blank' })).toBeEnabled();
+    expect(within(empty).getByRole('button', { name: 'Start from curated local' })).toBeEnabled();
 
     const save = within(masthead).getByRole('button', { name: 'Save as profile…' });
     expect(save).toBeDisabled();
     expect(save).toHaveAttribute('title', 'Nothing to save until a configuration is applied.');
-    // Restored: the mount wait above only proves the notice is present, not
-    // visible — this is the pre-existing assertion the re-route must not
-    // weaken.
-    expect(screen.getByText(/nothing is written until you Apply/)).toBeVisible();
+
+    await userEvent.click(within(empty).getByRole('button', { name: 'Start from curated local' }));
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
+    expect(await screen.findByRole('table', { name: 'Providers' })).toBeInTheDocument();
+
+    expect(within(masthead).getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+    expect(within(masthead).getByRole('button', { name: 'Save as profile…' })).toHaveAttribute(
+      'title',
+      'Nothing to save until a configuration is applied.'
+    );
   });
 
   it('loads the curated profile as the draft source and paints its rows as pending', async () => {

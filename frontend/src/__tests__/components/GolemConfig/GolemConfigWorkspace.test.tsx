@@ -7,8 +7,15 @@ import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfi
 jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
   PrepareGolemDestinationGrants: jest.fn(),
+  ListGolemProfiles: jest.fn(),
+  LoadGolemProfile: jest.fn(),
 }));
-import { PrepareGolemDestinationGrants, ReloadGolemSettings } from '../../../wails/bindings';
+import {
+  ListGolemProfiles,
+  LoadGolemProfile,
+  PrepareGolemDestinationGrants,
+  ReloadGolemSettings,
+} from '../../../wails/bindings';
 
 const testRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
@@ -212,6 +219,7 @@ describe('GolemConfigWorkspace', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resolve(readyProjection);
+    (ListGolemProfiles as jest.Mock).mockResolvedValue({ status: 'loaded', profiles: [] });
   });
 
   it('loads once on mount and renders the masthead verdict, source, and revision', async () => {
@@ -504,16 +512,69 @@ describe('GolemConfigWorkspace', () => {
     expect(screen.queryByTestId('defined-model-row-agent-m')).not.toBeInTheDocument();
   });
 
-  it('names each section prerequisite while the configuration is Missing', async () => {
+  it('renders the bootstrap empty state while Missing instead of two empty cards', async () => {
     resolve({
       ...emptyProjection('missing', 'none'),
       diagnostics: [{ code: 'config_missing', subjectKind: '', subjectName: '', blocking: true }],
     });
+    (ListGolemProfiles as jest.Mock).mockResolvedValue({
+      status: 'loaded',
+      profiles: [{ id: 'curated/local', curated: true, description: 'Vetted local lineup' }],
+    });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-
-    expect(await screen.findByText(/Add a provider first/)).toBeInTheDocument();
-    expect(screen.getByText(/Add a provider, then assign a model/)).toBeInTheDocument();
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    expect(
+      within(empty).getByRole('button', { name: 'Start from curated local' })
+    ).toBeInTheDocument();
+    expect(within(empty).getByRole('button', { name: 'Start blank' })).toBeInTheDocument();
+    expect(within(empty).getByText(/Vetted local lineup/)).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Providers' })).toBeNull();
     expect(screen.getByText('No models.json was found at any discovery location.')).toBeVisible();
+  });
+
+  it('bootstraps a blank draft from the empty state and focuses the Source trigger', async () => {
+    resolve(emptyProjection('missing', 'none'));
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    await userEvent.click(within(empty).getByRole('button', { name: 'Start blank' }));
+    // A blank draft starts with no staged provider, so the card shows its own
+    // "Add a provider first" placeholder rather than a populated table — the
+    // empty STATE (the bootstrap section) is what must be gone, not the rows.
+    expect(await screen.findByRole('region', { name: 'Providers' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'No applied configuration' })).toBeNull();
+    // The focus move lands in the same commit as the empty state unmounting,
+    // but that commit settles asynchronously relative to the click's promise
+    // chain — waitFor polls for it instead of racing a synchronous check.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Source' })).toHaveFocus());
+  });
+
+  it('bootstraps from a curated profile in the empty state and focuses the Source trigger', async () => {
+    resolve(emptyProjection('missing', 'none'));
+    (ListGolemProfiles as jest.Mock).mockResolvedValue({
+      status: 'loaded',
+      profiles: [{ id: 'curated/local', curated: true, description: 'Vetted local lineup' }],
+    });
+    (LoadGolemProfile as jest.Mock).mockResolvedValue({
+      status: 'loaded',
+      profileId: 'curated/local',
+      sourceRevision: testRevision,
+      projection: {
+        state: 'ready',
+        readOnly: readyProjection.readOnly,
+        editable: readyProjection.editable,
+        routes: readyProjection.routes,
+        models: readyProjection.models,
+        providers: readyProjection.providers,
+        diagnostics: readyProjection.diagnostics,
+      },
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    await userEvent.click(within(empty).getByRole('button', { name: 'Start from curated local' }));
+    expect(await screen.findByRole('table', { name: 'Providers' })).toBeInTheDocument();
+    // See the blank-draft test above: the commit that grants focus lands
+    // asynchronously relative to the click's own promise chain.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Source' })).toHaveFocus());
   });
 
   it('explains that editing is unavailable while Limited', async () => {

@@ -95,9 +95,15 @@ import {
   TRANSPORT_UNAVAILABLE_COPY,
   buildProfileSelectModel,
   sourceSelectValue,
+  startFromProfileId,
   type ProfileListState,
 } from './profileSelect';
-import { SourcePicker, SOURCE_DESCRIPTION_ID, SOURCE_LOADING_ID } from './SourcePicker';
+import {
+  SourcePicker,
+  SOURCE_DESCRIPTION_ID,
+  SOURCE_LOADING_ID,
+  SOURCE_PICKER_ID,
+} from './SourcePicker';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard, routingOwnsDiagnostic } from './RoutingCard';
 import { StatusText, type StatusTone } from './StatusText';
@@ -1266,6 +1272,43 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     state: projection?.state ?? null,
   });
 
+  // [C25] The SAME gate as the picker's START FROM entries — `saving` included,
+  // since a pending Save can overlap a Refresh that returns Missing.
+  const startGateBlocked = projection === null || sourceLocked || saving || startRefusal !== '';
+
+  const curatedDescriptions: Array<[string, string]> =
+    profileList.kind === 'loaded' || profileList.kind === 'limited'
+      ? profileList.profiles
+          .filter((row) => row.curated && row.description !== undefined && row.description !== '')
+          .map((row) => [row.id.slice(row.id.indexOf('/') + 1), row.description as string])
+      : [];
+
+  /**
+   * [A6] Both bootstrap buttons unmount on success, so their handlers hand
+   * focus to the control that now names the staged source.
+   *
+   * `startBlank` never awaits a real suspension point (its only `await` is
+   * short-circuited away when nothing is unsaved), so it settles inside the
+   * SAME synchronous dispatch as the click and React's discrete-event flush
+   * already committed `draftRef.current` by the time `start()` resolves.
+   * `selectSource`'s profile path is different: it awaits `LoadGolemProfile`,
+   * a real network round trip, so its state updates land after that — no
+   * longer inside the click's synchronous window — and React schedules that
+   * commit on the task queue rather than flushing it with the microtask
+   * chain this function's own `await`s run on. Microtasks always drain fully
+   * before the next task runs, so no amount of chained `await`s here can
+   * catch up to a same-microtask-turn read of `draftRef.current`; yielding
+   * to the task queue once is what actually waits for the commit.
+   */
+  const bootstrapFrom = async (start: () => Promise<void>): Promise<void> => {
+    await start();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    // Only when the source actually moved (the §4.6a guard may have refused): the empty
+    // state is gone and the Source trigger is the natural landing.
+    if (draftRef.current.source.kind !== 'applied')
+      document.getElementById(SOURCE_PICKER_ID)?.focus();
+  };
+
   return (
     <div className={styles.root}>
       <div className={styles.page}>
@@ -1589,46 +1632,95 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            <ProvidersCard
-              // Remount when the surface locks and on every document the open
-              // editors could be diffing against. An editor derives its fields
-              // once but stages against the live projection, so keeping it
-              // mounted across a reload could re-stage stale values.
-              key={`providers-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
-              providers={body.providers}
-              usedProviders={usedProviders}
-              usage={usage}
-              changes={draft.changes}
-              rows={projected.providerRows}
-              diagnostics={diagnostics}
-              stagedProviders={stagedProviders}
-              vault={vault}
-              editable={canEdit}
-              focusRequest={focusRequest}
-              onStage={stage}
-              onUnstagedChange={noteUnstaged}
-            />
-            <RoutingCard
-              // Same remount rule as the providers card: an open route editor
-              // must not survive a lock or read stale values back as a choice.
-              key={`routing-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
-              routes={body.routes}
-              models={body.models}
-              providers={routableProviders}
-              draft={draft}
-              // The COALESCED changes, never `draft.changes`: a row and a
-              // reopened editor must show the selector-wide truth Apply sends
-              // (§3.3), which is rebuilt from each group's last authority.
-              changes={projected.changes}
-              rows={projected.routeRows}
-              roleRows={projected.roleRows}
-              selectorUseCases={projected.selectorUseCases}
-              diagnostics={diagnostics}
-              editable={canEdit}
-              focusRequest={focusRequest}
-              onStage={stage}
-              onUnstagedChange={noteUnstaged}
-            />
+            {projection.state === 'missing' && draft.source.kind === 'applied' ? (
+              <section className={styles.emptyState} aria-labelledby="golem-config-empty">
+                <h3 id="golem-config-empty" className={styles.emptyTitle}>
+                  No applied configuration
+                </h3>
+                <p className={styles.emptyText}>
+                  Golem has nothing to route with. Start a draft, edit its providers and routes,
+                  then Apply. Nothing is written until you apply.
+                </p>
+                <div className={styles.emptyActions}>
+                  {selectModel.startFrom.curated.map((option) => {
+                    const id = startFromProfileId(option.value);
+                    return id === null ? null : (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`${styles.button} ${styles.primary}`}
+                        disabled={startGateBlocked}
+                        onClick={() => void bootstrapFrom(() => selectSource(id))}
+                      >
+                        {`Start from curated ${option.label.replace(/^Curated /, '')}`}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={startGateBlocked}
+                    onClick={() => void bootstrapFrom(startBlank)}
+                  >
+                    Start blank
+                  </button>
+                </div>
+                {profileList.kind === 'unavailable' ? (
+                  <p className={styles.emptyNote}>{profileList.message}</p>
+                ) : profileList.kind === 'unloaded' ? (
+                  <p className={styles.emptyNote}>Loading profiles…</p>
+                ) : null}
+                {curatedDescriptions.map(([slug, description]) => (
+                  <p key={slug} className={styles.emptyNote}>
+                    <b>{`Curated ${slug}`}</b>
+                    {description}
+                  </p>
+                ))}
+              </section>
+            ) : (
+              <>
+                <ProvidersCard
+                  // Remount when the surface locks and on every document the open
+                  // editors could be diffing against. An editor derives its fields
+                  // once but stages against the live projection, so keeping it
+                  // mounted across a reload could re-stage stale values.
+                  key={`providers-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
+                  providers={body.providers}
+                  usedProviders={usedProviders}
+                  usage={usage}
+                  changes={draft.changes}
+                  rows={projected.providerRows}
+                  diagnostics={diagnostics}
+                  stagedProviders={stagedProviders}
+                  vault={vault}
+                  editable={canEdit}
+                  focusRequest={focusRequest}
+                  onStage={stage}
+                  onUnstagedChange={noteUnstaged}
+                />
+                <RoutingCard
+                  // Same remount rule as the providers card: an open route editor
+                  // must not survive a lock or read stale values back as a choice.
+                  key={`routing-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
+                  routes={body.routes}
+                  models={body.models}
+                  providers={routableProviders}
+                  draft={draft}
+                  // The COALESCED changes, never `draft.changes`: a row and a
+                  // reopened editor must show the selector-wide truth Apply sends
+                  // (§3.3), which is rebuilt from each group's last authority.
+                  changes={projected.changes}
+                  rows={projected.routeRows}
+                  roleRows={projected.roleRows}
+                  selectorUseCases={projected.selectorUseCases}
+                  diagnostics={diagnostics}
+                  editable={canEdit}
+                  focusRequest={focusRequest}
+                  onStage={stage}
+                  onUnstagedChange={noteUnstaged}
+                />
+              </>
+            )}
 
             {/*
              * The result of the last write, rendered where the control that
