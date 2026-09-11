@@ -86,21 +86,21 @@
 }
 
 /*
- * #263 Slice C: the select, the Configuration menu, and the masthead's three
- * plain buttons (Refresh/Recover, Approve, Close) are ONE control group, not
- * five independent masthead items — `flex: none` keeps the whole group from
- * splitting across a wrapped masthead row (either it all sits beside the
- * identity block, or it all drops to its own line together), and
+ * #263 Slice C: the select, the Save as profile… button, and the masthead's
+ * three plain buttons (Refresh/Recover, Approve, Close) are ONE control
+ * group, not five independent masthead items — `flex: none` keeps the whole
+ * group from splitting across a wrapped masthead row (either it all sits
+ * beside the identity block, or it all drops to its own line together), and
  * `align-items: flex-end` lines up every control's BOTTOM edge: the select,
- * the menu trigger, and the buttons all share the same font-size/padding/
+ * the Save trigger, and the buttons all share the same font-size/padding/
  * border box, so their bottoms coincide regardless of what sits above any one
  * of them (the "Source" label over the select; nothing over the buttons).
- * That is why ConfigurationMenu no longer carries a `.menuSpacer` label twin
- * to fake a same-height row over the trigger — a flex-end anchor does not
- * care what is above the last item in a column, unlike the flex-start anchor
- * this replaced. The description below the select and the loading affordance
- * are rendered OUTSIDE this group entirely (`.selectDescription`, further
- * down) so neither can change the group's size or move anything inside it.
+ * That is why the trigger no longer carries a `.menuSpacer` label twin to
+ * fake a same-height row above it — a flex-end anchor does not care what is
+ * above the last item in a column, unlike the flex-start anchor this
+ * replaced. The description below the select and the loading affordance are
+ * rendered OUTSIDE this group entirely (`.selectDescription`, further down)
+ * so neither can change the group's size or move anything inside it.
  */
 .controlGroup {
   display: inline-flex;
@@ -347,7 +347,7 @@
   color: var(--text-secondary);
 }
 
-/* ── configuration menu (§4.8) ──────────────────────────────────────────── */
+/* ── save as profile button (§4.8) ───────────────────────────────────────── */
 
 /* The panel positions against its OWN trigger span (`position: relative`
    here, not on `.masthead`), so it stays attached to the button that opened
@@ -376,7 +376,12 @@
 .menuPanel {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
+  /* [C15] Save is the FIRST masthead action below the 800px one-row form
+     (stacked/two-row layouts put it ahead of the picker), so a right-anchored
+     320px panel would extend past the pane's left edge there. Left-anchored
+     against the trigger works at every width the trigger itself can occupy. */
+  left: 0;
+  right: auto;
   z-index: 30;
   width: max-content;
   min-width: 0;
@@ -389,40 +394,6 @@
   border: 1px solid var(--surface-border);
   border-radius: 6px;
   box-shadow: var(--shadow-panel);
-}
-
-.menuItem,
-.menuSubItem {
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 6px 8px;
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.menuItem:hover:not(:disabled),
-.menuSubItem:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-
-.menuItem:focus-visible,
-.menuSubItem:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.menuItem:disabled,
-.menuSubItem:disabled {
-  color: var(--text-disabled);
-  cursor: default;
-}
-
-.menuSubItem {
-  padding-left: 24px;
 }
 
 .menuHint {

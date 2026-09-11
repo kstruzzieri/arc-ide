@@ -84,7 +84,7 @@ import {
 } from '../../types/golemConfig';
 import { formatProfileDiagnostic, formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { ApplyBar, type EditorFocusRequest } from './ApplyBar';
-import { ConfigurationMenu, type AcquireRevisionOutcome } from './ConfigurationMenu';
+import { SaveProfileButton, type AcquireRevisionOutcome } from './SaveProfileButton';
 import { registerConfigCloseHandler, type ConfigCloseIntent } from './configCloseGuard';
 import styles from './GolemConfig.module.css';
 import {
@@ -1155,7 +1155,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // Two refusals on purpose: the STATE refusal blocks every Save (create and
   // overwrite alike), while the LIMIT refusal blocks only creation — §5.6
   // keeps replacement by exact id/revision available while the list is
-  // limited, and the menu's Overwrite gates on saveRefusal alone.
+  // limited, and Overwrite gates on saveRefusal alone.
   const saveRefusal =
     projection === null || projection.state !== 'ready' || projection.revision === undefined
       ? 'Save needs a Ready applied configuration.'
@@ -1171,18 +1171,6 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     projection !== null && (projection.state === 'invalid' || projection.state === 'limited')
       ? 'Unavailable while the configuration is Invalid or Limited.'
       : '';
-  const curatedEntries =
-    profileList.kind === 'loaded' || profileList.kind === 'limited'
-      ? profileList.profiles
-          .filter((row) => row.curated)
-          .map((row) => ({ id: row.id, label: row.id.slice(row.id.indexOf('/') + 1) }))
-      : [];
-  const curatedNotice =
-    profileList.kind === 'unavailable'
-      ? profileList.message
-      : profileList.kind === 'unloaded'
-        ? TRANSPORT_UNAVAILABLE_COPY
-        : '';
 
   const changeCount = draftChangeCount(draft);
   // Editing needs a document that is both loaded and writable. A profile or
@@ -1268,25 +1256,25 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           )}
           <span className={styles.grow} />
           {/*
-           * #263 Slice C follow-up: the select, the Actions menu, and the
-           * Refresh/Recover, Approve, and Close buttons are now ONE control
-           * group (.controlGroup) so they wrap the masthead as a UNIT —
-           * either all beside the identity block, or all together on their
-           * own line. Before this the three plain buttons were separate
-           * masthead flex items and could wrap away from the select/menu
-           * independently, splitting the controls across two lines in
-           * whatever combination the identity block's width and the
+           * #263 Slice C follow-up: the source picker, the Save as profile…
+           * button, and the Refresh/Recover, Approve, and Close buttons are
+           * now ONE control group (.controlGroup) so they wrap the masthead
+           * as a UNIT — either all beside the identity block, or all
+           * together on their own line. Before this the three plain buttons
+           * were separate masthead flex items and could wrap away from the
+           * select/menu independently, splitting the controls across two
+           * lines in whatever combination the identity block's width and the
            * select's then content-driven width happened to leave room for
            * (defect of the 263 Slice C visual pass).
            *
            * Alignment is on the group's BOTTOM edge (`align-items:
-           * flex-end`): the select, the menu trigger, and the three buttons
+           * flex-end`): the select, the Save trigger, and the three buttons
            * all share the same font-size/padding/border box, so their
            * bottoms coincide regardless of what sits above any one of them.
-           * That is also why ConfigurationMenu's old `.menuSpacer` label
+           * That is also why the former Actions menu's `.menuSpacer` label
            * twin (a flex-start-only trick) is gone — flex-end does not care
            * what is above the last item in a column, so nothing needs to
-           * fake a same-height label row over the menu trigger any more.
+           * fake a same-height label row over the trigger any more.
            *
            * The source picker's own width is now fixed (`.picker`) rather
            * than shrink-to-fit, and the loading affordance / selected
@@ -1321,30 +1309,43 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               onStartFromProfile={(id) => void selectSource(id)}
             />
             {/*
-             * §4.8: the one naming flow and the two bootstrap actions, behind a
-             * single menu. `disabled` composes the SHIPPED lock conditions:
-             * `sourceLocked` covers write/busy/recovery/in-flight, `locked`
-             * additionally freezes the surface while a consent challenge holds
-             * the visible request, and `outcome.drops !== null` is named
-             * EXPLICITLY because `locked` does not include the drop panel —
-             * which holds the visible request the same way a challenge does, and
-             * a Start action would settle the draft out from under it. The
-             * The picker above keeps the narrower `sourceLocked || saving`: a source
-             * switch is a §4.6a cancel-then-transition path, and the dirty-draft
-             * guard intercepts it while a challenge or drop set stands.
+             * §4.8: the one write action left behind the masthead — Start
+             * blank / Start from curated now live in the Source picker's own
+             * START FROM group (#312). `disabled` composes the SHIPPED lock
+             * conditions: `sourceLocked` covers write/busy/recovery/in-flight,
+             * `locked` additionally freezes the surface while a consent
+             * challenge holds the visible request, and `outcome.drops !==
+             * null` is named EXPLICITLY because `locked` does not include the
+             * drop panel — which holds the visible request the same way a
+             * challenge does, and a Save would settle a document out from
+             * under it. `reason` names whichever of those the current lock
+             * is, for the title shown while the trigger is disabled. The
+             * picker above keeps the narrower `sourceLocked || saving`: a
+             * source switch is a §4.6a cancel-then-transition path, and the
+             * dirty-draft guard intercepts it while a challenge or drop set
+             * stands.
              */}
-            <ConfigurationMenu
-              curated={curatedEntries}
-              curatedNotice={curatedNotice}
+            <SaveProfileButton
               saveRefusal={saveRefusal}
               createRefusal={createRefusal}
-              startRefusal={startRefusal}
               disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
+              reason={
+                projection === null || projection.state === 'missing'
+                  ? 'Nothing to save until a configuration is applied.'
+                  : sourceLoading
+                    ? 'Wait for the profile to finish loading.'
+                    : saving
+                      ? 'A save is already in progress.'
+                      : saveRefusal !== ''
+                        ? saveRefusal
+                        : createRefusal !== ''
+                          ? createRefusal
+                          : locked || outcome.drops !== null
+                            ? 'Unavailable while a write, approval, or review is in progress.'
+                            : ''
+              }
               saving={saving}
               appliedRevision={projection?.revision}
-              onOpen={() => void refreshProfileList()}
-              onStartFromProfile={(id) => void selectSource(id)}
-              onStartBlank={() => void startBlank()}
               saveProfileAs={saveProfileAs}
               acquireProfileRevision={acquireProfileRevision}
             />

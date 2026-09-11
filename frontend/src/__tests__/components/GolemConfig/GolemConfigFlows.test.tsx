@@ -128,9 +128,9 @@ const loadedProfile = {
 };
 
 /**
- * §4.8: the curated submenu lists whatever the live list projection carries, so
- * the menu has no rows at all without a list result — this is what makes
- * `startCuratedViaMenu` below reach `curated/local`.
+ * §4.8: the picker's START FROM group lists whatever the live list projection
+ * carries, so it has no curated rows at all without a list result — this is
+ * what makes `startCuratedViaMenu` below reach `curated/local`.
  */
 const profileListResult = () => ({
   status: 'loaded',
@@ -191,30 +191,26 @@ async function declareModel(name: string) {
 
 const clickApply = async () => await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-/**
- * §4.8 replaced the two fixed Missing-state CTAs with the Configuration menu.
- * Every former `Start from curated/local` / `Start blank` interaction routes
- * through these instead; the menu closes behind the choice, so each helper is
- * a complete open-choose cycle.
- */
-const openConfigMenu = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Actions' }));
-
-const startBlankViaMenu = async () => {
-  await openConfigMenu();
-  await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
-};
-
-const startCuratedViaMenu = async () => {
-  await openConfigMenu();
-  await userEvent.click(screen.getByRole('button', { name: 'Start from curated' }));
-  await userEvent.click(screen.getByRole('button', { name: 'local' }));
-};
-
 /** #312: the picker replaced the native select. [C3] Query the trigger by ROLE — while the
  *  list is open the listbox answers to the label "Source" too. This file drives interactions
  *  through the static `userEvent` export (not a `.setup()` session), so the helper does too. */
 const sourceTrigger = () => screen.getByRole('button', { name: 'Source' });
+
+/**
+ * §4.8 bootstraps through the Source picker's own START FROM group now — the
+ * Configuration menu's `Start from curated` / `Start blank` items are gone
+ * (#312 reduced that menu to the one Save write action, `SaveProfileButton`).
+ * Every former Start interaction routes through these instead; the picker
+ * closes behind the choice, so each helper is a complete open-choose cycle.
+ */
+const startBlankViaMenu = async () => {
+  await userEvent.click(sourceTrigger());
+  await userEvent.click(await screen.findByRole('option', { name: /Blank draft/ }));
+};
+const startCuratedViaMenu = async () => {
+  await userEvent.click(sourceTrigger());
+  await userEvent.click(await screen.findByRole('option', { name: /Curated local/ }));
+};
 /** Choose an option by name, optionally inside a group; closes the list afterwards even when
  *  the option was disabled (a disabled click leaves the list open). */
 const pickSource = async (name: string | RegExp, group?: string) => {
@@ -1436,7 +1432,7 @@ describe('unsaved-work transitions', () => {
 // Bootstrap (state = missing)
 // ---------------------------------------------------------------------------
 
-describe('bootstrap through the Configuration menu', () => {
+describe('bootstrap through the Source picker', () => {
   beforeEach(() => {
     reload(missingProjection);
     (LoadGolemProfile as jest.Mock).mockResolvedValue(loadedProfile);
@@ -1448,18 +1444,23 @@ describe('bootstrap through the Configuration menu', () => {
   // Save refuses without a Ready applied configuration, while both Start
   // actions bootstrap it. (The select's own Missing-state shape is pinned by
   // GolemConfigProfiles.test.tsx.)
-  it('offers both starting points inside the menu and refuses Save while Missing', async () => {
+  it('offers both starting points and refuses Save while Missing', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByText(/nothing is written until you Apply/);
-    await openConfigMenu();
     const masthead = screen.getByTestId('golem-config-masthead');
+    await userEvent.click(sourceTrigger());
+    const startFrom = within(masthead).getByRole('group', { name: 'Start from' });
+    expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    await userEvent.keyboard('{Escape}');
 
-    expect(within(masthead).getByRole('button', { name: 'Start from curated' })).toBeEnabled();
-    expect(within(masthead).getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(
-      within(masthead).getByRole('button', { name: 'Save applied as profile…' })
-    ).toBeDisabled();
-    expect(screen.getByText('Save needs a Ready applied configuration.')).toBeVisible();
+    const save = within(masthead).getByRole('button', { name: 'Save as profile…' });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Nothing to save until a configuration is applied.');
     // Restored: the mount wait above only proves the notice is present, not
     // visible — this is the pre-existing assertion the re-route must not
     // weaken.
@@ -1489,10 +1490,10 @@ describe('bootstrap through the Configuration menu', () => {
     await screen.findByText(/nothing is written until you Apply/);
     await startCuratedViaMenu();
 
-    // The menu closed behind the choice, and the pending load locks the whole
-    // surface — so it cannot be reopened at all, which subsumes the two former
-    // CTAs' own disabled attributes.
-    expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
+    // The picker closed behind the choice, and the pending load locks the
+    // whole surface — so nothing can be reopened at all, which subsumes the
+    // two former CTAs' own disabled attributes.
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
     expect(sourceTrigger()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
 
@@ -1510,13 +1511,12 @@ describe('bootstrap through the Configuration menu', () => {
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByText(/nothing is written until you Apply/);
-    await openConfigMenu();
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated' }));
-    const profile = screen.getByRole('button', { name: 'local' });
-    const blank = screen.getByRole('button', { name: 'Start blank' });
+    await userEvent.click(sourceTrigger());
+    const profile = await screen.findByRole('option', { name: /Curated local/ });
+    const blank = screen.getByRole('option', { name: /Blank draft/ });
 
-    // Both handlers run against the SAME render — the menu's own close and the
-    // source lock both land only on the next one — so this is exactly the
+    // Both handlers run against the SAME render — the picker's own close and
+    // the source lock both land only on the next one — so this is exactly the
     // double-dispatch the two fixed CTAs could produce.
     act(() => {
       fireEvent.click(profile);
@@ -1536,11 +1536,11 @@ describe('bootstrap through the Configuration menu', () => {
     ).not.toBeInTheDocument();
   });
 
-  // §4.8 freezes the Configuration MENU while a consent challenge holds the
-  // visible request — the menu also carries the Save flow, which the request
-  // has no business reaching. The SELECT keeps the narrower source lock,
-  // because a source switch is a §4.6a cancel-then-transition path, so that is
-  // where "reachable during consent" is now proved.
+  // §4.8 freezes the Save-as-profile BUTTON while a consent challenge holds
+  // the visible request — Save has no business reaching a request it never
+  // wrote. The picker keeps the narrower source lock, because a source switch
+  // is a §4.6a cancel-then-transition path, so that is where "reachable
+  // during consent" is now proved.
   it('keeps a source switch reachable during consent and locks it during cancellation', async () => {
     let settleCancel!: (value: unknown) => void;
     (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
@@ -1560,7 +1560,7 @@ describe('bootstrap through the Configuration menu', () => {
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
     expect(sourceTrigger()).toBeEnabled();
 
     // This bootstrap never reaches Ready, so the applied entry reads "No
@@ -1574,7 +1574,7 @@ describe('bootstrap through the Configuration menu', () => {
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
 
     expect(sourceTrigger()).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Actions' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
 
@@ -1584,11 +1584,12 @@ describe('bootstrap through the Configuration menu', () => {
   });
 
   // The one test in this describe that starts from a LOADED document. The
-  // switch that cancels the consent has to come through the select (the menu
-  // is frozen while a challenge stands), and the select only lists profiles
+  // switch that cancels the consent has to come through the picker (Save is
+  // frozen while a challenge stands), and the picker only lists profiles
   // when the document is Ready — while Missing it shows the applied-absent
-  // state alone (§4.8). The profile source itself is still adopted through the
-  // menu, so the bootstrap path is the one under test either way.
+  // state alone (§4.8). The profile source itself is still adopted through
+  // the picker's START FROM group, so the bootstrap path is the one under
+  // test either way.
   it('clears cancelled consent before a replacement profile load can fail', async () => {
     reload(readyProjection);
     let rejectProfile!: (reason: unknown) => void;

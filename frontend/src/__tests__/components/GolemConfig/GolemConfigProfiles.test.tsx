@@ -370,12 +370,42 @@ describe('masthead profile select', () => {
   });
 });
 
+/** #312: the trigger opens the naming step directly — no intermediate item. */
 const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(screen.getByRole('button', { name: 'Actions' }));
+  await user.click(screen.getByRole('button', { name: 'Save as profile…' }));
 };
 
-describe('Configuration menu', () => {
+describe('Save as profile', () => {
   beforeEach(() => jest.clearAllMocks());
+
+  it('is a plain masthead button with no Start actions behind it', async () => {
+    await mountReady();
+    const user = userEvent.setup();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Save as profile…' }));
+    expect(screen.getByRole('group', { name: 'Save as profile' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start blank' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start from curated' })).toBeNull();
+    // The naming field is the first step: nothing else stands between the button and the name.
+    expect(screen.getByLabelText('Profile name')).toHaveFocus();
+    // The popover names its scope: the APPLIED configuration, never the staged draft.
+    expect(
+      screen.getByText(
+        'Saves the applied configuration on disk as a named profile. Staged edits are not included until you Apply.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('names the reason while disabled', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: emptyProjection('missing', 'none'),
+    });
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    const save = await screen.findByRole('button', { name: 'Save as profile…' });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Nothing to save until a configuration is applied.');
+  });
 
   it('saves the applied configuration create-only and reports success', async () => {
     (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
@@ -385,7 +415,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -409,7 +438,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/could not confirm the write reached disk/i);
@@ -419,7 +447,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'Bad Name!');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByRole('alert')).toHaveTextContent('That profile name is invalid.');
@@ -434,7 +461,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -464,7 +490,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/choose another name, or repair the file outside firn/i);
@@ -476,7 +501,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/save result is unknown/i);
@@ -496,7 +520,6 @@ describe('Configuration menu', () => {
     await screen.findByText(/1 change waiting for Apply/i);
 
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -524,7 +547,6 @@ describe('Configuration menu', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -538,33 +560,6 @@ describe('Configuration menu', () => {
     expect(request.keys).toEqual({ 'llama-swap': 'sk-test-key' });
   });
 
-  it('starts from a curated profile through the submenu', async () => {
-    // (The §4.6a dirty guard on this path is exercised by Task 6's select
-    // guard test — the submenu routes through the same selectSource.)
-    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
-    await mountReady();
-    const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
-    await user.click(screen.getByRole('button', { name: 'local' }));
-    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
-    expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local');
-  });
-
-  it('starts blank and lists the Blank draft option', async () => {
-    await mountReady();
-    const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start blank' }));
-    await waitFor(() => expect(sourceValue()).toBe('__blank__'));
-    await user.click(sourceTrigger());
-    expect(
-      within(screen.getByRole('listbox', { name: 'Source' })).getByRole('option', {
-        name: 'Blank draft',
-      })
-    ).toBeInTheDocument();
-  });
-
   // Ruling 13: a limited list blocks CREATE only (§5.6 scopes the profile
   // count limit to creation). Start blank is purely local and the curated
   // block always sorts inside the first maxProjectionEntries rows, so both
@@ -575,11 +570,19 @@ describe('Configuration menu', () => {
     // pre-set mock would be overwritten by the helper's own default.
     await mountReady(listResult({ status: 'limited' }));
     const user = userEvent.setup();
-    await openMenu(user);
-    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(screen.getByText('Too many profiles exist to create another.')).toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save as profile…' });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Too many profiles exist to create another.');
+    await user.click(sourceTrigger());
+    const startFrom = within(screen.getByRole('listbox', { name: 'Source' })).getByRole('group', {
+      name: 'Start from',
+    });
+    expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
     // The list-limited copy no longer gates Start at all.
     expect(screen.queryByText('Too many profiles to display.')).not.toBeInTheDocument();
     // Selection of LISTED rows stays allowed (§4.8).
@@ -588,7 +591,7 @@ describe('Configuration menu', () => {
 
   // Ruling 9(a). Task 6's `unavailable` list-state test could not fail:
   // `buildProfileSelectModel` renders `unloaded` and `unavailable` alike. The
-  // menu's curated notice is where the state finally becomes observable.
+  // picker's list notice is where the state finally becomes observable.
   it('names the transport failure in the curated submenu when the list is unavailable', async () => {
     (ReloadGolemSettings as jest.Mock).mockResolvedValue({
       busy: false,
@@ -599,12 +602,11 @@ describe('Configuration menu', () => {
     await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
     const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
+    await user.click(sourceTrigger());
     expect(
       screen.getByText('Configuration service unavailable. Refresh before trying again.')
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'local' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'local' })).not.toBeInTheDocument();
   });
 
   // Ruling 9(b). `refreshProfileList`'s `status === 'diagnostics'` branch had
@@ -614,9 +616,26 @@ describe('Configuration menu', () => {
   it('surfaces the profile diagnostic when the list itself answers diagnostics', async () => {
     await mountReady({ status: 'diagnostics', diagnostics: [{ code: 'io' }] });
     const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
+    await user.click(sourceTrigger());
     expect(screen.getByText('The profile could not be read or saved.')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Configuration service unavailable. Refresh before trying again.')
+    ).not.toBeInTheDocument();
+  });
+
+  // [A5] A pending initial list request must never be reported as a failure —
+  // `unloaded` and `unavailable` render identically everywhere except this
+  // notice line.
+  it('a pending initial list shows Loading profiles… and no failure', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: readyProjection,
+    });
+    (ListGolemProfiles as jest.Mock).mockReturnValue(new Promise(() => {}));
+    render(<GolemConfigWorkspace onClose={jest.fn()} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Source' }));
+    expect(screen.getByText('Loading profiles…')).toBeInTheDocument();
     expect(
       screen.queryByText('Configuration service unavailable. Refresh before trying again.')
     ).not.toBeInTheDocument();
@@ -645,19 +664,17 @@ describe('Configuration menu', () => {
     expect(within(list).queryByRole('group', { name: 'Curated' })).toBeNull();
     expect(within(list).queryByRole('group', { name: 'Yours' })).toBeNull();
     expect(within(list).queryByRole('option', { name: 'local' })).not.toBeInTheDocument();
-    await user.keyboard('{Escape}');
-
-    await openMenu(user);
-    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-    expect(screen.getByText('Save needs a Ready applied configuration.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
+    const startFrom = within(list).getByRole('group', { name: 'Start from' });
 
     // A Start action stages a draft; the picker then truthfully names that
     // draft source — as the selected (disabled) entry, groups still absent.
-    await user.click(screen.getByRole('button', { name: 'Start from curated' }));
-    await user.click(screen.getByRole('button', { name: 'local' }));
+    await user.click(within(startFrom).getByRole('option', { name: /Curated local/ }));
     await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+    // #312: the trigger names the staged source with its group prefix — the
+    // CSS supplies the ' · ' separator (a ::after generated string, invisible
+    // to jsdom's textContent), so the group and the slug are asserted apart.
+    expect(sourceTrigger()).toHaveTextContent('Curated');
+    expect(sourceTrigger()).toHaveTextContent('local');
     await user.click(sourceTrigger());
     list = screen.getByRole('listbox', { name: 'Source' });
     expect(within(list).queryByRole('group', { name: 'Curated' })).toBeNull();
@@ -674,8 +691,8 @@ describe('Configuration menu', () => {
     });
     await mountReady();
     const user = userEvent.setup();
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Start blank' }));
+    await user.click(sourceTrigger());
+    await user.click(await screen.findByRole('option', { name: /Blank draft/ }));
     await waitFor(() => expect(sourceValue()).toBe('__blank__'));
 
     await pickSource(user, /mine/, 'Yours');
@@ -701,7 +718,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/already exists/i);
@@ -749,7 +765,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('user/mine'));
@@ -795,12 +810,14 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     // The collision resolved; the collider acquisition is now pending. Abandon it.
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('user/mine'));
+    // Naming's Back closes the whole popover ([C14]) — there is no idle step
+    // to fall back into any more.
     await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
 
     // The OLD acquisition finally resolves — into a dead generation: no
     // overwrite step may appear.
@@ -808,14 +825,11 @@ describe('Configuration menu', () => {
       resolveLoad(profileLoadResult('user/mine'));
       await Promise.resolve();
     });
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Start blank' })).toBeInTheDocument()
-    );
     expect(screen.queryByRole('button', { name: 'Overwrite' })).not.toBeInTheDocument();
     expect(screen.queryByText(/already exists/i)).not.toBeInTheDocument();
 
     // A fresh naming flow proceeds untouched by the dead continuation.
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'other');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -842,8 +856,12 @@ describe('Configuration menu', () => {
     await screen.findByRole('button', { name: 'Source' });
     await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
     const user = userEvent.setup();
+    // #312: Save no longer refreshes the list itself (that `onOpen` moved to
+    // the Source picker) — open and close the picker to fire the second,
+    // still-pending fetch this test drives, then open Save's naming step.
+    await user.click(sourceTrigger());
+    await user.keyboard('{Escape}');
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
 
     resolveList(listResult({ status: 'limited' }));
@@ -866,7 +884,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/already exists/i);
@@ -874,8 +891,10 @@ describe('Configuration menu', () => {
     (ListGolemProfiles as jest.Mock).mockResolvedValue(listResult({ status: 'limited' }));
     screen.getByRole('button', { name: 'Refresh' }).focus();
     await user.keyboard('{Enter}');
+    // #312: Save no longer refreshes the list itself (only the mount fetch
+    // and this Refresh do), so the count floor drops from 3 to 2.
     await waitFor(() =>
-      expect((ListGolemProfiles as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3)
+      expect((ListGolemProfiles as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2)
     );
     await waitFor(() => expect(screen.getByRole('button', { name: 'Overwrite' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Overwrite' }));
@@ -904,7 +923,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -974,7 +992,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -1016,8 +1033,8 @@ describe('Configuration menu', () => {
     const user = userEvent.setup();
     await openMenu(user);
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('button', { name: 'Start blank' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Actions' })).toHaveFocus();
+    expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toHaveFocus();
   });
 
   // Fix for the review finding: a `role="status"` mounted together with its
@@ -1037,7 +1054,6 @@ describe('Configuration menu', () => {
     const region = screen.getByTestId('golem-profile-menu-announcement');
     expect(region).toHaveTextContent('');
 
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -1051,7 +1067,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     expect(screen.getByLabelText('Profile name')).toHaveFocus();
   });
 
@@ -1064,7 +1079,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText(/already exists/i);
@@ -1079,7 +1093,6 @@ describe('Configuration menu', () => {
     await mountReady();
     const user = userEvent.setup();
     await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -1114,27 +1127,36 @@ describe('availability matrix (§4.8)', () => {
     async (state, origin) => {
       await mountState(matrixProjection(state, origin));
       const user = userEvent.setup();
-      await user.click(screen.getByRole('button', { name: 'Actions' }));
-      expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+      await user.click(sourceTrigger());
+      const list = screen.getByRole('listbox', { name: 'Source' });
+      const startFrom = within(list).getByRole('group', { name: 'Start from' });
+      expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
       expect(
         screen.getByText('Unavailable while the configuration is Invalid or Limited.')
       ).toBeInTheDocument();
-      await user.click(sourceTrigger());
-      const option = within(screen.getByRole('listbox', { name: 'Source' })).getByRole('option', {
-        name: 'local',
-      });
+      const option = within(list).getByRole('option', { name: 'local' });
       expect(option).toHaveAttribute('aria-disabled', 'true');
     }
   );
 
   it('while ready: everything is offered', async () => {
     await mountState(readyProjection);
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeEnabled();
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    expect(screen.getByRole('button', { name: 'Save applied as profile…' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start from curated' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
+    await user.click(sourceTrigger());
+    const startFrom = within(screen.getByRole('listbox', { name: 'Source' })).getByRole('group', {
+      name: 'Start from',
+    });
+    expect(within(startFrom).getByRole('option', { name: /Blank draft/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
+    expect(within(startFrom).getByRole('option', { name: /Curated local/ })).not.toHaveAttribute(
+      'aria-disabled'
+    );
   });
 
   it('while a selection load is in flight the select disables with the affordance', async () => {
@@ -1162,8 +1184,7 @@ describe('availability matrix (§4.8)', () => {
     );
     await mountState(readyProjection);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'mine');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(sourceTrigger()).toBeDisabled();
@@ -1225,8 +1246,7 @@ describe('select shows the source (§4.8 invariants)', () => {
         ],
       })
     );
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'other');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
@@ -1258,8 +1278,7 @@ describe('select shows the source (§4.8 invariants)', () => {
     // A successful save triggers refreshProfileList (a list refresh with no
     // §4.6a transition) — the selection must not move. Save requires ready
     // state, which the profile-source draft still satisfies via projection.
-    await user.click(screen.getByRole('button', { name: 'Actions' }));
-    await user.click(screen.getByRole('button', { name: 'Save applied as profile…' }));
+    await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'other');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Profile saved.');
