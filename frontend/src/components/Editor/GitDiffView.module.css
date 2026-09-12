@@ -17,7 +17,7 @@
 .toolbar {
   display: flex;
   align-items: center;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--surface-border);
   /* Anchor for the absolutely-positioned nav (see .nav). */
   position: relative;
 }
@@ -81,7 +81,7 @@
   width: 20px;
   height: 20px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--surface-border);
   border-radius: 4px;
   background: transparent;
   color: var(--text-primary);
@@ -96,7 +96,7 @@
 .openBtn {
   margin-left: 4px;
   padding: 2px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--surface-border);
   border-radius: 4px;
   background: transparent;
   color: var(--text-primary);
@@ -154,7 +154,7 @@
   bottom: 0;
   left: 3px;
   width: 1px;
-  background: var(--border);
+  background: var(--surface-border);
 }
 
 .divider:hover::after,
@@ -193,9 +193,9 @@
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--surface-border);
   border-radius: 3px;
-  background: var(--surface);
+  background: var(--surface-panel);
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1;
@@ -216,7 +216,7 @@
 }
 
 .mergeHost :global(.cm-hunkStageBtn:disabled:hover) {
-  border-color: var(--border);
+  border-color: var(--surface-border);
   color: var(--text-muted);
-  background: var(--surface);
+  background: var(--surface-panel);
 }
