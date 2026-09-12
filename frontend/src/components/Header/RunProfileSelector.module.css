@@ -9,8 +9,8 @@
   align-items: center;
   gap: 6px;
   height: 28px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--surface-border);
+  background: var(--surface-panel);
   color: var(--text-primary, #e6e6e6);
   cursor: pointer;
   font-size: 12px;
@@ -57,13 +57,13 @@
   background: transparent;
 }
 .dot[data-state='running'] {
-  background: var(--status-running, #5fd08a);
+  background: var(--status-success);
 }
 .dot[data-state='failed'] {
-  background: var(--status-failed, #e06c6c);
+  background: var(--status-error);
 }
 .dot[data-state='stopping'] {
-  background: var(--status-warn, #e0a458);
+  background: var(--status-warning);
 }
 .popover {
   position: absolute;
@@ -74,8 +74,8 @@
   max-height: 60vh;
   overflow-y: auto;
   padding: 4px 0;
-  background: var(--bg-popover, #1b1d22);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
   border-radius: 9px;
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
 }
@@ -148,8 +148,8 @@
 .env {
   font-size: 10px;
   background: transparent;
-  color: var(--status-warn, #e0a458);
-  border: 1px solid rgba(224, 164, 88, 0.4);
+  color: var(--status-warning);
+  border: 1px solid color-mix(in srgb, var(--status-warning) 40%, transparent);
   border-radius: 9px;
 }
 .rowRun {
@@ -160,7 +160,7 @@
   height: 22px;
   background: none;
   border: none;
-  color: var(--status-running, #5fd08a);
+  color: var(--status-success);
   cursor: pointer;
   border-radius: 4px;
 }

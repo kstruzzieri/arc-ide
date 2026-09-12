@@ -44,8 +44,8 @@
   left: 0;
   min-width: 220px;
   padding: 4px;
-  background: var(--surface-2, #0f172a);
-  border: 1px solid var(--border, rgba(148, 163, 184, 0.18));
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   z-index: 50;
@@ -56,7 +56,7 @@
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-tertiary, #64748b);
+  color: var(--text-muted);
 }
 
 .menuItem {
@@ -91,5 +91,5 @@
 .itemDir {
   margin-left: auto;
   font-size: 11px;
-  color: var(--text-tertiary, #64748b);
+  color: var(--text-muted);
 }

@@ -161,7 +161,7 @@
   place-items: center;
   font-size: 10px;
   font-weight: 700;
-  font-family: var(--font-sans, sans-serif);
+  font-family: var(--font-ui);
   color: #04121f;
   user-select: none;
 }
