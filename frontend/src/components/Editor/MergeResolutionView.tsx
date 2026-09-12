@@ -136,7 +136,7 @@ export function MergeResolutionView({
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
     // An open confirmation owns Escape. The browser turns an uncancelled
     // keydown into the dialog's `cancel` event; preventing it here would
-    // suppress that and re-issue a close on top of the one already pending.
+    // suppress that and raise an unrelated merge-close request instead.
     if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
     // A write or a reload in flight owns the session; Escape must not race it.
     if (finalizing || session.reloadPending) return;
@@ -316,6 +316,10 @@ function MergeDiscardDialog({ session }: { session: MergeSession }) {
   }, []);
 
   const restoreInvoker = () => {
+    // Everything outside a modal dialog is inert until it closes, so the
+    // invoker cannot take focus while the dialog is open. React unmounts the
+    // node afterwards, which would drop focus to <body>.
+    dialogRef.current?.close();
     const invoker = invokerRef.current;
     if (invoker?.isConnected) invoker.focus();
   };
@@ -400,6 +404,9 @@ function MergeOverwriteDialog({
   }, []);
 
   const close = () => {
+    // See restoreInvoker in MergeDiscardDialog: the invoker is inert until the
+    // dialog itself closes.
+    dialogRef.current?.close();
     const invoker = invokerRef.current;
     onSettled();
     if (invoker?.isConnected) invoker.focus();

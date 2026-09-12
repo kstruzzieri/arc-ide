@@ -111,19 +111,38 @@ import { CancellablePromise } from '../../../wails/runtime';
 const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
 const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 
+/** jsdom has no top layer and no inertness. Model the one consequence the
+ * focus assertions depend on: while a modal dialog is open and connected,
+ * focus() on anything outside it is a no-op. One modal at a time; a browser
+ * would exempt the topmost of a stack, which these tests never build. */
+const modalDialogs = new Set<HTMLDialogElement>();
+const nativeFocus = HTMLElement.prototype.focus;
+
 beforeAll(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.setAttribute('open', '');
+      modalDialogs.add(this);
     },
   });
   Object.defineProperty(HTMLDialogElement.prototype, 'close', {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.removeAttribute('open');
+      modalDialogs.delete(this);
     },
   });
+  HTMLElement.prototype.focus = function focus(this: HTMLElement, options?: FocusOptions) {
+    for (const dialog of modalDialogs) {
+      if (dialog.isConnected && dialog.hasAttribute('open') && !dialog.contains(this)) return;
+    }
+    nativeFocus.call(this, options);
+  };
+});
+
+afterAll(() => {
+  HTMLElement.prototype.focus = nativeFocus;
 });
 
 /** jsdom has no close-request algorithm. Mirror the browser's: an Escape
@@ -192,6 +211,7 @@ const sidesSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  modalDialogs.clear();
   mockedStages.mockReset();
   mockedFileAtRev.mockReset();
   syntaxThemeId = 'glacier';
@@ -1106,17 +1126,16 @@ describe('MergeResolutionView discard confirmation', () => {
   });
 
   it('cancels through the store and restores focus to the invoker', () => {
-    render(<MergeResolutionView session={textSession} visible />);
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
     const invoker = screen.getByRole('button', { name: /next unresolved/i });
     invoker.focus();
-    const { rerender } = { rerender: (node: React.ReactElement) => node };
-    void rerender;
 
     // The dialog appears while the invoker holds focus.
-    render(<MergeResolutionView session={closeRequested()} visible />);
-    fireEvent.click(screen.getAllByRole('button', { name: /keep working/i })[0]);
+    rerender(<MergeResolutionView session={closeRequested()} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /keep working/i }));
 
     expect(cancelMergeClose).toHaveBeenCalledTimes(1);
+    expect(invoker).toHaveFocus();
   });
 
   it('discards through the store', () => {
@@ -1136,7 +1155,7 @@ describe('MergeResolutionView discard confirmation', () => {
     expect(confirmMergeClose).not.toHaveBeenCalled();
   });
 
-  it('a real Escape inside the dialog reaches the native cancel, not the surface handler', () => {
+  it('a simulated Escape keydown inside the dialog reaches the native cancel, not the surface handler', () => {
     const { rerender } = render(<MergeResolutionView session={textSession} visible />);
     const invoker = screen.getByRole('button', { name: /next unresolved/i });
     invoker.focus();
@@ -1341,7 +1360,7 @@ describe('MergeResolutionView overwrite consent', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
-  it('a real Escape inside the overwrite dialog cancels it without asking to discard', () => {
+  it('a simulated Escape keydown inside the overwrite dialog cancels it without asking to discard', () => {
     render(<MergeResolutionView session={worktreeChanged()} visible />);
     resolveAll();
     const write = screen.getByRole('button', { name: 'Write & stage' });
