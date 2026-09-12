@@ -52,6 +52,10 @@ const errorBoundaryCss = readFileSync(
   resolve(__dirname, '../../components/ErrorBoundary.module.css'),
   'utf8'
 );
+const resizeHandleCss = readFileSync(
+  resolve(__dirname, '../../components/layout/ResizeHandle.module.css'),
+  'utf8'
+);
 
 type RGB = [number, number, number];
 
@@ -560,6 +564,7 @@ it.each([
   ['RunProfileForm', '.save', runProfileFormCss],
   ['GolemConfig', '.primary', golemConfigCss],
   ['ErrorBoundary', '.reload', errorBoundaryCss],
+  ['ResizeHandle', '.collapseBtn:hover', resizeHandleCss],
 ])('paints %s %s text on the accent through --text-on-accent', (_, selector, source) => {
   // Every filled-accent control. Pinning the token rather than a colour is
   // the point: the guard below proves the token clears AA on every accent,
