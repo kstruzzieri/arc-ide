@@ -40,6 +40,18 @@ const gitPanelCss = readFileSync(
   resolve(__dirname, '../../components/GitPanel/GitPanel.module.css'),
   'utf8'
 );
+const runProfileFormCss = readFileSync(
+  resolve(__dirname, '../../components/RunProfiles/RunProfileForm.module.css'),
+  'utf8'
+);
+const golemConfigCss = readFileSync(
+  resolve(__dirname, '../../components/GolemConfig/GolemConfig.module.css'),
+  'utf8'
+);
+const errorBoundaryCss = readFileSync(
+  resolve(__dirname, '../../components/ErrorBoundary.module.css'),
+  'utf8'
+);
 
 type RGB = [number, number, number];
 
@@ -542,21 +554,26 @@ it.each(['.tabTarget:focus-visible', '.tabClose:focus-visible'])(
   }
 );
 
-it.each(['.syncCount', '.commitBtn'])(
-  'paints GitPanel %s text on the accent through --text-on-accent',
-  (selector) => {
-    // The two filled-accent controls in GitPanel. Pinning the token rather than
-    // a colour is the point: the guard below proves the token clears AA on
-    // every accent, and it can only do that for text that actually uses it.
-    expect(cssRule(gitPanelCss, selector)).toMatch(/color:\s*var\(--text-on-accent\)/);
-  }
-);
+it.each([
+  ['GitPanel', '.syncCount', gitPanelCss],
+  ['GitPanel', '.commitBtn', gitPanelCss],
+  ['RunProfileForm', '.save', runProfileFormCss],
+  ['GolemConfig', '.primary', golemConfigCss],
+  ['ErrorBoundary', '.reload', errorBoundaryCss],
+])('paints %s %s text on the accent through --text-on-accent', (_, selector, source) => {
+  // Every filled-accent control. Pinning the token rather than a colour is
+  // the point: the guard below proves the token clears AA on every accent,
+  // and it can only do that for text that actually uses it. A fixed
+  // --surface-base here reads 4.27 / 4.17 on docker / general; `white` reads
+  // 2.14 on project.
+  expect(cssRule(source, selector)).toMatch(/color:\s*var\(--text-on-accent\)/);
+});
 
 it.each(WORKSPACE_ACCENTS)(
   'keeps --text-on-accent at 4.5:1 or better on the %s accent',
   (accent) => {
-    // 11px/12px text on a filled --accent control (GitPanel sync count and
-    // commit button), so the 4.5:1 text floor applies. No single foreground
+    // 11px to 14px text on a filled --accent control (the pinned selectors
+    // above), so the 4.5:1 text floor applies. No single foreground
     // clears it on all nine accents: --surface-base does on seven, and pure
     // white only on docker (4.73) and general (4.83), where dark text sits at
     // 4.27 and 4.17. The token is therefore per-accent, like --accent-dark.

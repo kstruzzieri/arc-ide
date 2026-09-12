@@ -1,0 +1,20 @@
+/* The reload button is the only rule here: the fallback view otherwise keeps
+ * its inline styles. A filled-accent control lives in a stylesheet so
+ * tokens.test.ts can pin its text colour to --text-on-accent alongside the
+ * other four, and so :focus-visible can own the ring instead of React state. */
+.reload {
+  padding: 10px 20px;
+  background-color: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+}
+
+.reload:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--surface-base),
+    0 0 0 4px var(--accent);
+}

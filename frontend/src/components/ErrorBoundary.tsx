@@ -1,4 +1,5 @@
-import React, { Component, ErrorInfo, ReactNode, CSSProperties, useState } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
+import styles from './ErrorBoundary.module.css';
 
 interface Props {
   children: ReactNode;
@@ -61,35 +62,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
-const buttonStyle: CSSProperties = {
-  padding: '10px 20px',
-  backgroundColor: 'var(--accent)',
-  color: 'white',
-  border: 'none',
-  borderRadius: '6px',
-  fontSize: '14px',
-  cursor: 'pointer',
-  outline: 'none',
-};
-
-const buttonFocusStyle: CSSProperties = {
-  ...buttonStyle,
-  boxShadow: '0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent)',
-};
-
 // Internal component, not exported - disable fast refresh warning
 // eslint-disable-next-line react-refresh/only-export-components
 function ReloadButton() {
-  const [focused, setFocused] = useState(false);
-
   return (
-    <button
-      type="button"
-      onClick={() => window.location.reload()}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      style={focused ? buttonFocusStyle : buttonStyle}
-    >
+    <button type="button" className={styles.reload} onClick={() => window.location.reload()}>
       Reload Application
     </button>
   );
