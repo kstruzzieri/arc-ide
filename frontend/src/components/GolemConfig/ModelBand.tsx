@@ -31,6 +31,7 @@ import {
   type ModelType,
   type ProviderProjection,
 } from '../../types/golem';
+import type { FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
@@ -132,15 +133,44 @@ const factsLine = (model: ModelProjection): string =>
 const contextTitle = (model: ModelProjection): string | undefined =>
   model.contextWindow === undefined ? undefined : `${model.contextWindow} tokens`;
 
-const missingFloor = (model: ModelProjection, floor: readonly CapabilityName[]): CapabilityName[] =>
-  floor.filter((cap) => !model.exposedCapabilities.includes(cap));
+/**
+ * `agent needs tool_call` / `chat, agent need tool_call` — the verdict on a
+ * blocked card, one clause per missing capability.
+ */
+const shortfallLine = (short: readonly FloorShortfall[]): string =>
+  short
+    .map(
+      ({ cap, useCases }) => `${useCases.join(', ')} need${useCases.length === 1 ? 's' : ''} ${cap}`
+    )
+    .join('; ');
 
 export interface ModelBandProps {
   /** DOM id root; the grid is `<id>-grid` and its cards `<id>-card-N`. */
   id: string;
   useCase: string;
-  /** The use case's Firn floor; these capabilities are the filter. */
+  /**
+   * Every use case the cards below must serve — the edited one first, then the
+   * ones its current role already serves (§4.5): the band's headline.
+   */
+  serves: readonly string[];
+  /**
+   * The union of those use cases' floors: the filter label, and what a fresh
+   * declaration starts with (a new name has no selector siblings yet).
+   */
   floor: readonly CapabilityName[];
+  /**
+   * The union floor of the CURRENT candidate — `floor` plus whatever its own
+   * selector siblings need: the declare form's locked capabilities (a declared
+   * name can join an existing selector) and the readout's highlighted chips.
+   */
+  required: readonly CapabilityName[];
+  /**
+   * One card's verdict: each floor capability the model lacks, with the use
+   * cases that need it. Beyond `serves`, a card's OWN selector siblings count
+   * too, which is why this is a question per card rather than one floor.
+   * Empty means the card can be chosen.
+   */
+  shortfalls: (model: ModelProjection) => readonly FloorShortfall[];
   /** Every model the document defines, across providers. */
   models: readonly ModelProjection[];
   provider: string;
@@ -163,7 +193,10 @@ export interface ModelBandProps {
 export function ModelBand({
   id,
   useCase,
+  serves,
   floor,
+  required,
+  shortfalls,
   models,
   provider,
   providers,
@@ -191,8 +224,13 @@ export function ModelBand({
   const gridId = `${id}-grid`;
 
   const rows = buildModelRows(models, provider);
-  const eligible = rows.filter((row) => missingFloor(row.model, floor).length === 0);
-  const blocked = rows.filter((row) => missingFloor(row.model, floor).length > 0);
+  // One verdict per card per render: `shortfalls` projects the draft per card —
+  // a few dozen cards at most — and the band re-renders on every filter keystroke.
+  const verdicts = new Map(rows.map((row) => [rowKey(row.model), shortfalls(row.model)] as const));
+  const shortfallOf = (model: ModelProjection): readonly FloorShortfall[] =>
+    verdicts.get(rowKey(model)) ?? [];
+  const eligible = rows.filter((row) => shortfallOf(row.model).length === 0);
+  const blocked = rows.filter((row) => shortfallOf(row.model).length > 0);
 
   const needle = query.trim().toLowerCase();
   const matches = eligible.filter((row) => row.model.modelName.toLowerCase().includes(needle));
@@ -373,7 +411,7 @@ export function ModelBand({
         <fieldset className={styles.capabilities}>
           <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
           {CAPABILITY_NAMES.map((cap) => {
-            const locked = floor.includes(cap);
+            const locked = required.includes(cap);
             return (
               <label
                 key={cap}
@@ -425,7 +463,9 @@ export function ModelBand({
   return (
     <div className={styles.band}>
       <div className={styles.bandHead}>
-        <span className={styles.fieldLabel}>{`Model — every card below can serve ${useCase}`}</span>
+        <span
+          className={styles.fieldLabel}
+        >{`Model — every card below can serve ${serves.join(', ')}`}</span>
         <span className={styles.bandFilter}>{filterLabel}</span>
         <span className={styles.grow} />
         {/* SLICE D: the "Refresh list" affordance lands here, explicit-only
@@ -542,7 +582,9 @@ export function ModelBand({
             >
               <span className={styles.modelCardTop}>
                 <span className={styles.modelName}>{row.model.modelName}</span>
-                <span className={styles.modelCardFacts}>{`not eligible for ${useCase}`}</span>
+                <span className={styles.modelCardFacts}>
+                  {shortfallLine(shortfallOf(row.model))}
+                </span>
               </span>
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
@@ -551,7 +593,7 @@ export function ModelBand({
                 </span>
               </span>
               <span className={styles.capChips}>
-                {missingFloor(row.model, floor).map((cap) => (
+                {shortfallOf(row.model).map(({ cap }) => (
                   <span key={cap} className={`${styles.capChip} ${styles.capChipMissing}`}>
                     {`✕ ${cap}`}
                   </span>
@@ -643,7 +685,7 @@ export function ModelBand({
                     {detail.exposedCapabilities.map((cap) => (
                       <span
                         key={cap}
-                        className={`${styles.capChip} ${floor.includes(cap) ? styles.capChipFloor : ''}`}
+                        className={`${styles.capChip} ${required.includes(cap) ? styles.capChipFloor : ''}`}
                       >
                         {cap}
                       </span>
@@ -673,7 +715,7 @@ export function ModelBand({
           <span className={styles.hiddenCount}>
             {`${blocked.length} model${blocked.length === 1 ? '' : 's'}`}
           </span>
-          {` do${blocked.length === 1 ? 'es' : ''} not meet ${floor.join(' · ')} — `}
+          {` ${blocked.length === 1 ? 'is' : 'are'} not eligible — `}
           <span className={styles.hiddenToggle}>
             {`${showHidden ? 'hide' : 'show'} ${blocked.length === 1 ? 'it' : 'them'}`}
           </span>

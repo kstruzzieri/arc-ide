@@ -1966,3 +1966,68 @@ describe('bootstrap through the Source picker', () => {
     expect(screen.getByRole('region', { name: 'No applied configuration' })).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave 4c: a card the picker offers can no longer be refused by a sibling floor.
+// ---------------------------------------------------------------------------
+
+describe('route picker floors (wave 4c)', () => {
+  const agentModel = model({
+    role: 'agent-role',
+    modelName: 'gpt-5',
+    effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+    capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ['chat', 'stream', 'tool_call'],
+    routedUseCases: ['agent'],
+    hasThinkTags: false,
+  });
+  // agent falls back to reason-role, so the backend lists it among deepseek's routed use cases.
+  const deep = model({
+    role: 'reason-role',
+    modelName: 'deepseek',
+    routedUseCases: ['agent', 'reasoning'],
+    hasThinkTags: false,
+  });
+  // The projection parser requires routes sorted by use case and models by role
+  // (types/golem.ts parseSettingsProjection): an unsorted fixture never mounts.
+  const projection = {
+    ...readyProjection,
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'reasoning', role: 'reason-role' },
+    ],
+    models: [agentModel, model(), deep],
+  };
+  const grid = () => within(screen.getByRole('listbox', { name: /Models/ }));
+  const cardNamed = (name: string) => {
+    const card = grid()
+      .getAllByRole('option')
+      .find((option) => within(option).queryByText(name) !== null);
+    if (card === undefined) throw new Error(`no card named ${name}`);
+    return card;
+  };
+
+  it('cannot pick a model a sibling floor refuses, and says which sibling', async () => {
+    reload(projection);
+    await mountWorkspace();
+    await openRoute('reasoning');
+
+    expect(
+      screen.getByText('Model — every card below can serve reasoning, agent')
+    ).toBeInTheDocument();
+    expect(
+      grid()
+        .getAllByRole('option')
+        .map((card) => within(card).getByText(/gpt|deepseek/).textContent)
+    ).toEqual(['gpt-5']);
+
+    await userEvent.click(screen.getByRole('button', { name: /2 models are not eligible/ }));
+    expect(within(cardNamed('deepseek')).getByText('agent needs tool_call')).toBeInTheDocument();
+    // A blocked card is shown for its reason, never chosen: the readout keeps the applied model.
+    await userEvent.click(cardNamed('gpt-5-mini'));
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('deepseek');
+    await pickModel('gpt-5');
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+  });
+});

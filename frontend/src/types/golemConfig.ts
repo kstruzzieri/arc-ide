@@ -1552,6 +1552,91 @@ export function providerUsage(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Floors across a selector (#263 wave 4c)
+//
+// A route change governs every use case its selector reaches (§4.5), so the
+// model it picks must meet EVERY one of their floors, not only the edited use
+// case's — Apply is gated on the whole set. The helpers below derive that set
+// through `projectDraft`, the same reducer whose normalization Apply sends, so
+// the picker's verdict and the request cannot disagree.
+// ---------------------------------------------------------------------------
+
+/** The facts a defined model carries, in the shape a route change sends. */
+export const modelFactsOf = (model: ModelProjection): ModelFacts => ({
+  provider: model.provider,
+  model: model.modelName,
+  type: model.type,
+  ...(model.parameters === undefined ? {} : { parameters: model.parameters }),
+  ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+  ...(model.dimensions === undefined ? {} : { dimensions: model.dimensions }),
+});
+
+/** The union of the Firn floors of `useCases`, in canonical capability order. */
+export const unionFloor = (useCases: readonly string[]): CapabilityName[] =>
+  CAPABILITY_NAMES.filter((cap) =>
+    useCases.some((useCase) => (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap))
+  );
+
+/**
+ * Every use case `change` would govern, the changed one first: the set
+ * `projectDraft` reports for its selector group, over the draft as it stands.
+ * Route changes never touch a key ref, so a throwaway vault is honest here.
+ */
+export function affectedUseCases(
+  base: DraftBaseProjection,
+  draft: Draft,
+  change: RouteChange
+): string[] {
+  const affected = projectDraft(
+    base,
+    stageChange(draft, change, new KeyVault(new Map()))
+  ).selectorUseCases.get(change.useCase) ?? [change.useCase];
+  return [change.useCase, ...affected.filter((useCase) => useCase !== change.useCase)];
+}
+
+/**
+ * The change the editor would stage for a defined model before any exposure
+ * edit — its selector-persisted exposure plus the use case's own floor — so
+ * the picker can ask `affectedUseCases` about every card it shows.
+ */
+export const probeRouteChange = (useCase: string, model: ModelProjection): RouteChange => ({
+  kind: 'route',
+  useCase,
+  modelFacts: modelFactsOf(model),
+  capabilityFacts: model.capabilityFacts,
+  exposedCaps: CAPABILITY_NAMES.filter(
+    (cap) =>
+      model.exposedCapabilities.includes(cap) || (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap)
+  ),
+  thinkMode: model.thinkMode,
+  confirmUnknown: false,
+});
+
+/** One floor capability a model lacks, and the use cases whose floor asks for it. */
+export interface FloorShortfall {
+  cap: CapabilityName;
+  useCases: string[];
+}
+
+/**
+ * What `caps` is missing against the floors of `useCases`, in canonical
+ * capability order; the use cases keep the order they were given (the edited
+ * one first, from `affectedUseCases`). Empty means the model can serve them all.
+ */
+export function floorShortfalls(
+  caps: readonly CapabilityName[],
+  useCases: readonly string[]
+): FloorShortfall[] {
+  return CAPABILITY_NAMES.flatMap((cap) => {
+    if (caps.includes(cap)) return [];
+    const needing = useCases.filter((useCase) =>
+      (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap)
+    );
+    return needing.length === 0 ? [] : [{ cap, useCases: needing }];
+  });
+}
+
 /**
  * The request the draft currently means, validated by the same parser that
  * guards inbound payloads: a drafting bug (a stray key ref, a missing

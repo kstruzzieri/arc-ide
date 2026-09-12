@@ -1151,3 +1151,126 @@ describe('GolemConfigWorkspace route editing', () => {
     expect(within(page).getByText('use case ghost')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave 4c: the picker's floor is every use case a card would govern.
+// ---------------------------------------------------------------------------
+
+describe('RouteEditor union floor (wave 4c)', () => {
+  const agentModel = model({
+    role: 'agent-role',
+    modelName: 'gpt-5',
+    effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+    capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ['chat', 'stream', 'tool_call'],
+    routedUseCases: ['agent'],
+  });
+  const grid = () => within(screen.getByRole('listbox', { name: /Models/ }));
+  const names = () =>
+    grid()
+      .getAllByRole('option')
+      .map((card) => within(card).getByText(/gpt/).textContent);
+  const cardNamed = (name: string) => {
+    const card = grid()
+      .getAllByRole('option')
+      .find((option) => within(option).queryByText(name) !== null);
+    if (card === undefined) throw new Error(`no card named ${name}`);
+    return card;
+  };
+
+  it('filters the cards by the floors of every use case the current role serves', async () => {
+    // chat-role reaches agent through a fallback chain: a card for chat must carry tool_call.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model({ routedUseCases: ['agent', 'chat'] }), agentModel],
+    });
+    await openRoute('chat');
+    expect(screen.getByText('Model — every card below can serve chat, agent')).toBeInTheDocument();
+    expect(screen.getByText('filter: chat · stream · tool_call')).toBeInTheDocument();
+    expect(names()).toEqual(['gpt-5']);
+
+    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
+    const blocked = cardNamed('gpt-5-mini');
+    expect(blocked).toHaveAttribute('aria-disabled', 'true');
+    expect(within(blocked).getByText('agent needs tool_call')).toBeInTheDocument();
+  });
+
+  it('hides a card its own selector siblings refuse, and names the sibling', async () => {
+    // gpt-5-mid serves chat's floor, but agent is routed to it and needs tool_call.
+    const mid = model({ role: 'agent-role', modelName: 'gpt-5-mid', routedUseCases: ['agent'] });
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), mid, other],
+    });
+    await openRoute('chat');
+    // The band's own line names only what EVERY card serves…
+    expect(screen.getByText('Model — every card below can serve chat')).toBeInTheDocument();
+    // …(cards are role-alpha within the provider: chat-role, then other-role)…
+    expect(names()).toEqual(['gpt-5-mini', 'gpt-5']);
+    // …and the card agent already uses says why it is out.
+    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
+    expect(within(cardNamed('gpt-5-mid')).getByText('agent needs tool_call')).toBeInTheDocument();
+  });
+
+  it('locks a sibling floor in the exposure checklist once the card is chosen', async () => {
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+
+    const caps = screen.getByRole('group', { name: 'Capabilities exposed to chat — from gpt-5' });
+    const toolCall = within(caps).getByLabelText('tool_call required');
+    expect(toolCall).toBeChecked();
+    expect(toolCall).toBeDisabled();
+    expect(within(caps).getByText(/checked and locked/)).toHaveTextContent(
+      'The capabilities chat and agent require are checked and locked.'
+    );
+    await stage();
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('locks a sibling floor in the declare form when a declared name joins that selector', async () => {
+    // A hand-declared name is a fresh selector — until it is edited into an
+    // existing model's name, at which point its siblings' floors apply and the
+    // checked set must be what is sent (spec 4.4).
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5x');
+    const declared = () => screen.getByRole('group', { name: 'Capabilities this model supports' });
+    expect(within(declared()).getByLabelText('tool_call')).not.toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call')).toBeEnabled();
+
+    const name = screen.getByLabelText('Model name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    expect(within(declared()).getByLabelText('tool_call required')).toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call required')).toBeDisabled();
+    const exposed = screen.getByRole('group', {
+      name: 'Capabilities exposed to chat — from gpt-5',
+    });
+    expect(within(exposed).getByLabelText('tool_call required')).toBeDisabled();
+
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call']);
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+});

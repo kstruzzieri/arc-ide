@@ -35,12 +35,14 @@ import {
   type ThinkMode,
 } from '../../types/golem';
 import {
-  KeyVault,
-  USE_CASE_FLOORS,
+  affectedUseCases,
+  floorShortfalls,
   meetsUseCaseFloor,
-  projectDraft,
+  modelFactsOf,
+  probeRouteChange,
   sameModelFacts,
-  stageChange,
+  unionFloor,
+  USE_CASE_FLOORS,
   type Change,
   type Draft,
   type DraftBaseProjection,
@@ -220,9 +222,18 @@ export function RouteEditor({
   onUnstagedChange,
   onStaged,
 }: RouteEditorProps) {
-  const floor = USE_CASE_FLOORS.get(useCase) ?? [];
+  /** Siblings the backend forks away from, rather than changing under them. */
+  const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
+  /**
+   * [W4-2] What every candidate governs at least: this use case and the ones
+   * its current role already serves. A chosen card adds the use cases ITS
+   * selector's roles serve (`affected` below); a hand-declared name has no
+   * selector yet, so the baseline is exactly its floor.
+   */
+  const baseline = [useCase, ...sharedRole];
+  const baselineFloor = unionFloor(baseline);
   const seed = useMemo(
-    () => seedFrom(staged, current, models, floor),
+    () => seedFrom(staged, current, models, baselineFloor),
     // Derived once, at mount: the row remounts when the document moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -248,26 +259,42 @@ export function RouteEditor({
           : { provider, model: manual.model, type: manual.type }
         : defined === null
           ? null
-          : {
-              provider: defined.provider,
-              model: defined.modelName,
-              type: defined.type,
-              ...(defined.parameters === undefined ? {} : { parameters: defined.parameters }),
-              ...(defined.contextWindow === undefined
-                ? {}
-                : { contextWindow: defined.contextWindow }),
-              ...(defined.dimensions === undefined ? {} : { dimensions: defined.dimensions }),
-            };
+          : modelFactsOf(defined);
 
   /**
    * A manual declaration is authoritative: `caps` is the checked set and
    * `knownCaps` the full vocabulary shown (§4.4). A defined model carries the
-   * facts the projection already computed.
+   * facts the projection already computed. Parameterised on the floor because
+   * the candidate's own floor is derived from a probe built with the baseline's.
    */
-  const capabilityFacts: CapabilityFacts | null =
+  const declaredFacts = (withFloor: readonly CapabilityName[]): CapabilityFacts | null =>
     manual !== null
-      ? { caps: canonicalCaps([...manual.caps, ...floor]), knownCaps: [...CAPABILITY_NAMES] }
+      ? { caps: canonicalCaps([...manual.caps, ...withFloor]), knownCaps: [...CAPABILITY_NAMES] }
       : (defined?.capabilityFacts ?? null);
+
+  /**
+   * Every use case this candidate governs, from the same reducer Apply sends
+   * through — the edited one first (§4.5). Only the selector and whether ANY
+   * exposure is asserted matter to that reducer, so the probe carries the
+   * baseline floor; the candidate below carries the floor derived from it.
+   */
+  const probeFacts = declaredFacts(baselineFloor);
+  const affected =
+    facts === null || probeFacts === null
+      ? baseline
+      : affectedUseCases(base, draft, {
+          kind: 'route',
+          useCase,
+          modelFacts: facts,
+          capabilityFacts: probeFacts,
+          exposedCaps: canonicalCaps([...exposed, ...baselineFloor]),
+          thinkMode: '',
+          confirmUnknown: false,
+        });
+  /** [W4-2] The floor this route must meet: the union over everything it governs. */
+  const floor = unionFloor(affected);
+  const floorOwners = affected.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0);
+  const capabilityFacts = declaredFacts(floor);
 
   /**
    * What arrives checked for a selection. §4.5's "declared caps arrive checked"
@@ -310,29 +337,15 @@ export function RouteEditor({
           useCase,
           modelFacts: facts,
           capabilityFacts,
-          exposedCaps: exposed,
+          // The floor is always in: what the locked checkboxes show is what is sent.
+          exposedCaps: canonicalCaps([...exposed, ...floor]),
           // A think mode is meaningless without the capability that justifies it.
           thinkMode: exposed.includes('thinking') ? think : '',
           confirmUnknown: false,
         };
 
-  // Route changes never touch a key ref, so the preview projection runs against
-  // a throwaway vault rather than the workspace's.
-  // ponytail: a scratch vault, not a KeyVault variant — stageChange only
-  // evicts keys for provider changes, and this is always a route change.
-  const scratch = useMemo(() => new KeyVault(new Map()), []);
-  const affected = useMemo(() => {
-    if (candidate === null) return [useCase];
-    const preview = projectDraft(base, stageChange(draft, candidate, scratch));
-    return preview.selectorUseCases.get(useCase) ?? [useCase];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, draft, scratch, useCase, JSON.stringify(candidate)]);
-
   const alsoGoverns = affected.filter((other) => other !== useCase);
   const unknownUseCases = affected.filter((other) => !USE_CASE_FLOORS.has(other));
-
-  /** Siblings the backend forks away from, rather than changing under them. */
-  const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
 
   /**
    * What a real retarget would drop. An override — the same provider+model the
@@ -452,7 +465,15 @@ export function RouteEditor({
       <ModelBand
         id={id}
         useCase={useCase}
-        floor={floor}
+        serves={baseline}
+        floor={baselineFloor}
+        required={floor}
+        shortfalls={(candidateModel) =>
+          floorShortfalls(
+            candidateModel.exposedCapabilities,
+            affectedUseCases(base, draft, probeRouteChange(useCase, candidateModel))
+          )
+        }
         models={models}
         provider={provider}
         providers={providers}
@@ -501,8 +522,9 @@ export function RouteEditor({
                     );
                   })}
                   <span className={styles.fieldHint}>
-                    What this route may use. The capabilities {useCase} requires are checked and
-                    locked.
+                    What this route may use.
+                    {floorOwners.length > 0 &&
+                      ` The capabilities ${listUseCases(floorOwners)} ${agrees(floorOwners, 'requires', 'require')} are checked and locked.`}
                   </span>
                 </fieldset>
               </div>

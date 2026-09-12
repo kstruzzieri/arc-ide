@@ -8,12 +8,14 @@ import {
 } from '../../types/golem';
 import {
   ACTIVE_PROFILE_KEY,
+  affectedUseCases,
   buildApplyRequest,
   canApplyDraft,
   changeStableID,
   cleanDraft,
   draftChangeCount,
   effectiveRoutes,
+  floorShortfalls,
   isDraftDirty,
   KeyVault,
   meetsUseCaseFloor,
@@ -26,6 +28,7 @@ import {
   parseSaveGolemProfileAsRequest,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
+  probeRouteChange,
   projectDraft,
   providerUsage,
   readActiveProfile,
@@ -35,6 +38,7 @@ import {
   setTargetRevision,
   settleDraft,
   stageChange,
+  unionFloor,
   unstageChange,
   USE_CASE_FLOORS,
   type ApplyMode,
@@ -1097,5 +1101,109 @@ describe('effectiveRoutes / providerUsage (one derived view)', () => {
     expect(providerUsage(effectiveRoutes(withFallback, changes), withFallback, changes)).toEqual(
       new Map([['C', ['agent']]])
     );
+  });
+});
+
+describe('floors across a selector (wave 4c)', () => {
+  // Transport order (routes by use case, models by role), as a real projection arrives.
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'reasoning', role: 'reason-role' },
+    ],
+    models: [
+      modelRow({
+        role: 'agent-role',
+        modelName: 'gpt-5',
+        effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCapabilities: ['chat', 'stream', 'tool_call'],
+        routedUseCases: ['agent'],
+      }),
+      modelRow({ routedUseCases: ['chat'] }),
+      // agent reaches reason-role through a fallback chain: routedUseCases is
+      // fallback-inclusive (internal/ai/settings.go roleUsage).
+      modelRow({
+        role: 'reason-role',
+        modelName: 'deepseek',
+        routedUseCases: ['agent', 'reasoning'],
+      }),
+    ],
+  };
+  const byRole = (role: string): ModelProjection => {
+    const found = base.models.find((model) => model.role === role);
+    if (found === undefined) throw new Error(`no model role ${role}`);
+    return found;
+  };
+
+  it('unions the floors of the use cases named, in canonical order', () => {
+    expect(unionFloor(['reasoning'])).toEqual([]);
+    expect(unionFloor(['reasoning', 'agent', 'embedding'])).toEqual([
+      'chat',
+      'stream',
+      'embed',
+      'tool_call',
+    ]);
+  });
+
+  it('lists what a candidate governs with the edited use case first', () => {
+    // reasoning's current role also serves agent; gpt-5's selector serves agent directly.
+    expect(
+      affectedUseCases(
+        base,
+        cleanDraft(REVISION_A),
+        probeRouteChange('reasoning', byRole('agent-role'))
+      )
+    ).toEqual(['reasoning', 'agent']);
+    // A card on chat-role's selector adds chat to the set.
+    expect(
+      affectedUseCases(
+        base,
+        cleanDraft(REVISION_A),
+        probeRouteChange('reasoning', byRole('chat-role'))
+      )
+    ).toEqual(['reasoning', 'agent', 'chat']);
+  });
+
+  it('folds a staged change on the same selector into the set', () => {
+    const draft = stage([
+      routeChange({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+      }),
+    ]);
+    expect(
+      affectedUseCases(base, draft, probeRouteChange('reasoning', byRole('agent-role')))
+    ).toEqual(['reasoning', 'agent', 'chat']);
+  });
+
+  it('names each missing capability with the use cases that need it', () => {
+    expect(floorShortfalls(['chat', 'stream'], ['reasoning', 'agent', 'chat'])).toEqual([
+      { cap: 'tool_call', useCases: ['agent'] },
+    ]);
+    expect(floorShortfalls(['embed'], ['chat', 'agent'])).toEqual([
+      { cap: 'chat', useCases: ['chat', 'agent'] },
+      { cap: 'stream', useCases: ['chat', 'agent'] },
+      { cap: 'tool_call', useCases: ['agent'] },
+    ]);
+    expect(floorShortfalls(['chat', 'stream', 'tool_call'], ['reasoning', 'agent'])).toEqual([]);
+  });
+
+  it('carries every optional fact into the probe and asserts the use case floor', () => {
+    const probe = probeRouteChange('agent', modelRow({ parameters: '7b', contextWindow: 4096 }));
+    expect(probe.modelFacts).toEqual({
+      provider: 'hosted',
+      model: 'gpt-5-mini',
+      type: 'dense',
+      parameters: '7b',
+      contextWindow: 4096,
+    });
+    expect(probe.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+    expect(probe.thinkMode).toBe('');
   });
 });
