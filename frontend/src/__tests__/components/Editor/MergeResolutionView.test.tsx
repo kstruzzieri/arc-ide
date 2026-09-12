@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { cssRule } from '../../helpers/cssRule';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
@@ -1343,5 +1346,48 @@ describe('MergeResolutionView overwrite consent', () => {
     });
 
     expect(controller.view.focus).toHaveBeenCalled();
+  });
+});
+
+describe('MergeResolutionView stylesheet', () => {
+  const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8');
+  const dialog = () =>
+    cssRule(read('../../../components/Editor/MergeResolutionView.module.css'), '.dialog');
+
+  // The universal `* { margin: 0 }` in reset.css cancels the UA stylesheet's
+  // `dialog { margin: auto }`; before this rule restated it the modal drew at
+  // the window's top-left, under the transparent macOS titlebar and across the
+  // traffic lights. reset.css now restores the UA margin too, and this rule
+  // restates it so the module stands alone, then pins the box below the
+  // header. jsdom resolves no CSS from a module, so the stylesheet itself is
+  // the honest guard.
+  it('centres the confirmation dialogs below the app header', () => {
+    const body = dialog();
+    expect(body).toMatch(/^\s*margin: auto;$/m);
+    // The header offset comes from the shared token; the clearance after it
+    // is a design constant the guard does not pin.
+    expect(body).toMatch(/^\s*inset: var\(--header-height\) 0 0;$/m);
+    expect(body).toMatch(/^\s*max-height: calc\(100% - var\(--header-height\) - \d+px\);$/m);
+  });
+
+  // Owned here rather than left to the UA modal rule: the geometry then holds
+  // on a UA sheet without modal overflow and for a non-modal show().
+  it('owns the positioning scheme and the overflow its max-height needs', () => {
+    const body = dialog();
+    expect(body).toMatch(/^\s*position: fixed;$/m);
+    expect(body).toMatch(/^\s*overflow: auto;$/m);
+  });
+
+  // If `--header-height` is undefined the declaration is invalid at
+  // computed-value time, so `inset` falls to auto and `max-height` to none and
+  // the dialog sits at the top-left again with nothing else failing. The check
+  // covers every token the rule references, against the :root block only, so
+  // a declaration in a comment or under a [data-accent] selector cannot
+  // satisfy it.
+  it('references only tokens that tokens.css declares on :root', () => {
+    const root = cssRule(read('../../../styles/tokens.css'), ':root');
+    const used = [...dialog().matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
+    expect(used).toContain('--header-height');
+    for (const token of used) expect(root).toMatch(new RegExp(`^\\s*${token}:`, 'm'));
   });
 });
