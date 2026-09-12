@@ -39,18 +39,18 @@
 
 .emptyText {
   font-size: 11px;
-  color: #555;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .emptyHint {
   font-size: 10px;
-  color: #333;
+  color: var(--text-muted);
   line-height: 1.5;
 }
 
 .emptyHint strong {
-  color: #555;
+  color: var(--text-primary);
 }
 
 /* Header counters */
