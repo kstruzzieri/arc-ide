@@ -1423,12 +1423,20 @@ function selectorGroups(
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
   // [W4-10] A sibling contributes what it still routes when the join is
   // gated. The backend applies a request in phases — route plans in stable-id
-  // order, then overrides, binds, unassigns, removals — so a route the draft
-  // sends to ANOTHER selector has left its role (a change onto THIS selector
-  // is in the group, governed by construction), while an unassigned route is
-  // still bound at every join and still gates it. Ceiling: a departure whose
-  // plan sorts after the join is a transient conflict the backend still
-  // refuses; not mirrored here.
+  // order, then overrides, binds, unassigns, removals — and forks a role
+  // (ForkRoleModel) whenever it still routes more than one use case: the
+  // source role's Defaults binding stays on ALL of them, including the one
+  // this draft moves, until the binds phase, so a fork source's use cases
+  // still gate every join, in every order. Only a true retarget
+  // (SetRoleModel) — a role routing exactly this one use case — moves the
+  // role itself, so only then has a route sent to ANOTHER selector left it (a
+  // change onto THIS selector is in the group, governed by construction). An
+  // unassigned route is still bound at every join too. Ceilings, not mirrored
+  // here: a retarget whose plan sorts after the join is a transient conflict
+  // the backend still refuses; and a sibling routed by exactly one use case
+  // that an unrouted role lists as a fallback is forked too
+  // (`fallbacks[role]`), invisible to this projection — the pre-check may
+  // mark it gone and the backend refuses late.
   const staged = stagedRoutes(changes);
   const groups = new Map<string, SelectorGroup>();
   for (const change of changes) {
@@ -1457,7 +1465,11 @@ function selectorGroups(
         const leaving = leavingRoutes(base, staged, model);
         for (const useCase of model.routedUseCases) {
           group.affected.add(useCase);
-          if (!leaving.has(useCase)) group.governed.add(useCase);
+          // A fork keeps the source role bound to every one of its use cases
+          // until the binds phase; only a true retarget — a role routing
+          // exactly this one use case — actually leaves.
+          const retargeted = leaving.has(useCase) && model.routedUseCases.length === 1;
+          if (!retargeted) group.governed.add(useCase);
         }
       }
     }

@@ -796,7 +796,7 @@ describe('RouteEditor', () => {
     await pickModel('gpt-5');
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
     expect(screen.getByText(/already sets Think/)).toHaveTextContent(
-      'role chat-role already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+      'role chat-role (its chat route leaves after this join) already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
     );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
@@ -805,7 +805,7 @@ describe('RouteEditor', () => {
   it('names what a fork source keeps serving when one of its routes leaves', async () => {
     // pair-role serves chat and summarize; the draft moves chat elsewhere. A
     // fork leaves the source role on gpt-5 with summarize and its Think.
-    renderRouting({
+    const { onStage } = renderRouting({
       routes: [
         { useCase: 'agent', role: 'agent-role' },
         { useCase: 'chat', role: 'pair-role' },
@@ -823,6 +823,8 @@ describe('RouteEditor', () => {
     expect(screen.getByText(/already sets Think/)).toHaveTextContent(
       'summarize already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
     );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
   });
 
   it('names a route once in the Think conflict, however many sibling roles reach it', async () => {

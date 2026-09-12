@@ -1292,6 +1292,34 @@ describe('floors across a selector (wave 4c)', () => {
     ).toEqual(['chat', 'planning']);
   });
 
+  it('keeps every use case a fork source still serves once one of its routes leaves', () => {
+    // pair-role routes planning AND summarize on gpt-5: forking planning away
+    // leaves pair-role's Defaults bound to BOTH until the binds phase, so
+    // chat joining gpt-5 still gates on everything pair-role still serves.
+    const gpt5 = byRole('agent-role');
+    const pairRole: ModelProjection = {
+      ...gpt5,
+      role: 'pair-role',
+      routedUseCases: ['planning', 'summarize'],
+    };
+    const forked: DraftBaseProjection = {
+      routes: [
+        { useCase: 'planning', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [pairRole, modelRow({ routedUseCases: ['chat'] })],
+    };
+    const planningAway = routeChange({
+      useCase: 'planning',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    expect(
+      governedUseCasesOf(forked, stage([planningAway]), probeRouteChange('chat', pairRole))
+    ).toEqual(['chat', 'planning', 'summarize']);
+  });
+
   it('keeps a route the draft moves off a role it reaches only as a fallback', () => {
     // routedUseCases is fallback-inclusive: agent reaches judge-role through
     // agent-role's chain. Retargeting agent rewrites (or forks) agent-role, its

@@ -383,6 +383,9 @@ export function RouteEditor({
    * still refuses — named by the routes it still serves, or as
    * `role <name>` when none is left to name (an unrouted role never leaves).
    * The edited role counts only when shared (this route is leaving it).
+   * Ceiling: a sibling routed by exactly one use case that an unrouted role
+   * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
+   * the pre-check may mark it gone and the backend refuses late.
    * Capability overrides conflict the same way, but the projection cannot
    * tell a sibling's explicit override from its declared caps, so that half
    * stays with the backend.
@@ -417,8 +420,12 @@ export function RouteEditor({
           !unassigned.has(other) &&
           (sibling.role !== role || other !== useCase)
       );
+      // Still here, but only because its plan sorts after this join — say so.
+      const departureNote =
+        departure !== undefined ? ` (its ${departure.useCase} route leaves after this join)` : '';
       const names = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
-      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}`]) names.add(name);
+      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}`])
+        names.add(`${name}${departureNote}`);
       conflictsByMode.set(sibling.thinkMode, names);
     }
   }
