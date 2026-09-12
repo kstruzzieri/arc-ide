@@ -13,6 +13,7 @@ import {
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
 import { GitConflictStages, GitFileAtRev } from '../../wails/bindings';
+import { decisionLabel, describeMergeAnnouncement } from './mergeAnnouncement';
 import styles from './MergeResolutionView.module.css';
 
 type BaseStrip =
@@ -37,60 +38,12 @@ function decisionClass(decision: MergeDecision | undefined): string {
   return decision ? styles[`decision${decision}`] : styles.unresolved;
 }
 
-function decisionLabel(decision: MergeDecision | undefined): string {
-  switch (decision) {
-    case 'C':
-      return 'Current';
-    case 'I':
-      return 'Incoming';
-    case 'B':
-      return 'Both';
-    case 'M':
-      return 'Manual';
-    default:
-      return 'unresolved';
-  }
-}
-
 /** Remaining work is stated as a count, not an ordinal: the queue shrinks as
  * files finalize, so "File 2 of 3" would reset to "File 1 of 2" on the next
  * advance and read as going backwards. */
 function remainingLabel(session: MergeSession): string {
   const remaining = session.fileQueue.length;
   return `${remaining} conflicted file${remaining === 1 ? '' : 's'} remaining`;
-}
-
-export function describeMergeAnnouncement(
-  previous: Record<number, MergeDecision>,
-  next: Record<number, MergeDecision>,
-  totalRegions: number
-): string | null {
-  const resolved: number[] = [];
-  const reopened: number[] = [];
-  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
-    const index = Number(key);
-    if (previous[index] === next[index]) continue;
-    if (next[index] === undefined) reopened.push(index);
-    else resolved.push(index);
-  }
-  if (resolved.length === 0 && reopened.length === 0) return null;
-  resolved.sort((a, b) => a - b);
-  reopened.sort((a, b) => a - b);
-  const parts: string[] = [];
-  if (resolved.length === 1) {
-    parts.push(
-      `Conflict ${resolved[0] + 1} resolved: took ${decisionLabel(next[resolved[0]]).toLowerCase()}`
-    );
-  } else if (resolved.length > 1) {
-    parts.push(`Conflicts ${resolved.map((index) => index + 1).join(', ')} resolved`);
-  }
-  if (reopened.length === 1) {
-    parts.push(`Conflict ${reopened[0] + 1} reopened`);
-  } else if (reopened.length > 1) {
-    parts.push(`Conflicts ${reopened.map((index) => index + 1).join(', ')} reopened`);
-  }
-  const remaining = totalRegions - Object.keys(next).length;
-  return `${parts.join('. ')}. ${remaining} unresolved.`;
 }
 
 /** Where keyboard focus should land after a notice resolves: the live Result
@@ -134,6 +87,10 @@ export function MergeResolutionView({
     // ending an IME composition — key code 229 is the Windows/macOS IME
     // placeholder, where `key` is not the physical key at all.
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // An open confirmation owns Escape. The browser turns an uncancelled
+    // keydown into the dialog's `cancel` event; preventing it here would
+    // suppress that and raise an unrelated merge-close request instead.
+    if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
     // A write or a reload in flight owns the session; Escape must not race it.
     if (finalizing || session.reloadPending) return;
     event.preventDefault();
@@ -312,6 +269,10 @@ function MergeDiscardDialog({ session }: { session: MergeSession }) {
   }, []);
 
   const restoreInvoker = () => {
+    // Everything outside a modal dialog is inert until it closes, so the
+    // invoker cannot take focus while the dialog is open. React unmounts the
+    // node afterwards, which would drop focus to <body>.
+    dialogRef.current?.close();
     const invoker = invokerRef.current;
     if (invoker?.isConnected) invoker.focus();
   };
@@ -396,6 +357,9 @@ function MergeOverwriteDialog({
   }, []);
 
   const close = () => {
+    // See restoreInvoker in MergeDiscardDialog: the invoker is inert until the
+    // dialog itself closes.
+    dialogRef.current?.close();
     const invoker = invokerRef.current;
     onSettled();
     if (invoker?.isConnected) invoker.focus();

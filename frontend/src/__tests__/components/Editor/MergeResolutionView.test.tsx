@@ -101,30 +101,59 @@ jest.mock('../../../wails/bindings', () => ({
   GitFileAtRev: jest.fn(),
 }));
 
-import {
-  MergeResolutionView,
-  describeMergeAnnouncement,
-} from '../../../components/Editor/MergeResolutionView';
+import { MergeResolutionView } from '../../../components/Editor/MergeResolutionView';
 import { GitConflictStages, GitFileAtRev } from '../../../wails/bindings';
 import { CancellablePromise } from '../../../wails/runtime';
 
 const mockedStages = GitConflictStages as jest.MockedFunction<typeof GitConflictStages>;
 const mockedFileAtRev = GitFileAtRev as jest.MockedFunction<typeof GitFileAtRev>;
 
+/** jsdom has no top layer and no inertness. Model the one consequence the
+ * focus assertions depend on: while a modal dialog is open and connected,
+ * focus() on anything outside it is a no-op. One modal at a time; a browser
+ * would exempt the topmost of a stack, which these tests never build. */
+const modalDialogs = new Set<HTMLDialogElement>();
+const nativeFocus = HTMLElement.prototype.focus;
+
 beforeAll(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.setAttribute('open', '');
+      modalDialogs.add(this);
     },
   });
   Object.defineProperty(HTMLDialogElement.prototype, 'close', {
     configurable: true,
     value(this: HTMLDialogElement) {
       this.removeAttribute('open');
+      modalDialogs.delete(this);
     },
   });
+  HTMLElement.prototype.focus = function focus(this: HTMLElement, options?: FocusOptions) {
+    for (const dialog of modalDialogs) {
+      if (dialog.isConnected && dialog.hasAttribute('open') && !dialog.contains(this)) return;
+    }
+    nativeFocus.call(this, options);
+  };
 });
+
+afterAll(() => {
+  HTMLElement.prototype.focus = nativeFocus;
+});
+
+/** jsdom has no close-request algorithm. Mirror the browser's: an Escape
+ * keydown bubbles out of the open dialog, and only if nothing called
+ * preventDefault on it does it become the dialog's `cancel` event. */
+function pressEscapeInside(target: HTMLElement): KeyboardEvent {
+  const keydown = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  fireEvent(target, keydown);
+  const dialog = target.closest('dialog');
+  if (dialog && !keydown.defaultPrevented) {
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+  }
+  return keydown;
+}
 
 const textSession = {
   kind: 'text',
@@ -179,6 +208,7 @@ const sidesSession = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  modalDialogs.clear();
   mockedStages.mockReset();
   mockedFileAtRev.mockReset();
   syntaxThemeId = 'glacier';
@@ -807,35 +837,6 @@ describe('MergeResolutionView base strip', () => {
   });
 });
 
-describe('describeMergeAnnouncement', () => {
-  it('describes a single resolution with its decision and the remaining count', () => {
-    expect(describeMergeAnnouncement({}, { 0: 'C' }, 2)).toBe(
-      'Conflict 1 resolved: took current. 1 unresolved.'
-    );
-  });
-
-  it('describes a single reopen', () => {
-    expect(describeMergeAnnouncement({ 0: 'C' }, {}, 2)).toBe('Conflict 1 reopened. 2 unresolved.');
-  });
-
-  it('describes several regions changed in one transaction deterministically', () => {
-    expect(describeMergeAnnouncement({ 0: 'C', 1: 'C' }, { 0: 'M', 1: 'M' }, 2)).toBe(
-      'Conflicts 1, 2 resolved. 0 unresolved.'
-    );
-  });
-
-  it('describes a mixed resolve-and-reopen transaction (the motivating multi-region case)', () => {
-    // Region 1 newly resolved to Manual, region 2 reopened, in one transaction.
-    expect(describeMergeAnnouncement({ 0: 'C', 2: 'C' }, { 0: 'C', 1: 'M' }, 4)).toBe(
-      'Conflict 2 resolved: took manual. Conflict 3 reopened. 2 unresolved.'
-    );
-  });
-
-  it('returns null when nothing changed', () => {
-    expect(describeMergeAnnouncement({ 0: 'C' }, { 0: 'C' }, 2)).toBeNull();
-  });
-});
-
 describe('MergeResolutionView external-change notice', () => {
   const withExternal = (
     base: MergeSession,
@@ -1093,17 +1094,16 @@ describe('MergeResolutionView discard confirmation', () => {
   });
 
   it('cancels through the store and restores focus to the invoker', () => {
-    render(<MergeResolutionView session={textSession} visible />);
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
     const invoker = screen.getByRole('button', { name: /next unresolved/i });
     invoker.focus();
-    const { rerender } = { rerender: (node: React.ReactElement) => node };
-    void rerender;
 
     // The dialog appears while the invoker holds focus.
-    render(<MergeResolutionView session={closeRequested()} visible />);
-    fireEvent.click(screen.getAllByRole('button', { name: /keep working/i })[0]);
+    rerender(<MergeResolutionView session={closeRequested()} visible />);
+    fireEvent.click(screen.getByRole('button', { name: /keep working/i }));
 
     expect(cancelMergeClose).toHaveBeenCalledTimes(1);
+    expect(invoker).toHaveFocus();
   });
 
   it('discards through the store', () => {
@@ -1121,6 +1121,26 @@ describe('MergeResolutionView discard confirmation', () => {
 
     expect(cancelMergeClose).toHaveBeenCalledTimes(1);
     expect(confirmMergeClose).not.toHaveBeenCalled();
+  });
+
+  it('a simulated Escape keydown inside the dialog reaches the native cancel, not the surface handler', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    const invoker = screen.getByRole('button', { name: /next unresolved/i });
+    invoker.focus();
+    // The dialog appears while the invoker holds focus and takes it.
+    rerender(<MergeResolutionView session={closeRequested()} visible />);
+    const keep = screen.getByRole('button', { name: /keep working/i });
+    expect(keep).toHaveFocus();
+
+    const keydown = pressEscapeInside(keep);
+
+    // Preventing the keydown would suppress the browser's close request, and
+    // the surface must not re-issue a close that is already pending.
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(requestMergeClose).not.toHaveBeenCalled();
+    expect(cancelMergeClose).toHaveBeenCalledTimes(1);
+    expect(confirmMergeClose).not.toHaveBeenCalled();
+    expect(invoker).toHaveFocus();
   });
 
   it('renders one confirmation for a sides session too', () => {
@@ -1306,6 +1326,23 @@ describe('MergeResolutionView overwrite consent', () => {
 
     expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('a simulated Escape keydown inside the overwrite dialog cancels it without asking to discard', () => {
+    render(<MergeResolutionView session={worktreeChanged()} visible />);
+    resolveAll();
+    const write = screen.getByRole('button', { name: 'Write & stage' });
+    write.focus();
+    fireEvent.click(write);
+    const cancel = screen.getByRole('button', { name: /^cancel$/i });
+
+    const keydown = pressEscapeInside(cancel);
+
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(requestMergeClose).not.toHaveBeenCalled();
+    expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(write).toHaveFocus();
   });
 
   it('never offers an overwrite for a conflict-scoped change', () => {
