@@ -30,8 +30,11 @@ import {
 } from '../../types/golem';
 import {
   USE_CASE_FLOORS,
+  affectedUseCases,
   changeStableID,
+  floorShortfalls,
   meetsUseCaseFloor,
+  probeRouteChange,
   sameModelFacts,
   type Change,
   type Draft,
@@ -41,6 +44,7 @@ import {
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
+import { AssignList, type AssignOption } from './AssignList';
 import { Cell, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
@@ -165,6 +169,13 @@ export function RoutingCard({
   const [flash, setFlash] = useState<{ key: string; nonce: number } | null>(null);
   const flashNonce = (key: string): number | undefined =>
     flash?.key === key ? flash.nonce : undefined;
+  /** [W4-3] The defined-model row whose Assign list is open — one at a time — by role. */
+  const [assigning, setAssigning] = useState<string | null>(null);
+  /**
+   * [W4-3] Use case → the defined model its editor opens on, from the Assign
+   * list. Read once, when the editor mounts; cleared when that editor closes.
+   */
+  const [preselect, setPreselect] = useState<ReadonlyMap<string, ModelProjection>>(new Map());
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
@@ -182,6 +193,12 @@ export function RoutingCard({
     setOpen((current) => {
       if (!current.has(useCase)) return current;
       const next = new Set(current);
+      next.delete(useCase);
+      return next;
+    });
+    setPreselect((current) => {
+      if (!current.has(useCase)) return current;
+      const next = new Map(current);
       next.delete(useCase);
       return next;
     });
@@ -290,6 +307,41 @@ export function RoutingCard({
       return current !== undefined && sameModelFacts(current, change.modelFacts);
     });
     return { change: group[0], override };
+  };
+
+  const assignId = (index: number): string => `golem-defined-assign-${index}`;
+
+  /**
+   * [W4-3] Every use case, with why this model cannot take it — the verdict the
+   * picker gives a card, from the same helpers. An open editor is listed
+   * disabled rather than re-seeded: re-seeding would drop its unstaged fields.
+   */
+  const assignOptions = (model: ModelProjection): AssignOption[] =>
+    routeUseCases(routes).map((useCase) => {
+      if (open.has(useCase)) return { useCase, reason: 'editor open' };
+      const short = floorShortfalls(
+        model.exposedCapabilities,
+        affectedUseCases(base, draft, probeRouteChange(useCase, model))
+      );
+      return {
+        useCase,
+        reason: short.length === 0 ? '' : `needs ${short.map(({ cap }) => cap).join(', ')}`,
+      };
+    });
+
+  /** Choosing a use case opens ITS editor on this model — the Edit path, seeded. */
+  const assignTo = (model: ModelProjection, useCase: string) => {
+    const editorId = `golem-route-editor-${routeUseCases(routes).indexOf(useCase)}`;
+    setPreselect((current) => new Map(current).set(useCase, model));
+    setAssigning(null);
+    openEditor(useCase, editorId);
+    document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
+  };
+
+  /** Escape or a second press: the list unmounts and focus returns to the trigger it opened from. */
+  const closeAssign = (index: number) => {
+    setAssigning(null);
+    setPendingFocus({ elementId: `${assignId(index)}-trigger` });
   };
 
   const rowDiagnostics = (useCase: string) =>
@@ -532,6 +584,7 @@ export function RoutingCard({
                         base={base}
                         draft={draft}
                         staged={staged}
+                        preselect={preselect.get(useCase)}
                         rowKey={routeRowKey(useCase)}
                         onStage={onStage}
                         onClose={() => close(useCase, `${editorId}-edit`)}
@@ -589,9 +642,11 @@ export function RoutingCard({
                   <span className={styles.srOnly}>Actions</span>
                 </span>
               </div>
-              {unrouted.map((model) => {
+              {unrouted.map((model, index) => {
                 const markers = roleRows.get(model.role);
-                return (
+                const listId = assignId(index);
+                const listOpen = assigning === model.role;
+                const row = (
                   <div
                     key={`row:${model.role}`}
                     role="row"
@@ -599,12 +654,17 @@ export function RoutingCard({
                     tabIndex={-1}
                     data-testid={`defined-model-row-${model.role}`}
                     className={styles.row}
+                    data-expanded={listOpen || undefined}
                     // [X11] A staged `role-remove` stripes its row like every other
                     // staged change, and a landed `role:` jump flashes it.
                     data-changed={markers?.modified === true || undefined}
                     data-flash={flashNonce(`role:${model.role}`)}
                   >
-                    <Cell className={styles.identifier}>{model.role}</Cell>
+                    {/* [W4-3] A role and a use case may share a name (`agent`): the record
+                        form says which this is, the way TYPE / THINK label their cells. */}
+                    <Cell label="Role" className={styles.identifier}>
+                      {model.role}
+                    </Cell>
                     <Cell className={styles.providerCell}>{model.provider}</Cell>
                     <Cell className={styles.modelCell}>{model.modelName}</Cell>
                     <Cell className={styles.actionsCell}>
@@ -613,6 +673,20 @@ export function RoutingCard({
                       )}
                       {markers?.needsReview !== true && markers?.modified === true && (
                         <StatusText tone="warn">Modified</StatusText>
+                      )}
+                      {editable && (
+                        <button
+                          type="button"
+                          id={`${listId}-trigger`}
+                          className={`${styles.button} ${styles.small}`}
+                          aria-haspopup="listbox"
+                          aria-expanded={listOpen}
+                          aria-controls={listOpen ? listId : undefined}
+                          onClick={() => (listOpen ? closeAssign(index) : setAssigning(model.role))}
+                        >
+                          Assign…
+                          <span className={styles.srOnly}>{` model role ${model.role}`}</span>
+                        </button>
                       )}
                       {/* §5.2b: removal is guarded backend-side and offered only
                           for a role the projection reports as unreferenced —
@@ -643,6 +717,26 @@ export function RoutingCard({
                         ))}
                     </Cell>
                   </div>
+                );
+                // [C6] The group's key differs from the row's: the same rule as the route rows.
+                return listOpen ? (
+                  <div key={`group:${model.role}`} role="rowgroup" className={styles.editGroup}>
+                    {row}
+                    <div role="row" className={styles.detailRow}>
+                      {/* [C21] Name the span: four columns in this table. */}
+                      <div role="cell" aria-colspan={4} className={styles.editorCell}>
+                        <AssignList
+                          id={listId}
+                          role={model.role}
+                          options={assignOptions(model)}
+                          onChoose={(useCase) => assignTo(model, useCase)}
+                          onClose={() => closeAssign(index)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  row
                 );
               })}
             </div>

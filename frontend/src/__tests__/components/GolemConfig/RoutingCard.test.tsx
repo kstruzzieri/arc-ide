@@ -492,3 +492,144 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     expect(within(edited).getByText('also affects summarize')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave 4d: a defined model can be routed from its own row.
+// ---------------------------------------------------------------------------
+
+describe('Defined models — Assign (wave 4d)', () => {
+  const spare: ModelProjection = {
+    ...model,
+    role: 'spare',
+    modelName: 'spare-m',
+    routedUseCases: [],
+    removable: true,
+  };
+  const props = () => ({
+    routes: [{ useCase: 'chat', role: 'chat-role' }],
+    models: [model, spare],
+    providers: [provider],
+    draft: cleanDraft('0'.repeat(64)),
+    changes: [],
+    rows: new Map(),
+    roleRows: new Map(),
+    selectorUseCases: new Map(),
+    diagnostics: [],
+    editable: true,
+    onStage: jest.fn(),
+    onUnstagedChange: jest.fn(),
+  });
+  const assign = () => screen.getByRole('button', { name: 'Assign… model role spare' });
+  const list = () => screen.getByRole('listbox', { name: 'Assign spare to' });
+  const optionNamed = (useCase: string) => {
+    const option = within(list())
+      .getAllByRole('option')
+      .find((candidate) => within(candidate).queryByText(useCase) !== null);
+    if (option === undefined) throw new Error(`no option ${useCase}`);
+    return option;
+  };
+
+  it('labels the role cell in the record form, so a role and a use case never read alike', () => {
+    render(<RoutingCard {...props()} />);
+    const row = screen.getByTestId('defined-model-row-spare');
+    expect(within(row).getByText('Role')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(row).getByText('spare')).toBeInTheDocument();
+  });
+
+  it('lists every use case with the same verdict the picker gives, and focuses the list', async () => {
+    const user = userEvent.setup();
+    render(<RoutingCard {...props()} />);
+    expect(assign()).toHaveAttribute('aria-haspopup', 'listbox');
+    expect(assign()).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(assign());
+    expect(assign()).toHaveAttribute('aria-expanded', 'true');
+    expect(assign()).toHaveAttribute('aria-controls', list().id);
+    expect(list()).toHaveFocus();
+    expect(within(list()).getAllByRole('option')).toHaveLength(4);
+    // spare-m declares chat + stream: agent and planning need tool_call, embedding needs embed.
+    expect(optionNamed('agent')).toHaveAttribute('aria-disabled', 'true');
+    expect(within(optionNamed('agent')).getByText('needs tool_call')).toBeInTheDocument();
+    expect(within(optionNamed('embedding')).getByText('needs embed')).toBeInTheDocument();
+    expect(within(optionNamed('planning')).getByText('needs tool_call')).toBeInTheDocument();
+    expect(optionNamed('chat')).not.toHaveAttribute('aria-disabled');
+    // The open row and its list are one outlined group, keyed apart from the bare row (C6).
+    expect(screen.getByTestId('defined-model-row-spare').parentElement).toHaveAttribute(
+      'role',
+      'rowgroup'
+    );
+  });
+
+  it('opens the chosen use case editor on this model, as an unstaged edit', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<RoutingCard {...p} />);
+    await user.click(assign());
+    await user.click(optionNamed('chat'));
+
+    // The list closed and chat's editor opened on spare-m…
+    expect(screen.queryByRole('listbox', { name: 'Assign spare to' })).not.toBeInTheDocument();
+    expect(assign()).toHaveAttribute('aria-expanded', 'false');
+    const editor = screen.getByRole('group', { name: 'Route chat' });
+    await waitFor(() => expect(editor).toHaveFocus());
+    expect(screen.getByTestId('model-detail')).toHaveAttribute('data-state', 'assigned');
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('spare-m');
+    // …as an edit waiting for Done, not a committed state.
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveAttribute('data-unstaged', 'true');
+    expect(p.onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('chat'), true);
+
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(p.onStage).toHaveBeenCalledTimes(1);
+    expect(p.onStage.mock.calls[0][0][0].modelFacts.model).toBe('spare-m');
+    expect(p.onStage.mock.calls[0][0][0].useCase).toBe('chat');
+  });
+
+  it('walks the list with the arrows, closes on Escape and returns focus to Assign', async () => {
+    const user = userEvent.setup();
+    // jsdom has no layout: the reveal is asserted through a spy, as ModelBand's tests do.
+    const reveal = jest.fn();
+    Element.prototype.scrollIntoView = reveal;
+    render(<RoutingCard {...props()} />);
+    await user.click(assign());
+    const options = within(list()).getAllByRole('option');
+    // The first ENABLED use case (chat) is active on open; agent is index 0 and disabled.
+    expect(list()).toHaveAttribute('aria-activedescendant', options[1].id);
+    await user.keyboard('{ArrowDown}');
+    expect(list()).toHaveAttribute('aria-activedescendant', options[2].id);
+    // The cursor is revealed on every move (the list scrolls past 320px).
+    expect(reveal).toHaveBeenLastCalledWith({ block: 'nearest' });
+    await user.keyboard('{End}');
+    expect(list()).toHaveAttribute('aria-activedescendant', options[3].id);
+    await user.keyboard('{Home}');
+    expect(list()).toHaveAttribute('aria-activedescendant', options[0].id);
+    // Enter on a disabled use case is a no-op: the list stays.
+    await user.keyboard('{Enter}');
+    expect(list()).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox', { name: 'Assign spare to' })).not.toBeInTheDocument();
+    await waitFor(() => expect(assign()).toHaveFocus());
+  });
+
+  it('chooses the active use case with Enter', async () => {
+    const user = userEvent.setup();
+    render(<RoutingCard {...props()} />);
+    await user.click(assign());
+    await user.keyboard('{Enter}'); // chat is active on open
+    expect(screen.getByRole('group', { name: 'Route chat' })).toBeInTheDocument();
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('spare-m');
+  });
+
+  it('disables a use case whose editor is already open', async () => {
+    const user = userEvent.setup();
+    render(<RoutingCard {...props()} />);
+    await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
+    await user.click(assign());
+    expect(optionNamed('chat')).toHaveAttribute('aria-disabled', 'true');
+    expect(within(optionNamed('chat')).getByText('editor open')).toBeInTheDocument();
+  });
+
+  it('offers no Assign while the configuration is not editable', () => {
+    render(<RoutingCard {...props()} editable={false} />);
+    expect(screen.queryByRole('button', { name: /Assign… model role/ })).not.toBeInTheDocument();
+  });
+});

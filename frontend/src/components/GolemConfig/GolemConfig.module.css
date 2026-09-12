@@ -2141,6 +2141,16 @@ select.input {
   color: var(--text-muted);
 }
 
+/* [W4-3] The Assign list of a defined-model row grows the row the way the route
+   editor grows its own: nothing floats, so `.cardBody`'s overflow-x clip can
+   never cut it, and the record form needs no width rule at all. */
+.assignPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px 12px;
+}
+
 /* [A2] The backend classifies a staged endpoint on Apply; until then the row
    says so. Information, not an inert placeholder, so --text-muted. */
 .pending {

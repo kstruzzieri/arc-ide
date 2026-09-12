@@ -239,9 +239,12 @@ describe('RoutingCard defined models', () => {
 
     expect(screen.queryByTestId('defined-model-row-fallback-role')).not.toBeInTheDocument();
     expect(screen.getByTestId('defined-model-row-orphan-role')).toBeInTheDocument();
+    // Every defined row can be assigned; only a removable one offers Remove.
+    const orphan = screen.getByTestId('defined-model-row-orphan-role');
     expect(
-      within(screen.getByTestId('defined-model-row-orphan-role')).queryByRole('button')
-    ).not.toBeInTheDocument();
+      within(orphan).getByRole('button', { name: 'Assign… model role orphan-role' })
+    ).toBeInTheDocument();
+    expect(within(orphan).queryByRole('button', { name: /Remove/ })).not.toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Remove model role other-role' })
     ).toBeInTheDocument();

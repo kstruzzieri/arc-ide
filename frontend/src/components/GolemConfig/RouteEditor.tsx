@@ -127,6 +127,11 @@ export interface RouteEditorProps {
   draft: Draft;
   /** The change already staged on this route identity, if any. */
   staged?: Change;
+  /**
+   * [W4-3] A defined model the Assign list chose: the editor opens with it
+   * selected, as an unstaged edit over the row's real baseline. Read once, at mount.
+   */
+  preselect?: ModelProjection;
   rowKey: string;
   onStage: (changes: Change[], drop: string[]) => void;
   onClose: () => void;
@@ -216,6 +221,7 @@ export function RouteEditor({
   base,
   draft,
   staged,
+  preselect,
   rowKey,
   onStage,
   onClose,
@@ -233,7 +239,13 @@ export function RouteEditor({
   const baseline = [useCase, ...sharedRole];
   const baselineFloor = unionFloor(baseline);
   const seed = useMemo(
-    () => seedFrom(staged, current, models, baselineFloor),
+    () =>
+      seedFrom(
+        preselect === undefined ? staged : undefined,
+        preselect ?? current,
+        models,
+        baselineFloor
+      ),
     // Derived once, at mount: the row remounts when the document moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -357,16 +369,21 @@ export function RouteEditor({
       ? []
       : DROP_ORDER.filter((field) => (field === 'slots' ? current.hasSlots : current.hasThinkTags));
 
-  const snapshot = JSON.stringify({
-    provider,
-    defined: defined?.role ?? null,
-    manual,
-    exposed,
-    think,
-    ackUnknown,
-    ackDrops,
-  });
-  const [committed] = useState(snapshot);
+  /** The editor's state as one comparable string: what Done would stage, minus the derivations. */
+  const snapshotOf = (state: Seed): string =>
+    JSON.stringify({
+      provider: state.provider,
+      defined: state.defined?.role ?? null,
+      manual: state.manual,
+      exposed: state.exposed,
+      think: state.think,
+      ackUnknown: state.ackUnknown,
+      ackDrops: state.ackDrops,
+    });
+  const snapshot = snapshotOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
+  // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
+  // waiting for Done, never a committed state, so it must read as unstaged.
+  const [committed] = useState(() => snapshotOf(seedFrom(staged, current, models, baselineFloor)));
   const unstaged = snapshot !== committed;
 
   useEffect(() => {
