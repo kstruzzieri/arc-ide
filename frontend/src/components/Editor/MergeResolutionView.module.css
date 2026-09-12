@@ -447,8 +447,8 @@
 .dialog {
   /* margin: auto is what centres a showModal() dialog; reset.css restores the
      UA default, restated here so this rule does not depend on it. The top
-     inset pins the box below the app header so it centres in the content
-     area, and the max-height leaves 20px of clearance above and below. The
+     inset pins the box below the app header so it centres beneath it, and
+     the max-height leaves 20px of clearance above and below. The
      UA sheet already supplies position: fixed, fit-content sizing and
      overflow: auto for a modal dialog. */
   margin: auto;

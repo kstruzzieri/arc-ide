@@ -1364,11 +1364,13 @@ describe('MergeResolutionView stylesheet', () => {
     return body;
   };
 
-  // reset.css zeroes every margin, which cancels the UA stylesheet's
-  // `dialog { margin: auto }`: without a margin of its own the modal drew at
+  // The universal `* { margin: 0 }` in reset.css cancels the UA stylesheet's
+  // `dialog { margin: auto }`; before this rule restated it the modal drew at
   // the window's top-left, under the frameless titlebar and across the macOS
-  // traffic lights. jsdom resolves no CSS from a module, so the stylesheet
-  // itself is the honest guard.
+  // traffic lights. reset.css now restores the UA margin too, and this rule
+  // restates it so the module stands alone, then pins the box below the
+  // header. jsdom resolves no CSS from a module, so the stylesheet itself is
+  // the honest guard.
   it('centres the confirmation dialogs below the app header', () => {
     const body = rule('.dialog');
     expect(body).toMatch(/^\s*margin: auto;$/m);
