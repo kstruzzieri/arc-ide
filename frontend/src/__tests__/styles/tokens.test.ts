@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { WORKSPACE_ACCENTS } from '../../utils/accent';
+import { cssRule } from '../helpers/cssRule';
 
 const css = readFileSync(resolve(__dirname, '../../styles/tokens.css'), 'utf8');
 const terminalCss = readFileSync(
@@ -66,7 +67,7 @@ it.each(WORKSPACE_ACCENTS)(
     // --accent-dark/dim/glow only track the active workspace through these
     // blocks. A token without one still colours dots but leaves the derived
     // values stuck on whatever the previous workspace set.
-    const body = rule(css, `[data-accent='${accent}']`);
+    const body = cssRule(css, `[data-accent='${accent}']`);
     // Asserting the mapped token, not merely that some --accent is declared:
     // a block pointing at the wrong accent would paint the whole IDE in
     // another workspace's colour and still satisfy a presence-only check.
@@ -115,7 +116,7 @@ it('keeps every renderable ownership rail distinct in its actual painted form', 
   // panel understates how close they get.
   const railAlpha = opacity(treeRowCss, '.row.ownershipRail::before');
   const washMix = Number(
-    rule(treeRowCss, '.row.tinted.ownershipRail').match(
+    cssRule(treeRowCss, '.row.tinted.ownershipRail').match(
       /var\(--region-accent\)\s*([\d.]+)%,\s*transparent/
     )?.[1]
   );
@@ -224,19 +225,26 @@ it('pins the golem rail and bar to the project accent instead of the live worksp
     new RegExp(
       `${name}:\\s*color-mix\\(in srgb, var\\(--accent-project\\) ${alpha}%, transparent\\)`
     );
-  for (const [source, label, pinned] of [
-    [panelRailCss, 'PanelRail.module.css', [mix('--rail-key-glow', 25)]],
+  for (const [source, label, selector, pinned] of [
+    [
+      panelRailCss,
+      'PanelRail.module.css',
+      ".rail[data-panel='golem']",
+      [mix('--rail-key-glow', 25)],
+    ],
     [
       panelCommandBarCss,
       'PanelCommandBar.module.css',
+      ".bar[data-panel='golem']",
       [mix('--bar-key-dim', 12), mix('--bar-key-glow', 25)],
     ],
   ] as const) {
-    const body = rule(source, "[data-panel='golem']");
-    // Assert the pinned literals are actually present FIRST: `rule()` extracts
-    // up to the first `}`, so a comment containing a stray `}` would truncate
-    // the body before these declarations and let the negative check below
-    // pass for the wrong reason (regression: #271 review round 2).
+    const body = cssRule(source, selector);
+    // Assert the pinned literals are actually present FIRST. `cssRule()`
+    // strips comments, so a stray `}` in one no longer truncates the body (the
+    // #271 review-round-2 regression), but the body still ends at the first
+    // `}` — one inside a string or url() would cut it off before these
+    // declarations and let the negative check below pass for the wrong reason.
     for (const pattern of pinned) {
       expect({ file: label, body }).toEqual({
         file: label,
@@ -360,19 +368,12 @@ function deltaE2000(a: RGB, b: RGB): number {
   );
 }
 
-function rule(source: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const body = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 's'))?.[1];
-  if (!body) throw new Error(`Missing CSS rule ${selector}`);
-  return body;
-}
-
 function opacity(source: string, selector: string): number {
-  return Number(rule(source, selector).match(/opacity:\s*([\d.]+)/)?.[1] ?? 1);
+  return Number(cssRule(source, selector).match(/opacity:\s*([\d.]+)/)?.[1] ?? 1);
 }
 
 function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]): string {
-  const focusVariable = rule(editorCss, selector).match(
+  const focusVariable = cssRule(editorCss, selector).match(
     /outline(?:-color)?:[^;]*var\(--([\w-]+)\)/
   )?.[1];
   if (!focusVariable) throw new Error(`Missing focus color for ${selector}`);
@@ -382,8 +383,8 @@ function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]
 }
 
 it('uses one full-strength outer rail and one adjacent 50% ownership rail without shadows', () => {
-  const outerRail = rule(fileExplorerCss, '.workspaceTree');
-  const ownershipRail = rule(treeRowCss, '.row.ownershipRail::before');
+  const outerRail = cssRule(fileExplorerCss, '.workspaceTree');
+  const ownershipRail = cssRule(treeRowCss, '.row.ownershipRail::before');
 
   expect(outerRail).toMatch(/border-left:\s*3px solid var\(--tree-accent\)/);
   expect(ownershipRail).toMatch(/background:\s*var\(--ownership-accent\)/);
@@ -393,15 +394,15 @@ it('uses one full-strength outer rail and one adjacent 50% ownership rail withou
 });
 
 it('raises the Workspace row wash without changing the Project row wash', () => {
-  expect(rule(treeRowCss, '.row.tinted')).toMatch(/var\(--region-accent\) 6%/);
-  expect(rule(treeRowCss, '.row.tinted:hover')).toMatch(/var\(--region-accent\) 12%/);
-  expect(rule(treeRowCss, ".row.tinted[aria-selected='true']")).toMatch(
+  expect(cssRule(treeRowCss, '.row.tinted')).toMatch(/var\(--region-accent\) 6%/);
+  expect(cssRule(treeRowCss, '.row.tinted:hover')).toMatch(/var\(--region-accent\) 12%/);
+  expect(cssRule(treeRowCss, ".row.tinted[aria-selected='true']")).toMatch(
     /var\(--region-accent\) 20%/
   );
-  expect(rule(treeRowCss, '.row.tinted.ownershipRail')).toMatch(/var\(--region-accent\) 16%/);
-  expect(rule(treeRowCss, ".row.tinted.ownershipRail:not([aria-selected='true']):hover")).toMatch(
-    /var\(--region-accent\) 20%/
-  );
+  expect(cssRule(treeRowCss, '.row.tinted.ownershipRail')).toMatch(/var\(--region-accent\) 16%/);
+  expect(
+    cssRule(treeRowCss, ".row.tinted.ownershipRail:not([aria-selected='true']):hover")
+  ).toMatch(/var\(--region-accent\) 20%/);
 });
 
 it.each([
@@ -434,7 +435,7 @@ it.each([
 it.each(WORKSPACE_ACCENTS)(
   'keeps a hidden folder name at 4.5:1 or better on the selected %s tint',
   (accent) => {
-    const selectedRule = rule(treeRowCss, ".row.tinted[aria-selected='true']");
+    const selectedRule = cssRule(treeRowCss, ".row.tinted[aria-selected='true']");
     const tint = Number(
       selectedRule.match(/var\(--region-accent\)\s*([\d.]+)%,\s*transparent/)?.[1]
     );
@@ -454,7 +455,7 @@ it.each(WORKSPACE_ACCENTS)(
 it.each(['surface-panel', 'surface-hover', 'surface-active'])(
   'keeps the unreadable marker at 3:1 or better on --%s',
   (surface) => {
-    expect(rule(treeRowCss, '.unreadable')).toMatch(/color:\s*var\(--status-warning\)/);
+    expect(cssRule(treeRowCss, '.unreadable')).toMatch(/color:\s*var\(--status-warning\)/);
     expect(
       contrast(parseHex(token('status-warning')), parseHex(token(surface)))
     ).toBeGreaterThanOrEqual(3);
@@ -464,7 +465,7 @@ it.each(['surface-panel', 'surface-hover', 'surface-active'])(
 it.each(WORKSPACE_ACCENTS)(
   'keeps the unreadable marker at 3:1 or better on the selected %s tint',
   (accent) => {
-    const selectedRule = rule(treeRowCss, ".row.tinted[aria-selected='true']");
+    const selectedRule = cssRule(treeRowCss, ".row.tinted[aria-selected='true']");
     const tint = Number(
       selectedRule.match(/var\(--region-accent\)\s*([\d.]+)%,\s*transparent/)?.[1]
     );
@@ -506,7 +507,7 @@ it.each(WORKSPACE_ACCENTS)(
 it.each(['.tabTarget:focus-visible', '.tabClose:focus-visible'])(
   'uses the shared focus-ring token for %s',
   (selector) => {
-    expect(rule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
+    expect(cssRule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
   }
 );
 
@@ -518,7 +519,7 @@ it.each(WORKSPACE_ACCENTS)(
     // the point: colouring this label with the accent puts `general` (3.89:1)
     // and `docker` (3.98:1) below the floor, and `general` is the accent every
     // workspace without a recognized ecosystem gets.
-    const declared = rule(statusBarCss, ".segmentBtn[data-golem-state='active']").match(
+    const declared = cssRule(statusBarCss, ".segmentBtn[data-golem-state='active']").match(
       /color:\s*var\(--([\w-]+)\)/
     )?.[1];
     if (!declared) throw new Error('Missing colour for the active Golem status segment');
