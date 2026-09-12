@@ -1397,6 +1397,23 @@ export const leavingRoutes = (
   return out;
 };
 
+/**
+ * The one staged route that truly retargets `model` off this selector: a
+ * role routing EXACTLY one use case (fallback-inclusive `routedUseCases`)
+ * whose use case is among `leavingRoutes(base, staged, model)`. Mirrors the
+ * backend's own split in `planRouteChanges` — fork iff
+ * `len(routed[role]) > 1 || fallbacks[role]` — for the `len` half only; the
+ * `fallbacks[role]` half stays the ceiling already named at both call sites.
+ */
+export const retargetOf = (
+  base: DraftBaseProjection,
+  staged: ReadonlyMap<string, RouteChange>,
+  model: ModelProjection
+): RouteChange | undefined =>
+  model.routedUseCases.length === 1
+    ? leavingRoutes(base, staged, model).get(model.routedUseCases[0])
+    : undefined;
+
 interface SelectorGroup {
   changes: RouteChange[];
   /** The confirmation set (`ProjectedDraft.selectorUseCases`). */
@@ -1462,14 +1479,13 @@ function selectorGroups(
       // The roles already on the selector feed both.
       for (const model of base.models) {
         if (selectorKey(model.provider, model.modelName) !== key) continue;
-        const leaving = leavingRoutes(base, staged, model);
+        const retarget = retargetOf(base, staged, model);
         for (const useCase of model.routedUseCases) {
           group.affected.add(useCase);
           // A fork keeps the source role bound to every one of its use cases
           // until the binds phase; only a true retarget — a role routing
           // exactly this one use case — actually leaves.
-          const retargeted = leaving.has(useCase) && model.routedUseCases.length === 1;
-          if (!retargeted) group.governed.add(useCase);
+          if (retarget === undefined || retarget.useCase !== useCase) group.governed.add(useCase);
         }
       }
     }

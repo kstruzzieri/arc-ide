@@ -49,6 +49,7 @@ import {
   leavingRoutes,
   modelFactsOf,
   probeRouteChange,
+  retargetOf,
   sameModelFacts,
   shortfallLine,
   stagedRoutes,
@@ -407,8 +408,7 @@ export function RouteEditor({
         continue;
       const leaving = leavingRoutes(base, staged, sibling);
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
-      const departure =
-        sibling.routedUseCases.length === 1 ? leaving.get(sibling.routedUseCases[0]) : undefined;
+      const departure = retargetOf(base, staged, sibling);
       const gone =
         sibling.role === role
           ? sharedRole.length === 0
@@ -421,11 +421,14 @@ export function RouteEditor({
           (sibling.role !== role || other !== useCase)
       );
       // Still here, but only because its plan sorts after this join — say so.
+      // departure !== undefined means the sibling's one route is leaving, so
+      // staying is always empty then — the note only ever decorates the
+      // role-fallback name.
       const departureNote =
         departure !== undefined ? ` (its ${departure.useCase} route leaves after this join)` : '';
       const names = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
-      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}`])
-        names.add(`${name}${departureNote}`);
+      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}${departureNote}`])
+        names.add(name);
       conflictsByMode.set(sibling.thinkMode, names);
     }
   }

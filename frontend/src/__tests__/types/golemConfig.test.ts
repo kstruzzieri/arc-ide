@@ -36,9 +36,11 @@ import {
   recordApplyProvenance,
   replaceSource,
   retainsKeys,
+  retargetOf,
   setTargetRevision,
   settleDraft,
   stageChange,
+  stagedRoutes,
   unionFloor,
   unstageChange,
   USE_CASE_FLOORS,
@@ -1346,5 +1348,46 @@ describe('floors across a selector (wave 4c)', () => {
     expect(
       governedUseCasesOf(viaFallback, stage([agentAway]), probeRouteChange('chat', judge))
     ).toEqual(['chat', 'agent']);
+  });
+});
+
+describe('retargetOf', () => {
+  const chatRole = modelRow({ role: 'chat-role', routedUseCases: ['chat'] });
+  const base: DraftBaseProjection = {
+    routes: [{ useCase: 'chat', role: 'chat-role' }],
+    models: [chatRole],
+  };
+
+  it('returns the route for a single-use-case role moved to another selector', () => {
+    const away = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+    });
+    expect(retargetOf(base, stagedRoutes([away]), chatRole)).toBe(away);
+  });
+
+  it('returns undefined for a fork source routing more than one use case', () => {
+    const pairRole = modelRow({ role: 'pair-role', routedUseCases: ['chat', 'summarize'] });
+    const forkBase: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+      ],
+      models: [pairRole],
+    };
+    const away = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+    });
+    expect(retargetOf(forkBase, stagedRoutes([away]), pairRole)).toBeUndefined();
+  });
+
+  it('returns undefined for a route staying on the same selector', () => {
+    const sameSelector = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: chatRole.provider, model: chatRole.modelName, type: chatRole.type },
+      thinkMode: 'always',
+    });
+    expect(retargetOf(base, stagedRoutes([sameSelector]), chatRole)).toBeUndefined();
   });
 });
