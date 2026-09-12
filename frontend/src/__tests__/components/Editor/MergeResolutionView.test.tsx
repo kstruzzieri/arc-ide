@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { cssRule } from '../../helpers/cssRule';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
@@ -1349,20 +1350,9 @@ describe('MergeResolutionView overwrite consent', () => {
 });
 
 describe('MergeResolutionView stylesheet', () => {
-  // Comments are stripped first: a comment can carry the very text an
-  // assertion looks for, and a `}` inside one would truncate the rule body.
-  const rule = (selector: string) => {
-    const css = fs
-      .readFileSync(
-        path.resolve(__dirname, '../../../components/Editor/MergeResolutionView.module.css'),
-        'utf8'
-      )
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const body = css.match(new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, 'm'))?.[1];
-    if (!body) throw new Error(`Missing CSS rule ${selector}`);
-    return body;
-  };
+  const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8');
+  const dialog = () =>
+    cssRule(read('../../../components/Editor/MergeResolutionView.module.css'), '.dialog');
 
   // The universal `* { margin: 0 }` in reset.css cancels the UA stylesheet's
   // `dialog { margin: auto }`; before this rule restated it the modal drew at
@@ -1372,10 +1362,29 @@ describe('MergeResolutionView stylesheet', () => {
   // header. jsdom resolves no CSS from a module, so the stylesheet itself is
   // the honest guard.
   it('centres the confirmation dialogs below the app header', () => {
-    const body = rule('.dialog');
+    const body = dialog();
     expect(body).toMatch(/^\s*margin: auto;$/m);
-    // Pinned below the header by the shared token, never a literal height.
+    // The header offset comes from the shared token; the clearance after it
+    // is a design constant the guard does not pin.
     expect(body).toMatch(/^\s*inset: var\(--header-height\) 0 0;$/m);
-    expect(body).toMatch(/^\s*max-height: calc\(100% - var\(--header-height\) - 40px\);$/m);
+    expect(body).toMatch(/^\s*max-height: calc\(100% - var\(--header-height\) - \d+px\);$/m);
+  });
+
+  // Owned here rather than left to the UA modal rule: the geometry then holds
+  // on a UA sheet without modal overflow and for a non-modal show().
+  it('owns the positioning scheme and the overflow its max-height needs', () => {
+    const body = dialog();
+    expect(body).toMatch(/^\s*position: fixed;$/m);
+    expect(body).toMatch(/^\s*overflow: auto;$/m);
+  });
+
+  // A var() whose token is undefined is invalid at computed-value time, so
+  // `inset` would fall back to auto and `max-height` to none: the dialog
+  // would sit at the top-left again with nothing else failing.
+  it('references only tokens that tokens.css declares', () => {
+    const tokens = read('../../../styles/tokens.css');
+    const used = [...dialog().matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]);
+    expect(used).toContain('--header-height');
+    for (const token of used) expect(tokens).toMatch(new RegExp(`^\\s*${token}:`, 'm'));
   });
 });

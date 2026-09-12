@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { cssRule } from '../helpers/cssRule';
 
 const css = readFileSync(resolve(__dirname, '../../styles/reset.css'), 'utf8');
 
@@ -10,6 +11,6 @@ describe('reset.css', () => {
   // titlebar. Restored at element specificity so every module `.dialog` still
   // wins its own margin.
   it('restores the UA dialog margin the universal reset removes', () => {
-    expect(css).toMatch(/^dialog \{[^}]*\bmargin: auto;/m);
+    expect(cssRule(css, 'dialog')).toMatch(/^\s*margin: auto;$/m);
   });
 });
