@@ -445,18 +445,16 @@
 }
 
 .dialog {
-  /* reset.css zeroes every margin, cancelling the UA dialog margin: auto that
-     centres a showModal() dialog; re-declared here, offset below the 40px
-     frameless titlebar. fit-content matters: with four pinned edges an auto
-     size would stretch to fill them. */
-  position: fixed;
-  inset: 40px 0 0;
+  /* margin: auto is what centres a showModal() dialog; reset.css restores the
+     UA default, restated here so this rule does not depend on it. The top
+     inset pins the box below the app header so it centres in the content
+     area, and the max-height leaves 20px of clearance above and below. The
+     UA sheet already supplies position: fixed, fit-content sizing and
+     overflow: auto for a modal dialog. */
   margin: auto;
-  width: fit-content;
-  height: fit-content;
+  inset: var(--header-height) 0 0;
   max-width: 420px;
-  max-height: calc(100% - 80px);
-  overflow-y: auto;
+  max-height: calc(100% - var(--header-height) - 40px);
   padding: 16px;
   border: 1px solid var(--surface-border);
   border-radius: 6px;

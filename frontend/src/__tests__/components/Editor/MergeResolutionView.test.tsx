@@ -1349,24 +1349,31 @@ describe('MergeResolutionView overwrite consent', () => {
 });
 
 describe('MergeResolutionView stylesheet', () => {
-  const css = () =>
-    fs.readFileSync(
-      path.resolve(__dirname, '../../../components/Editor/MergeResolutionView.module.css'),
-      'utf8'
-    );
+  // Comments are stripped first: a comment can carry the very text an
+  // assertion looks for, and a `}` inside one would truncate the rule body.
+  const rule = (selector: string) => {
+    const css = fs
+      .readFileSync(
+        path.resolve(__dirname, '../../../components/Editor/MergeResolutionView.module.css'),
+        'utf8'
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const body = css.match(new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, 'm'))?.[1];
+    if (!body) throw new Error(`Missing CSS rule ${selector}`);
+    return body;
+  };
 
   // reset.css zeroes every margin, which cancels the UA stylesheet's
-  // `dialog { margin: auto }`: without its own margin the modal drew at the
-  // window's top-left, under the frameless titlebar and across the macOS
+  // `dialog { margin: auto }`: without a margin of its own the modal drew at
+  // the window's top-left, under the frameless titlebar and across the macOS
   // traffic lights. jsdom resolves no CSS from a module, so the stylesheet
   // itself is the honest guard.
-  it('centres the confirmation dialogs clear of the frameless titlebar', () => {
-    const rule = css().match(/^\.dialog \{[^}]*\}/m)?.[0] ?? '';
-    expect(rule).toContain('margin: auto');
-    expect(rule).toContain('inset: 40px 0 0');
-    // Pinned edges with an auto size would stretch the box to fill them.
-    expect(rule).toContain('width: fit-content');
-    expect(rule).toContain('height: fit-content');
-    expect(rule).toContain('max-height: calc(100% - 80px)');
+  it('centres the confirmation dialogs below the app header', () => {
+    const body = rule('.dialog');
+    expect(body).toMatch(/^\s*margin: auto;$/m);
+    // Pinned below the header by the shared token, never a literal height.
+    expect(body).toMatch(/^\s*inset: var\(--header-height\) 0 0;$/m);
+    expect(body).toMatch(/^\s*max-height: calc\(100% - var\(--header-height\) - 40px\);$/m);
   });
 });
