@@ -109,6 +109,14 @@ A separate `--palette-*` ramp (`blue`, `green`, `cyan`, `orange`, `purple`, `amb
 exists for UI needing several distinguishable colors with no workspace meaning —
 Structure view symbol kinds, the LSP setup card. Do not use it for workspace identity.
 
+Every fallback-less `var(--x)` a stylesheet writes must resolve: to a `:root` token
+in `tokens.css`, to a custom property the stylesheet itself declares, or to one set
+from TS/TSX (`style={{ '--x': ... }}`, `setProperty`, or a generator such as
+`syntaxPaletteVars()` that the test runs to learn its keys). An undeclared name
+invalidates the whole declaration at computed-value time — `border: 1px solid
+var(--x)` silently becomes no border — so `__tests__/styles/customProperties.test.ts`
+checks every stylesheet under `src/` against those three sources.
+
 ### Workspace Accent System (Implemented)
 
 The entire IDE accent cascades from a single CSS custom property, making workspace switching visually instant. When a workspace is activated, these elements update:
