@@ -1370,8 +1370,9 @@ describe('MergeResolutionView stylesheet', () => {
     expect(body).toMatch(/^\s*max-height: calc\(100% - var\(--header-height\) - \d+px\);$/m);
   });
 
-  // Owned here rather than left to the UA modal rule: the geometry then holds
-  // on a UA sheet without modal overflow and for a non-modal show().
+  // Owned here rather than left to the UA modal rule: the max-height then
+  // pairs with its own scroll behaviour and the geometry holds for a
+  // non-modal show().
   it('owns the positioning scheme and the overflow its max-height needs', () => {
     const body = dialog();
     expect(body).toMatch(/^\s*position: fixed;$/m);
@@ -1383,7 +1384,9 @@ describe('MergeResolutionView stylesheet', () => {
   // the dialog sits at the top-left again with nothing else failing. The check
   // covers every token the rule references, against the :root block only, so
   // a declaration in a comment or under a [data-accent] selector cannot
-  // satisfy it.
+  // satisfy it. Kept alongside the repo-wide customProperties guard: that one
+  // also accepts any name a script sets somewhere (`--diff-left`, say), which
+  // is never in scope for this dialog, so the :root-only contract is stricter.
   it('references only tokens that tokens.css declares on :root', () => {
     const root = cssRule(read('../../../styles/tokens.css'), ':root');
     const used = [...dialog().matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
