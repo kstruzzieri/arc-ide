@@ -10,6 +10,15 @@
   padding: 0;
 }
 
+/* The universal reset above also zeroes the UA stylesheet's dialog margin:
+   auto, the rule that centres a showModal() dialog. Without it a modal that
+   declares no margin of its own draws at the window's top-left, under the
+   frameless titlebar. Restored at element specificity so every module
+   .dialog still wins its own margin. */
+dialog {
+  margin: auto;
+}
+
 html,
 body,
 #root {

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
@@ -1343,5 +1345,28 @@ describe('MergeResolutionView overwrite consent', () => {
     });
 
     expect(controller.view.focus).toHaveBeenCalled();
+  });
+});
+
+describe('MergeResolutionView stylesheet', () => {
+  const css = () =>
+    fs.readFileSync(
+      path.resolve(__dirname, '../../../components/Editor/MergeResolutionView.module.css'),
+      'utf8'
+    );
+
+  // reset.css zeroes every margin, which cancels the UA stylesheet's
+  // `dialog { margin: auto }`: without its own margin the modal drew at the
+  // window's top-left, under the frameless titlebar and across the macOS
+  // traffic lights. jsdom resolves no CSS from a module, so the stylesheet
+  // itself is the honest guard.
+  it('centres the confirmation dialogs clear of the frameless titlebar', () => {
+    const rule = css().match(/^\.dialog \{[^}]*\}/m)?.[0] ?? '';
+    expect(rule).toContain('margin: auto');
+    expect(rule).toContain('inset: 40px 0 0');
+    // Pinned edges with an auto size would stretch the box to fill them.
+    expect(rule).toContain('width: fit-content');
+    expect(rule).toContain('height: fit-content');
+    expect(rule).toContain('max-height: calc(100% - 80px)');
   });
 });
