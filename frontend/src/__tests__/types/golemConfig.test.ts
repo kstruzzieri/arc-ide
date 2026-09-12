@@ -1248,9 +1248,9 @@ describe('floors across a selector (wave 4c)', () => {
   });
 
   it('drops a sibling the draft already moves off the selector from the governed set', () => {
-    // [W4-10] agent sits on gpt-5 today. A draft that moves it elsewhere (or
-    // unassigns it) leaves nothing of it on the selector for chat to govern; a
-    // draft that moves it ONTO gpt-5 is in chat's own selector group.
+    // [W4-10] agent sits on gpt-5 today. A draft that routes it onto ANOTHER
+    // selector leaves nothing of it on gpt-5 for chat to govern; a draft that
+    // routes it ONTO gpt-5 is in chat's own selector group.
     const gpt5 = byRole('agent-role');
     const twoRoutes: DraftBaseProjection = {
       routes: [
@@ -1267,12 +1267,56 @@ describe('floors across a selector (wave 4c)', () => {
         exposedCaps: ['chat', 'stream', 'tool_call'],
       });
     expect(governedUseCasesOf(twoRoutes, stage([agentOnto('claude')]), probe)).toEqual(['chat']);
-    expect(
-      governedUseCasesOf(twoRoutes, stage([{ kind: 'route-unassign', useCase: 'agent' }]), probe)
-    ).toEqual(['chat']);
     expect(governedUseCasesOf(twoRoutes, stage([agentOnto('gpt-5')]), probe)).toEqual([
       'chat',
       'agent',
     ]);
+
+    // An unassign is NOT a departure: the unbind runs after every route plan,
+    // so the sibling's route is still bound when the join is gated. (agent is
+    // Firn's run path and can never be unassigned; the sibling routes planning.)
+    const planRole: ModelProjection = { ...gpt5, role: 'plan-role', routedUseCases: ['planning'] };
+    const withPlanning: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [modelRow({ routedUseCases: ['chat'] }), planRole],
+    };
+    expect(
+      governedUseCasesOf(
+        withPlanning,
+        stage([{ kind: 'route-unassign', useCase: 'planning' }]),
+        probeRouteChange('chat', planRole)
+      )
+    ).toEqual(['chat', 'planning']);
+  });
+
+  it('keeps a route the draft moves off a role it reaches only as a fallback', () => {
+    // routedUseCases is fallback-inclusive: agent reaches judge-role through
+    // agent-role's chain. Retargeting agent rewrites (or forks) agent-role, its
+    // OWN role; judge-role stays on gpt-5, still on agent's chain, so agent
+    // still gates a join there.
+    const gpt5 = byRole('agent-role');
+    const judge: ModelProjection = { ...gpt5, role: 'judge-role', modelName: 'gpt-5' };
+    const viaFallback: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        { ...gpt5, modelName: 'claude-opus' },
+        modelRow({ routedUseCases: ['chat'] }),
+        judge,
+      ],
+    };
+    const agentAway = routeChange({
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    expect(
+      governedUseCasesOf(viaFallback, stage([agentAway]), probeRouteChange('chat', judge))
+    ).toEqual(['chat', 'agent']);
   });
 });

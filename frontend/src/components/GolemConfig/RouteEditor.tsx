@@ -32,6 +32,7 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   CAPABILITY_NAMES,
+  compareString,
   isIdentifier,
   THINK_MODES,
   type CapabilityFacts,
@@ -42,13 +43,15 @@ import {
 } from '../../types/golem';
 import {
   affectedUseCases,
+  changeStableID,
   floorShortfalls,
   governedUseCasesOf,
+  leavingRoutes,
   modelFactsOf,
   probeRouteChange,
   sameModelFacts,
   shortfallLine,
-  stagedAwayUseCases,
+  stagedRoutes,
   unionFloor,
   USE_CASE_FLOORS,
   type Change,
@@ -152,6 +155,9 @@ export interface RouteEditorProps {
    */
   onStaged: (announcement: string) => void;
 }
+
+/** The `factsKey` of a hand-declared model: its declared set, canonical. */
+const declarationKey = (caps: readonly CapabilityName[]): string => `manual\u0000${caps.join(',')}`;
 
 interface Seed {
   provider: string;
@@ -296,7 +302,7 @@ export function RouteEditor({
   // the React "derive state from props" pattern.)
   const factsKey =
     manual !== null
-      ? `manual\u0000${manual.caps.join(',')}`
+      ? declarationKey(manual.caps)
       : `defined\u0000${provider}\u0000${defined?.modelName ?? ''}`;
   const [seenKey, setSeenKey] = useState(factsKey);
   if (factsKey !== seenKey) {
@@ -363,20 +369,31 @@ export function RouteEditor({
    * already sets differently: go-llm refuses the finished document
    * (selectorPairConflict — both sides non-empty). One entry per conflicting
    * mode, naming the routes that set it — each once, since `routedUseCases`
-   * is fallback-inclusive and two roles can name the same route. [W4-10] A
-   * sibling counts for what it STILL serves once the draft has moved routes
-   * off it (and, for the role being edited, once this route has left): a
-   * role left serving nothing is rewritten or forked away, while an unrouted
-   * role never leaves and is named `role <name>`. Same ceiling as
-   * `selectorGroups`: a leaving change the backend applies after the join is
-   * a transient conflict it still refuses; not mirrored here. Capability
-   * overrides conflict the same way, but the projection cannot tell a
-   * sibling's explicit override from its declared caps, so that half stays
-   * with the backend.
+   * is fallback-inclusive and two roles can name the same route.
+   *
+   * [W4-10] The backend applies a request in phases — route plans in
+   * stable-id order, then overrides, binds, unassigns, removals — and
+   * validates every mutation, so what counts is the selector as it stands
+   * when THIS join runs. A sibling is skipped only when it is gone by then:
+   * its one routed use case has a staged route onto another selector whose
+   * plan sorts before this one (a retarget rewrites the role onto the new
+   * selector). Everything else stays and counts — a fork keeps the source
+   * role on the selector, an unassigned route is still bound, and a
+   * departure sorting after the join is a transient conflict the backend
+   * still refuses — named by the routes it still serves, or as
+   * `role <name>` when none is left to name (an unrouted role never leaves).
+   * The edited role counts only when shared (this route is leaving it).
+   * Capability overrides conflict the same way, but the projection cannot
+   * tell a sibling's explicit override from its declared caps, so that half
+   * stays with the backend.
    */
   const conflictsByMode = new Map<ThinkMode, Set<string>>();
   if (!isOverride && candidate !== null && candidate.thinkMode !== '') {
-    const stagedAway = stagedAwayUseCases(draft.changes);
+    const staged = stagedRoutes(draft.changes);
+    const unassigned = new Set(
+      draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
+    );
+    const joinId = changeStableID(candidate);
     for (const sibling of base.models) {
       if (
         sibling.provider !== candidate.modelFacts.provider ||
@@ -385,10 +402,21 @@ export function RouteEditor({
         sibling.thinkMode === candidate.thinkMode
       )
         continue;
+      const leaving = leavingRoutes(base, staged, sibling);
+      // The route taking the sibling's ONLY use case elsewhere, if there is one.
+      const departure =
+        sibling.routedUseCases.length === 1 ? leaving.get(sibling.routedUseCases[0]) : undefined;
+      const gone =
+        sibling.role === role
+          ? sharedRole.length === 0
+          : departure !== undefined && compareString(changeStableID(departure), joinId) < 0;
+      if (gone) continue;
       const staying = sibling.routedUseCases.filter(
-        (other) => !stagedAway.has(other) && (sibling.role !== role || other !== useCase)
+        (other) =>
+          !leaving.has(other) &&
+          !unassigned.has(other) &&
+          (sibling.role !== role || other !== useCase)
       );
-      if (staying.length === 0 && sibling.routedUseCases.length > 0) continue;
       const names = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
       for (const name of staying.length > 0 ? staying : [`role ${sibling.role}`]) names.add(name);
       conflictsByMode.set(sibling.thinkMode, names);
@@ -575,12 +603,18 @@ export function RouteEditor({
                             // A hand-declared model cannot expose what it does not
                             // declare: this tick is the declare form's assertion too.
                             // Adding only — unticking never withdraws a declaration.
+                            // The key advances with it: this tick IS the exposure
+                            // edit, so the changed declaration must not re-seed the
+                            // checklist, Think or the acknowledgements over it.
                             if (
                               event.target.checked &&
                               manual !== null &&
                               !manual.caps.includes(cap)
-                            )
-                              setManual({ ...manual, caps: canonicalCaps([...manual.caps, cap]) });
+                            ) {
+                              const caps = canonicalCaps([...manual.caps, cap]);
+                              setManual({ ...manual, caps });
+                              setSeenKey(declarationKey(caps));
+                            }
                             clearRefusal();
                           }}
                         />

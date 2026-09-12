@@ -1351,15 +1351,51 @@ export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boole
 
 /**
  * Every use case whose route this draft moves or clears — the staged `route`
- * and `route-unassign` changes. What a base role serves today is not what it
- * serves after Apply once one of these has left it.
+ * and `route-unassign` changes. The question `providerUsage` asks: what does
+ * a provider serve once the WHOLE request has landed? Both kinds have left by
+ * then. The gates ask a narrower question — what is still bound when one
+ * route plan runs — and read `stagedRoutes` instead: the apply phases are
+ * route plans (stable-id order) → overrides → binds → unassigns → removals,
+ * so an unassigned route is still bound at every join.
  */
-export const stagedAwayUseCases = (changes: readonly Change[]): Set<string> =>
+const stagedAwayUseCases = (changes: readonly Change[]): Set<string> =>
   new Set(
     changes.flatMap((change) =>
       change.kind === 'route' || change.kind === 'route-unassign' ? [change.useCase] : []
     )
   );
+
+/** The staged `route` changes by use case: where each staged route is going. */
+export const stagedRoutes = (changes: readonly Change[]): Map<string, RouteChange> =>
+  new Map(changes.flatMap((change) => (change.kind === 'route' ? [[change.useCase, change]] : [])));
+
+/**
+ * The routed use cases `model` loses when the staged routes land, each with
+ * the route taking it: those the draft routes onto ANOTHER selector whose
+ * applied role is `model.role` — the role a retarget rewrites or a fork
+ * copies from. A use case the role reaches only as a fallback stays: the
+ * retarget rewrites the use case's own role and preserves that role's
+ * fallbacks, so the chain still runs through `model`. Unassigns are not
+ * departures here — see `stagedAwayUseCases`.
+ */
+export const leavingRoutes = (
+  base: DraftBaseProjection,
+  staged: ReadonlyMap<string, RouteChange>,
+  model: ModelProjection
+): Map<string, RouteChange> => {
+  const out = new Map<string, RouteChange>();
+  for (const useCase of model.routedUseCases) {
+    const target = staged.get(useCase);
+    if (
+      target !== undefined &&
+      (target.modelFacts.provider !== model.provider ||
+        target.modelFacts.model !== model.modelName) &&
+      base.routes.some((route) => route.useCase === useCase && route.role === model.role)
+    )
+      out.set(useCase, target);
+  }
+  return out;
+};
 
 interface SelectorGroup {
   changes: RouteChange[];
@@ -1385,13 +1421,15 @@ function selectorGroups(
 ): Map<string, SelectorGroup> {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
-  // [W4-10] A sibling's routed use case the draft already moves off the
-  // selector is not there to govern once Apply lands; the group's own changes
-  // are governed by construction, so the filter is exact for them too.
-  // Ceiling: the backend applies changes in stable-id order and validates each
-  // mutation, so a leaving change that sorts AFTER the join is a transient
-  // conflict the backend still refuses; not mirrored here.
-  const stagedAway = stagedAwayUseCases(changes);
+  // [W4-10] A sibling contributes what it still routes when the join is
+  // gated. The backend applies a request in phases — route plans in stable-id
+  // order, then overrides, binds, unassigns, removals — so a route the draft
+  // sends to ANOTHER selector has left its role (a change onto THIS selector
+  // is in the group, governed by construction), while an unassigned route is
+  // still bound at every join and still gates it. Ceiling: a departure whose
+  // plan sorts after the join is a transient conflict the backend still
+  // refuses; not mirrored here.
+  const staged = stagedRoutes(changes);
   const groups = new Map<string, SelectorGroup>();
   for (const change of changes) {
     if (change.kind !== 'route') continue;
@@ -1416,9 +1454,10 @@ function selectorGroups(
       // The roles already on the selector feed both.
       for (const model of base.models) {
         if (selectorKey(model.provider, model.modelName) !== key) continue;
+        const leaving = leavingRoutes(base, staged, model);
         for (const useCase of model.routedUseCases) {
           group.affected.add(useCase);
-          if (!stagedAway.has(useCase)) group.governed.add(useCase);
+          if (!leaving.has(useCase)) group.governed.add(useCase);
         }
       }
     }

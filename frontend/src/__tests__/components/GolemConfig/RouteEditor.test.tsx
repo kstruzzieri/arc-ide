@@ -745,6 +745,86 @@ describe('RouteEditor', () => {
     expect(onStage.mock.calls[0][0][0].thinkMode).toBe('always');
   });
 
+  /** A staged route of `useCase` onto claude — a selector nothing else is on. */
+  const routedAway = (useCase: string): Change => ({
+    kind: 'route',
+    useCase,
+    modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+    capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'stream', 'tool_call'],
+    thinkMode: '',
+    confirmUnknown: false,
+  });
+
+  it('still names a sibling role whose only route the draft unassigns', async () => {
+    // Unassigns run after every route plan: plan-role is still bound, with its
+    // Think, when chat joins. With no route left to name, the role is named.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [model(), thinkingGpt5({ role: 'plan-role', routedUseCases: ['planning'] })],
+      draft: draftWith({ kind: 'route-unassign', useCase: 'planning' }),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'role plan-role already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the conflict when the leaving sibling is retargeted after this join', async () => {
+    // Route plans run in stable-id order: `route:agent` joins gpt-5 before
+    // `route:chat` moves chat-role off it, so the backend meets the conflict
+    // and refuses. A transient conflict is still a refusal; say so.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', routedUseCases: ['agent'] }),
+        thinkingGpt5({ role: 'chat-role', routedUseCases: ['chat'] }),
+      ],
+      draft: draftWith(routedAway('chat')),
+    });
+    await openRoute('agent');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'role chat-role already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('names what a fork source keeps serving when one of its routes leaves', async () => {
+    // pair-role serves chat and summarize; the draft moves chat elsewhere. A
+    // fork leaves the source role on gpt-5 with summarize and its Think.
+    renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', routedUseCases: ['agent'] }),
+        thinkingGpt5({ role: 'pair-role', routedUseCases: ['chat', 'summarize'] }),
+      ],
+      draft: draftWith(routedAway('chat')),
+    });
+    await openRoute('agent');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'summarize already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+  });
+
   it('names a route once in the Think conflict, however many sibling roles reach it', async () => {
     // routedUseCases is fallback-inclusive: judge-role is reached only through
     // agent-role's chain, so both roles name agent. The notice says it once.
@@ -1497,5 +1577,30 @@ describe('RouteEditor union floor (wave 4c)', () => {
     await userEvent.click(within(exposed()).getByLabelText('thinking'));
     expect(within(exposed()).getByLabelText('thinking')).not.toBeChecked();
     expect(within(declared()).getByLabelText('thinking')).toBeChecked();
+  });
+
+  it('keeps Think and the other exposure edits when an exposure tick declares a cap', async () => {
+    // The write-through changes the declaration, and a changed declaration
+    // normally re-seeds the exposure and Think from it. This tick IS the
+    // exposure edit, so nothing else the user set may be thrown away.
+    const { onStage } = await declareOntoAgentSelector();
+    await userEvent.click(within(declared()).getByLabelText('thinking'));
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(screen.queryByLabelText('Think mode')).not.toBeInTheDocument();
+
+    await userEvent.click(within(exposed()).getByLabelText('tool_call required'));
+    expect(within(declared()).getByLabelText('tool_call required')).toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call required')).toBeDisabled();
+    expect(within(exposed()).getByLabelText('thinking')).not.toBeChecked();
+    // Think is only visible while thinking is exposed; re-expose it to read it.
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(screen.getByLabelText('Think mode')).toHaveValue('always');
+
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.thinkMode).toBe('always');
+    expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
   });
 });
