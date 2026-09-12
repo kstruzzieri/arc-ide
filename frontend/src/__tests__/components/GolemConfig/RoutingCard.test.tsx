@@ -519,8 +519,16 @@ describe('Defined models — Assign (wave 4d)', () => {
     onStage: jest.fn(),
     onUnstagedChange: jest.fn(),
   });
-  const assign = () => screen.getByRole('button', { name: 'Assign… model role spare' });
-  const list = () => screen.getByRole('listbox', { name: 'Assign spare to' });
+  // The list routes the MODEL: the staged change carries spare-m's facts, and
+  // the backend retargets or forks the use case's own role — role `spare` is
+  // never bound. The row's eyebrow still says which role defines it.
+  const assign = () => screen.getByRole('button', { name: 'Assign… model spare-m' });
+  const list = () => screen.getByRole('listbox', { name: 'Assign spare-m to' });
+  let reveal: jest.SpyInstance | undefined;
+  afterEach(() => {
+    reveal?.mockRestore();
+    reveal = undefined;
+  });
   const optionNamed = (useCase: string) => {
     const option = within(list())
       .getAllByRole('option')
@@ -539,7 +547,8 @@ describe('Defined models — Assign (wave 4d)', () => {
   it('lists every use case with the same verdict the picker gives, and focuses the list', async () => {
     const user = userEvent.setup();
     render(<RoutingCard {...props()} />);
-    expect(assign()).toHaveAttribute('aria-haspopup', 'listbox');
+    // An inline disclosure, not a popup: expanded + controls say everything.
+    expect(assign()).not.toHaveAttribute('aria-haspopup');
     expect(assign()).toHaveAttribute('aria-expanded', 'false');
 
     await user.click(assign());
@@ -571,7 +580,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     await user.click(optionNamed('chat'));
 
     // The list closed and chat's editor opened on spare-m…
-    expect(screen.queryByRole('listbox', { name: 'Assign spare to' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox', { name: 'Assign spare-m to' })).not.toBeInTheDocument();
     expect(assign()).toHaveAttribute('aria-expanded', 'false');
     const editor = screen.getByRole('group', { name: 'Route chat' });
     await waitFor(() => expect(editor).toHaveFocus());
@@ -589,9 +598,9 @@ describe('Defined models — Assign (wave 4d)', () => {
 
   it('walks the list with the arrows, closes on Escape and returns focus to Assign', async () => {
     const user = userEvent.setup();
-    // jsdom has no layout: the reveal is asserted through a spy, as ModelBand's tests do.
-    const reveal = jest.fn();
-    Element.prototype.scrollIntoView = reveal;
+    // jsdom has no layout: the reveal is asserted through a spy on the setup
+    // file's no-op, restored after the test so later suites keep the no-op.
+    reveal = jest.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
     render(<RoutingCard {...props()} />);
     await user.click(assign());
     const options = within(list()).getAllByRole('option');
@@ -599,7 +608,8 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(list()).toHaveAttribute('aria-activedescendant', options[1].id);
     await user.keyboard('{ArrowDown}');
     expect(list()).toHaveAttribute('aria-activedescendant', options[2].id);
-    // The cursor is revealed on every move (the list scrolls past 320px).
+    // The cursor is revealed on mount and on every move (the list scrolls past 320px).
+    expect(reveal).toHaveBeenCalledTimes(2);
     expect(reveal).toHaveBeenLastCalledWith({ block: 'nearest' });
     await user.keyboard('{End}');
     expect(list()).toHaveAttribute('aria-activedescendant', options[3].id);
@@ -609,7 +619,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     await user.keyboard('{Enter}');
     expect(list()).toBeInTheDocument();
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('listbox', { name: 'Assign spare to' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox', { name: 'Assign spare-m to' })).not.toBeInTheDocument();
     await waitFor(() => expect(assign()).toHaveFocus());
   });
 
@@ -633,6 +643,65 @@ describe('Defined models — Assign (wave 4d)', () => {
 
   it('offers no Assign while the configuration is not editable', () => {
     render(<RoutingCard {...props()} editable={false} />);
-    expect(screen.queryByRole('button', { name: /Assign… model role/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Assign… model/ })).not.toBeInTheDocument();
+  });
+
+  it('offers no Assign while the row is staged for removal', () => {
+    const removal = { modified: true, keyStaged: false, needsReview: false };
+    const { rerender } = render(
+      <RoutingCard {...props()} roleRows={new Map([['spare', removal]])} />
+    );
+    expect(screen.queryByRole('button', { name: 'Assign… model spare-m' })).not.toBeInTheDocument();
+    rerender(<RoutingCard {...props()} />);
+    expect(assign()).toBeInTheDocument();
+  });
+
+  it('drops the preselect with the editor: after Cancel, Edit reopens on the row itself', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<RoutingCard {...p} />);
+    await user.click(assign());
+    await user.click(optionNamed('chat'));
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('spare-m');
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Edit route chat' }));
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5-mini');
+    expect(screen.getByRole('button', { name: 'Done' })).not.toHaveAttribute('data-unstaged');
+    expect(p.onStage).not.toHaveBeenCalled();
+  });
+
+  it('keeps a preselect an unstaged edit over a row that already holds a staged change', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const staged: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const draft = stageChange(p.draft, staged, new KeyVault(new Map()));
+    const projected = projectDraft({ routes: p.routes, models: p.models }, draft);
+    render(
+      <RoutingCard
+        {...p}
+        draft={draft}
+        changes={projected.changes}
+        rows={projected.routeRows}
+        selectorUseCases={projected.selectorUseCases}
+      />
+    );
+    await user.click(assign());
+    await user.click(optionNamed('chat'));
+    // The editor opens on spare-m, but the row's baseline is the STAGED change:
+    // the preselect reads as unstaged until Done, and Cancel leaves the staging alone.
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('spare-m');
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveAttribute('data-unstaged', 'true');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(p.onStage).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId('route-row-chat')).getByText('gpt-5')).toBeInTheDocument();
   });
 });

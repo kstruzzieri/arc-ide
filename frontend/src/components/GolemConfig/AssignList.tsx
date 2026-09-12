@@ -21,15 +21,22 @@ export interface AssignOption {
 export interface AssignListProps {
   /** DOM id of the listbox; the trigger's `aria-controls` while open. */
   id: string;
-  /** The role being assigned — the list's accessible name says so. */
-  role: string;
+  /**
+   * The MODEL being routed — the list's accessible name says so. The staged
+   * change carries the model's facts and the backend retargets or forks the
+   * use case's own role; the defined role itself is never bound.
+   */
+  modelName: string;
   options: readonly AssignOption[];
   onChoose: (useCase: string) => void;
   /** Escape: the owner unmounts the list and returns focus to the trigger. */
   onClose: () => void;
 }
 
-export function AssignList({ id, role, options, onChoose, onClose }: AssignListProps) {
+/** Index-derived, never role-derived: identifiers may carry spaces, `#`, `:`. */
+const optionId = (id: string, index: number): string => `${id}-o${index}`;
+
+export function AssignList({ id, modelName, options, onChoose, onClose }: AssignListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   // The cursor starts on the first use case that can actually be chosen.
   const [active, setActive] = useState(
@@ -45,12 +52,10 @@ export function AssignList({ id, role, options, onChoose, onClose }: AssignListP
     listRef.current?.focus();
   }, []);
 
-  const optionId = (index: number) => `${id}-o${index}`;
-
   // [A4] Reveal the cursor: the list scrolls past 320px, and an offscreen active
   // option is a keyboard dead end. jsdom has no scrollIntoView, hence the optional call.
   useEffect(() => {
-    document.getElementById(`${id}-o${active}`)?.scrollIntoView?.({ block: 'nearest' });
+    document.getElementById(optionId(id, active))?.scrollIntoView?.({ block: 'nearest' });
   }, [id, active]);
   const move = (index: number) => setActive(Math.max(0, Math.min(options.length - 1, index)));
   const choose = (index: number) => {
@@ -96,13 +101,13 @@ export function AssignList({ id, role, options, onChoose, onClose }: AssignListP
 
   return (
     <div className={styles.assignPanel}>
-      <span id={`${id}-label`} className={styles.fieldLabel}>{`Assign ${role} to`}</span>
+      <span id={`${id}-label`} className={styles.fieldLabel}>{`Assign ${modelName} to`}</span>
       <div
         ref={listRef}
         id={id}
         role="listbox"
         aria-labelledby={`${id}-label`}
-        aria-activedescendant={optionId(active)}
+        aria-activedescendant={optionId(id, active)}
         tabIndex={-1}
         className={styles.pickerListbox}
         onKeyDown={onKeyDown}
@@ -110,7 +115,7 @@ export function AssignList({ id, role, options, onChoose, onClose }: AssignListP
         {options.map((option, index) => (
           <div
             key={option.useCase}
-            id={optionId(index)}
+            id={optionId(id, index)}
             role="option"
             aria-selected={false}
             aria-disabled={option.reason !== '' || undefined}

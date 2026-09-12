@@ -401,7 +401,10 @@ export function RoutingCard({
                         governing?.override === true
                           ? governing.change.thinkMode
                           : applied.thinkMode,
-                      // An empty override clears nothing on a join; the row keeps what it exposes.
+                      // An empty exposure asserts nothing on a join and clears the
+                      // override on an override; the row keeps its applied exposure
+                      // either way (reachable only from a floorless editor with every
+                      // cap unticked).
                       caps:
                         governing !== undefined && governing.change.exposedCaps.length > 0
                           ? governing.change.exposedCaps
@@ -644,7 +647,9 @@ export function RoutingCard({
               {unrouted.map((model, index) => {
                 const markers = roleRows.get(model.role);
                 const listId = assignId(index);
-                const listOpen = assigning === model.role;
+                // [C3] A row staged for removal offers nothing to route to.
+                const canAssign = editable && markers?.modified !== true;
+                const listOpen = canAssign && assigning === model.role;
                 const row = (
                   <div
                     key={`row:${model.role}`}
@@ -673,18 +678,20 @@ export function RoutingCard({
                       {markers?.needsReview !== true && markers?.modified === true && (
                         <StatusText tone="warn">Modified</StatusText>
                       )}
-                      {editable && (
+                      {/* An inline disclosure (W4-3), so no aria-haspopup: expanded +
+                          controls describe it. It routes the MODEL — the backend never
+                          binds the defined role itself — so the name says which model. */}
+                      {canAssign && (
                         <button
                           type="button"
                           id={`${listId}-trigger`}
                           className={`${styles.button} ${styles.small}`}
-                          aria-haspopup="listbox"
                           aria-expanded={listOpen}
                           aria-controls={listOpen ? listId : undefined}
                           onClick={() => (listOpen ? closeAssign(index) : setAssigning(model.role))}
                         >
                           Assign…
-                          <span className={styles.srOnly}>{` model role ${model.role}`}</span>
+                          <span className={styles.srOnly}>{` model ${model.modelName}`}</span>
                         </button>
                       )}
                       {/* §5.2b: removal is guarded backend-side and offered only
@@ -726,7 +733,7 @@ export function RoutingCard({
                       <div role="cell" aria-colspan={4} className={styles.editorCell}>
                         <AssignList
                           id={listId}
-                          role={model.role}
+                          modelName={model.modelName}
                           options={assignOptions(model)}
                           onChoose={(useCase) => assignTo(model, useCase)}
                           onClose={() => closeAssign(index)}

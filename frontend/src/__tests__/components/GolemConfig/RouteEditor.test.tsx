@@ -242,7 +242,7 @@ describe('RoutingCard defined models', () => {
     // Every defined row can be assigned; only a removable one offers Remove.
     const orphan = screen.getByTestId('defined-model-row-orphan-role');
     expect(
-      within(orphan).getByRole('button', { name: 'Assign… model role orphan-role' })
+      within(orphan).getByRole('button', { name: 'Assign… model orphan-m' })
     ).toBeInTheDocument();
     expect(within(orphan).queryByRole('button', { name: /Remove/ })).not.toBeInTheDocument();
     expect(
