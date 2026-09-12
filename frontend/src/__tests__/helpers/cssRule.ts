@@ -18,6 +18,6 @@ export function cssRule(source: string, selector: string): string {
   const stripped = source.replace(/\/\*[\s\S]*?\*\//g, '');
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const body = stripped.match(new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, 'm'))?.[1];
-  if (!body) throw new Error(`Missing CSS rule ${selector}`);
+  if (body === undefined) throw new Error(`Missing CSS rule ${selector}`);
   return body;
 }

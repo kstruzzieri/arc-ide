@@ -2,6 +2,7 @@ import { getTagColor } from '../../utils/tagColors';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { WORKSPACE_ACCENTS } from '../../utils/accent';
+import { cssRule } from '../helpers/cssRule';
 
 type RGB = [number, number, number];
 
@@ -57,15 +58,8 @@ function token(name: string): RGB {
   return parseColor(value).rgb;
 }
 
-function rule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const body = cardCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 's'))?.[1];
-  if (!body) throw new Error(`Missing CSS rule ${selector}`);
-  return body;
-}
-
 function backgroundMix(selector: string): number {
-  const percentage = rule(selector).match(
+  const percentage = cssRule(cardCss, selector).match(
     /background:\s*color-mix\(in srgb,\s*var\(--[\w-]+\)\s*([\d.]+)%,\s*var\(--surface-base\)\)/
   )?.[1];
   if (!percentage) throw new Error(`Missing surface-base background mix for ${selector}`);
