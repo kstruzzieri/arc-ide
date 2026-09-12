@@ -10,8 +10,10 @@ import { syntaxPaletteVars } from '../../utils/searchTokens';
 // invalid at computed-value time: `border: 1px solid var(--x)` resets to
 // `none`, `background: var(--x)` to transparent, with no console warning. This
 // guards every stylesheet under src against that. `var(--x, fallback)` is
-// deliberately not checked — the fallback keeps the declaration valid, so an
-// undeclared name there is design drift, not breakage.
+// checked too: a valid fallback keeps the declaration alive, but an undeclared
+// name there means the fallback is what renders. A literal fallback has no tie
+// to tokens.css and drifts; a nested var() fallback still resolves through its
+// token, and the absent outer name is then dead indirection.
 //
 // A reference is declared when the name is
 //   - a `:root` token in styles/tokens.css (the `[data-accent]` blocks only
@@ -33,7 +35,10 @@ import { syntaxPaletteVars } from '../../utils/searchTokens';
 // scan over the raw source, comments included, not a type check: a name
 // built as `'--' + x`, or by a generator not listed in GENERATED, is
 // invisible to it; a stylesheet referencing one fails here, on purpose, and
-// the fix is to list the generator.
+// the fix is to list the generator. The CSS scan is likewise a token scan,
+// not a parser: it reads `var(` inside strings, url() and @supports probes,
+// misses escaped names, and comment stripping can fuse neighbouring tokens.
+// None occur in this tree.
 
 const SRC = resolve(__dirname, '../..');
 
@@ -77,7 +82,7 @@ it('every stylesheet references only custom properties declared in :root, itself
     const css = stripComments(readFileSync(file, 'utf8'));
     const local = declarations(css);
     // CSS function names are case-insensitive; custom-property names are not.
-    return [...css.matchAll(/var\(\s*(--[\w-]+)\s*\)/gi)]
+    return [...css.matchAll(/var\(\s*(--[\w-]+)\s*[,)]/gi)]
       .map((match) => match[1])
       .filter(
         (name) =>
