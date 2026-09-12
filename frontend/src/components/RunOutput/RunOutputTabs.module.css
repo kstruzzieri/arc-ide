@@ -33,7 +33,7 @@
 .tabAll {
   margin-left: auto;
   font-size: 10px;
-  color: #444;
+  color: var(--text-disabled);
 }
 
 .tabDot {
@@ -41,36 +41,36 @@
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #333;
+  background: var(--text-disabled);
 }
 
 /* State dot colors */
 .dotRunning {
-  background: #22c55e;
+  background: var(--status-success);
   animation: tabDotPulse 1.5s ease-in-out infinite;
 }
 .dotStopping {
-  background: #f59e0b;
+  background: var(--status-warning);
   animation: tabDotPulse 1.2s ease-in-out infinite;
 }
 .dotFailed {
-  background: #ef4444;
+  background: var(--status-error);
 }
 .dotSuccess {
-  background: #22c55e;
+  background: var(--status-success);
   opacity: 0.5;
 }
 .dotStopped,
 .dotIdle {
-  background: #333;
+  background: var(--text-disabled);
 }
 
 /* Active tab name colors */
 .nameRunning {
-  color: #22c55e;
+  color: var(--status-success);
 }
 .nameFailed {
-  color: #ef4444;
+  color: var(--status-error);
 }
 
 @keyframes tabDotPulse {
