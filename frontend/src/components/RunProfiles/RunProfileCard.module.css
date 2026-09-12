@@ -470,13 +470,13 @@
 
 .historyDuration {
   font-size: 10px;
-  color: #444;
+  color: var(--text-disabled);
   font-family: 'SF Mono', 'Fira Code', var(--font-mono), monospace;
 }
 
 .historyOverflow {
   font-size: 10px;
-  color: #444;
+  color: var(--text-disabled);
   margin-left: 4px;
 }
 
