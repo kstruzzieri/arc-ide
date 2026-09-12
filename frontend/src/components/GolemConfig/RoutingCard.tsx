@@ -32,8 +32,10 @@ import {
   USE_CASE_FLOORS,
   changeStableID,
   meetsUseCaseFloor,
+  sameModelFacts,
   type Change,
   type Draft,
+  type RouteChange,
   type RowMarkers,
 } from '../../types/golemConfig';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
@@ -254,6 +256,42 @@ export function RoutingCard({
   const stagedFor = (useCase: string): Change | undefined =>
     changes.find((change) => changeStableID(change) === `route:${useCase}`);
 
+  /**
+   * [W4-1][#315] The staged route change whose selector `applied` shares, and
+   * whether its group is an OVERRIDE (a change onto the model its use case
+   * already has — the full facts, as the backend classifies it). Capabilities
+   * are one override per selector, so any change onto the selector leaves this
+   * row exposing them; think is written selector-wide only by an override
+   * (SetRoleOverrides) — a role joining the selector keeps its neighbours'
+   * think alone. A sibling the projection marks only through its ROLE — the
+   * source role a retarget forks away from, a fallback chain — keeps every
+   * applied value: §5.2b, siblings never change silently.
+   */
+  const governingChange = (
+    useCase: string,
+    applied: ModelProjection | null
+  ): { change: RouteChange; override: boolean } | undefined => {
+    if (applied === null) return undefined;
+    const group: RouteChange[] = [];
+    for (const [stagedUseCase, affected] of selectorUseCases) {
+      if (!affected.includes(useCase)) continue;
+      const change = stagedFor(stagedUseCase);
+      if (
+        change?.kind === 'route' &&
+        change.modelFacts.provider === applied.provider &&
+        change.modelFacts.model === applied.modelName
+      )
+        group.push(change);
+    }
+    if (group.length === 0) return undefined;
+    const override = group.some((change) => {
+      const role = byUseCase.get(change.useCase);
+      const current = role === undefined ? undefined : byRole.get(role);
+      return current !== undefined && sameModelFacts(current, change.modelFacts);
+    });
+    return { change: group[0], override };
+  };
+
   const rowDiagnostics = (useCase: string) =>
     diagnostics.filter(
       (diagnostic) => diagnostic.subjectKind === 'use_case' && diagnostic.subjectName === useCase
@@ -294,6 +332,7 @@ export function RoutingCard({
             const role = byUseCase.get(useCase) ?? null;
             const applied = role === null ? null : (byRole.get(role) ?? null);
             const staged = stagedFor(useCase);
+            const governing = staged === undefined ? governingChange(useCase, applied) : undefined;
             const view: RouteView | null =
               staged?.kind === 'route'
                 ? {
@@ -307,8 +346,15 @@ export function RoutingCard({
                   : {
                       provider: applied.provider,
                       model: applied.modelName,
-                      think: applied.thinkMode,
-                      caps: applied.exposedCapabilities,
+                      think:
+                        governing?.override === true
+                          ? governing.change.thinkMode
+                          : applied.thinkMode,
+                      // An empty override clears nothing on a join; the row keeps what it exposes.
+                      caps:
+                        governing !== undefined && governing.change.exposedCaps.length > 0
+                          ? governing.change.exposedCaps
+                          : applied.exposedCapabilities,
                     };
             const markers = rows.get(useCase);
             const status = routeStatus(view, useCase, markers, sourceReplaced);
@@ -348,8 +394,15 @@ export function RoutingCard({
               staged.modelFacts.provider !== applied.provider
                 ? applied.provider
                 : null;
+            /** The think mode about to land on this row: its own staged change's, or — only for an override group — the sibling's. */
+            const incomingThink =
+              staged?.kind === 'route'
+                ? staged.thinkMode
+                : governing?.override === true
+                  ? governing.change.thinkMode
+                  : undefined;
             const wasThink =
-              staged?.kind === 'route' && applied !== null && staged.thinkMode !== applied.thinkMode
+              incomingThink !== undefined && applied !== null && incomingThink !== applied.thinkMode
                 ? applied.thinkMode === ''
                   ? '—'
                   : applied.thinkMode

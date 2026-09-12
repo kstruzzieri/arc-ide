@@ -2031,3 +2031,61 @@ describe('route picker floors (wave 4c)', () => {
     expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave 4b (firn-ide#315): the sibling row shows the change before Apply, and
+// Apply still sends ONE change.
+// ---------------------------------------------------------------------------
+
+describe('selector-wide siblings (firn-ide#315)', () => {
+  it('paints a think change on the sibling row before Apply, and sends one change', async () => {
+    const thinking = (over: Partial<ModelProjection>) =>
+      model({
+        effectiveCapabilities: ['chat', 'stream', 'thinking'],
+        capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ['chat', 'stream', 'thinking'],
+        thinkMode: 'auto',
+        hasThinkTags: false,
+        ...over,
+      });
+    reload({
+      ...readyProjection,
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        thinking({ routedUseCases: ['chat'] }),
+        thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
+      ],
+    });
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+
+    await openRoute('chat');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    // summarize has no floor on record: the selector-wide change needs the acknowledgement.
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+
+    const sibling = screen.getByTestId('route-row-summarize');
+    expect(sibling).toHaveAttribute('data-changed', 'true');
+    expect(within(sibling).getByText('always')).toBeInTheDocument();
+    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+    expect(
+      within(screen.getByTestId('route-row-chat')).getByText('also affects summarize')
+    ).toBeInTheDocument();
+    // One change, one chip: the sibling is reached by the selector, not staged twice.
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByText('1 staged change')).toBeInTheDocument();
+
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
+    expect(lastApply().changes).toEqual([
+      expect.objectContaining({ kind: 'route', useCase: 'chat', thinkMode: 'always' }),
+    ]);
+  });
+});

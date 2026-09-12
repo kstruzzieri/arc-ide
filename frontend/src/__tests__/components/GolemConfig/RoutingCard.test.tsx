@@ -6,7 +6,14 @@ import {
   type ModelProjection,
   type ProviderProjection,
 } from '../../../types/golem';
-import { cleanDraft, type Change } from '../../../types/golemConfig';
+import {
+  cleanDraft,
+  projectDraft,
+  stageChange,
+  KeyVault,
+  type Change,
+  type RouteChange,
+} from '../../../types/golemConfig';
 
 const model: ModelProjection = {
   role: 'chat-role',
@@ -327,5 +334,161 @@ describe('route editor Done (firn-ide#284)', () => {
     expect(props.onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('group', { name: 'Route embedding' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(/choose a provider/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 4b (firn-ide#315): a selector-wide change reaches its sibling rows.
+// ---------------------------------------------------------------------------
+
+describe('selector-wide siblings (firn-ide#315)', () => {
+  const thinking = (over: Partial<ModelProjection> = {}): ModelProjection => ({
+    ...model,
+    effectiveCapabilities: ['chat', 'stream', 'thinking'],
+    capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ['chat', 'stream', 'thinking'],
+    thinkMode: 'auto',
+    ...over,
+  });
+  const change = (over: Partial<RouteChange> = {}): RouteChange => ({
+    kind: 'route',
+    useCase: 'chat',
+    modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+    capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'stream', 'thinking'],
+    thinkMode: 'always',
+    confirmUnknown: false,
+    ...over,
+  });
+  /** Exactly what the workspace hands over: the projection of ONE staged change. */
+  const renderProjected = (
+    routes: { useCase: string; role: string }[],
+    models: ModelProjection[],
+    staged: RouteChange
+  ) => {
+    const draft = stageChange(cleanDraft('0'.repeat(64)), staged, new KeyVault(new Map()));
+    const projected = projectDraft({ routes, models }, draft);
+    render(
+      <RoutingCard
+        routes={routes}
+        models={models}
+        providers={[provider]}
+        draft={draft}
+        changes={projected.changes}
+        rows={projected.routeRows}
+        roleRows={projected.roleRows}
+        selectorUseCases={projected.selectorUseCases}
+        diagnostics={[]}
+        editable
+        onStage={() => {}}
+        onUnstagedChange={() => {}}
+      />
+    );
+  };
+  // Two roles on ONE provider+model: one selector, so an override reaches both.
+  const twoRoles = [
+    { useCase: 'chat', role: 'chat-role' },
+    { useCase: 'summarize', role: 'summarize-role' },
+  ];
+  const twoRoleModels = [
+    thinking({ routedUseCases: ['chat'] }),
+    thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
+  ];
+
+  it('paints a selector-wide think change on the sibling row, with its own was line', () => {
+    renderProjected(twoRoles, twoRoleModels, change());
+    const sibling = screen.getByTestId('route-row-summarize');
+    expect(sibling).toHaveAttribute('data-changed', 'true');
+    expect(within(sibling).getByText('always')).toBeInTheDocument();
+    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+    expect(within(sibling).getByText('Modified')).toBeInTheDocument();
+    // The model did not change — it is the same selector — so there is exactly one was line…
+    expect(within(sibling).getAllByText(/^was$/i)).toHaveLength(1);
+    // …and the reach is told once, on the row that was edited.
+    expect(within(sibling).queryByText(/also affects/)).not.toBeInTheDocument();
+    const edited = screen.getByTestId('route-row-chat');
+    expect(within(edited).getByText('also affects summarize')).toBeInTheDocument();
+    expect(within(edited).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+  });
+
+  it('reads the sibling as Incompatible when the governing exposure drops its floor', () => {
+    // summarize's override narrows the selector to chat + thinking: chat loses stream.
+    renderProjected(
+      twoRoles,
+      twoRoleModels,
+      change({ useCase: 'summarize', exposedCaps: ['chat', 'thinking'] })
+    );
+    expect(
+      within(screen.getByTestId('route-row-chat')).getByText('Incompatible')
+    ).toBeInTheDocument();
+  });
+
+  it('paints a joining change onto the sibling for the status verdict but not for think', () => {
+    // summarize retargets onto chat's selector (summarize-role serves only summarize,
+    // so it is a retarget, not an override): the capability override becomes the
+    // selector's truth, but think is written to summarize's role alone — chat keeps
+    // its own (empty) think.
+    const models = [
+      thinking({ modelName: 'gpt-5', thinkMode: '' }),
+      thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
+    ];
+    renderProjected(
+      twoRoles,
+      models,
+      change({
+        useCase: 'summarize',
+        modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        exposedCaps: ['chat', 'thinking'],
+        thinkMode: 'always',
+      })
+    );
+    const sibling = screen.getByTestId('route-row-chat');
+    expect(sibling).toHaveAttribute('data-changed', 'true');
+    // The capability override reaches the selector: chat loses stream.
+    expect(within(sibling).getByText('Incompatible')).toBeInTheDocument();
+    // Think does not: no `always`, no was line.
+    expect(within(sibling).queryByText('always')).not.toBeInTheDocument();
+    expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
+  });
+
+  it('does not treat a same-name, different-facts change as an override', () => {
+    // Same provider+model as chat's role but different parameters: the backend
+    // classifies that as a retarget (sameModelFacts is the full tuple), so no
+    // SetRoleOverrides runs and summarize keeps its own (empty) think.
+    const models = [
+      thinking({ parameters: '7b' }),
+      thinking({ role: 'summarize-role', routedUseCases: ['summarize'], thinkMode: '' }),
+    ];
+    renderProjected(twoRoles, models, change());
+    const sibling = screen.getByTestId('route-row-summarize');
+    expect(sibling).toHaveAttribute('data-changed', 'true');
+    expect(within(sibling).queryByText('always')).not.toBeInTheDocument();
+    expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
+  });
+
+  it('leaves a fork sibling on its applied values', () => {
+    // chat and summarize share ONE role; retargeting chat forks it (spec 5.2b) and
+    // summarize keeps gpt-5-mini — only the projection's marker reaches it.
+    const sharedRole = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'summarize', role: 'chat-role' },
+    ];
+    const models = [
+      thinking({ routedUseCases: ['chat', 'summarize'] }),
+      thinking({ role: 'other-role', modelName: 'gpt-5', routedUseCases: [], thinkMode: '' }),
+    ];
+    renderProjected(
+      sharedRole,
+      models,
+      change({ modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' } })
+    );
+    const sibling = screen.getByTestId('route-row-summarize');
+    expect(within(sibling).getByText('gpt-5-mini')).toBeInTheDocument();
+    expect(within(sibling).getByText('auto')).toBeInTheDocument();
+    expect(within(sibling).queryByText(/^was$/i)).not.toBeInTheDocument();
+    expect(sibling).toHaveAttribute('data-changed', 'true');
+    const edited = screen.getByTestId('route-row-chat');
+    expect(within(edited).getByText('gpt-5')).toBeInTheDocument();
+    expect(within(edited).getByText('also affects summarize')).toBeInTheDocument();
   });
 });
