@@ -447,12 +447,12 @@
 .dialog {
   /* margin: auto is what centres a showModal() dialog; reset.css restores the
      UA default, restated here so this rule does not depend on it. The top
-     inset pins the box below the app header, the same treatment as the
-     Golem configuration dialog, so a tall body never reaches the traffic
-     lights; the max-height leaves at least 20px of clearance above and
-     below. position and overflow are owned here rather than left to the UA
-     modal rule, so the geometry holds on a UA sheet without modal overflow
-     and for a non-modal show(). The UA sheet supplies fit-content sizing. */
+     inset pins the box below the app header so a tall body never reaches
+     the traffic lights; the max-height leaves at least 20px of clearance
+     above and below. position and overflow are owned here rather than left
+     to the UA modal rule, so the geometry holds on a UA sheet without modal
+     overflow and for a non-modal show(). The UA sheet supplies fit-content
+     sizing. */
   position: fixed;
   inset: var(--header-height) 0 0;
   margin: auto;
