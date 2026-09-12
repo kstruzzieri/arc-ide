@@ -36,6 +36,10 @@ const statusBarCss = readFileSync(
   resolve(__dirname, '../../components/StatusBar/StatusBar.module.css'),
   'utf8'
 );
+const gitPanelCss = readFileSync(
+  resolve(__dirname, '../../components/GitPanel/GitPanel.module.css'),
+  'utf8'
+);
 
 type RGB = [number, number, number];
 
@@ -75,6 +79,12 @@ it.each(WORKSPACE_ACCENTS)(
     expect(body).toMatch(/--accent-dark:\s*#[0-9a-f]{6}/);
     expect(body).toMatch(/--accent-dim:\s*rgba\(/);
     expect(body).toMatch(/--accent-glow:\s*rgba\(/);
+    // --text-on-accent too: Terminal, GolemPanel and GolemWindow pin
+    // data-accent="project" inside the live-accent .ide root, and a custom
+    // property inherits through that boundary. A project block without its
+    // own declaration would keep the white a docker or general workspace set
+    // and paint it on the project accent at 2.14:1.
+    expect(body).toMatch(/--text-on-accent:\s*(?:#[0-9a-f]{6}|var\(--[\w-]+\))/);
   }
 );
 
@@ -372,6 +382,27 @@ function opacity(source: string, selector: string): number {
   return Number(cssRule(source, selector).match(/opacity:\s*([\d.]+)/)?.[1] ?? 1);
 }
 
+/**
+ * --text-on-accent for one accent: the [data-accent] override if declared, else
+ * the :root value, following one level of var(). Reads through cssRule so a
+ * commented-out declaration is absent rather than matched, and refuses any
+ * value it cannot measure (a keyword such as `white`) instead of silently
+ * falling back to the default and passing on the wrong colour.
+ */
+function textOnAccent(accent: (typeof WORKSPACE_ACCENTS)[number]): string {
+  const declared = (selector: string) =>
+    cssRule(css, selector)
+      .match(/--text-on-accent:\s*([^;]+);/)?.[1]
+      .trim();
+  const value = declared(`[data-accent='${accent}']`) ?? declared(':root');
+  if (!value) throw new Error('Missing --text-on-accent in :root');
+  const hex = value.match(/^#[0-9a-f]{6}$/i)?.[0];
+  if (hex) return hex;
+  const alias = value.match(/^var\(--([\w-]+)\)$/)?.[1];
+  if (alias) return token(alias);
+  throw new Error(`Unmeasurable --text-on-accent for ${accent}: ${value}`);
+}
+
 function focusColor(selector: string, accent: (typeof WORKSPACE_ACCENTS)[number]): string {
   const focusVariable = cssRule(editorCss, selector).match(
     /outline(?:-color)?:[^;]*var\(--([\w-]+)\)/
@@ -508,6 +539,30 @@ it.each(['.tabTarget:focus-visible', '.tabClose:focus-visible'])(
   'uses the shared focus-ring token for %s',
   (selector) => {
     expect(cssRule(editorCss, selector)).toMatch(/outline:\s*2px solid var\(--focus-ring\)/);
+  }
+);
+
+it.each(['.syncCount', '.commitBtn'])(
+  'paints GitPanel %s text on the accent through --text-on-accent',
+  (selector) => {
+    // The two filled-accent controls in GitPanel. Pinning the token rather than
+    // a colour is the point: the guard below proves the token clears AA on
+    // every accent, and it can only do that for text that actually uses it.
+    expect(cssRule(gitPanelCss, selector)).toMatch(/color:\s*var\(--text-on-accent\)/);
+  }
+);
+
+it.each(WORKSPACE_ACCENTS)(
+  'keeps --text-on-accent at 4.5:1 or better on the %s accent',
+  (accent) => {
+    // 11px/12px text on a filled --accent control (GitPanel sync count and
+    // commit button), so the 4.5:1 text floor applies. No single foreground
+    // clears it on all nine accents: --surface-base does on seven, and pure
+    // white only on docker (4.73) and general (4.83), where dark text sits at
+    // 4.27 and 4.17. The token is therefore per-accent, like --accent-dark.
+    expect(
+      contrast(parseHex(textOnAccent(accent)), parseHex(token(`accent-${accent}`)))
+    ).toBeGreaterThanOrEqual(4.5);
   }
 );
 

@@ -93,13 +93,15 @@
   line-height: 1;
 }
 
-/* Count of incoming/outgoing commits, as a pill on the active button. */
+/* Count of incoming/outgoing commits, as a pill on the active button.
+ * --text-on-accent switches with the workspace accent (tokens.css) so the
+ * pill holds 4.5:1 on every accent; tokens.test.ts guards all nine. */
 .syncCount {
   min-width: 16px;
   padding: 0 5px;
   border-radius: 8px;
   background: var(--accent);
-  color: var(--text-on-accent, #fff);
+  color: var(--text-on-accent);
   font-size: 11px;
   font-weight: 700;
   text-align: center;
@@ -145,9 +147,9 @@
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
-  /* Stronger boundary than the faint --border so the field reads as an
+  /* Stronger boundary than the faint --surface-border so the field reads as an
    * editable box, plus a filled surface and an accent focus ring. */
-  border: 1px solid var(--border-strong, var(--text-muted));
+  border: 1px solid var(--text-muted);
   border-radius: 5px;
   background: var(--surface-base);
   color: var(--text-primary);
@@ -187,7 +189,7 @@
   border: none;
   border-radius: 4px;
   background: var(--accent);
-  color: var(--text-on-accent, #fff);
+  color: var(--text-on-accent);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;

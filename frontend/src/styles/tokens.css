@@ -25,6 +25,13 @@
   --text-secondary: #94a3b8; /* slate-400 */
   --text-muted: #90a0b6; /* AA through selected workspace-accent tints */
   --text-disabled: #475569; /* slate-600 */
+  /* Text painted on a filled --accent control. Per-accent, like --accent-dark:
+   * --surface-base clears 4.5:1 on seven accents but not docker (4.27) or
+   * general (4.17), where pure white does (4.73 / 4.83). Every [data-accent]
+   * block below redeclares it, because the pinned data-accent="project"
+   * subtrees (Terminal, Golem) would otherwise inherit a docker or general
+   * workspace's white onto the project accent. Guarded in tokens.test.ts. */
+  --text-on-accent: var(--surface-base);
 
   /* Workspace Accent Palette — one accent per workspace type, at that
    * ecosystem's brand hue. Named by type rather than colour because the mapping
@@ -143,6 +150,7 @@
   --accent-dark: #0284c7;
   --accent-dim: rgba(56, 189, 248, 0.12);
   --accent-glow: rgba(56, 189, 248, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='rust'] {
@@ -150,6 +158,7 @@
   --accent-dark: #a3512a;
   --accent-dim: rgba(226, 112, 58, 0.12);
   --accent-glow: rgba(226, 112, 58, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='node'] {
@@ -157,6 +166,7 @@
   --accent-dark: #678f04;
   --accent-dim: rgba(143, 198, 6, 0.12);
   --accent-glow: rgba(143, 198, 6, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='python'] {
@@ -164,6 +174,7 @@
   --accent-dark: #8a7d00;
   --accent-dim: rgba(191, 173, 0, 0.12);
   --accent-glow: rgba(191, 173, 0, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='docker'] {
@@ -171,6 +182,7 @@
   --accent-dark: #04539b;
   --accent-dim: rgba(5, 115, 215, 0.12);
   --accent-glow: rgba(5, 115, 215, 0.25);
+  --text-on-accent: #ffffff; /* 4.73:1; --surface-base is 4.27 */
 }
 
 [data-accent='terraform'] {
@@ -178,6 +190,7 @@
   --accent-dark: #793db2;
   --accent-dim: rgba(168, 85, 247, 0.12);
   --accent-glow: rgba(168, 85, 247, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='frontend'] {
@@ -185,6 +198,7 @@
   --accent-dark: #ad2871;
   --accent-dim: rgba(240, 56, 157, 0.12);
   --accent-glow: rgba(240, 56, 157, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='go'] {
@@ -192,6 +206,7 @@
   --accent-dark: #0d8294;
   --accent-dim: rgba(18, 181, 205, 0.12);
   --accent-glow: rgba(18, 181, 205, 0.25);
+  --text-on-accent: var(--surface-base);
 }
 
 [data-accent='general'] {
@@ -199,4 +214,5 @@
   --accent-dark: #4b5563;
   --accent-dim: rgba(107, 114, 128, 0.12);
   --accent-glow: rgba(107, 114, 128, 0.25);
+  --text-on-accent: #ffffff; /* 4.83:1; --surface-base is 4.17 */
 }
