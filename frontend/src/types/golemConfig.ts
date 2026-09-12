@@ -1349,6 +1349,18 @@ export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boole
   (model.contextWindow ?? 0) === (facts.contextWindow ?? 0) &&
   (model.dimensions ?? 0) === (facts.dimensions ?? 0);
 
+/**
+ * Every use case whose route this draft moves or clears — the staged `route`
+ * and `route-unassign` changes. What a base role serves today is not what it
+ * serves after Apply once one of these has left it.
+ */
+export const stagedAwayUseCases = (changes: readonly Change[]): Set<string> =>
+  new Set(
+    changes.flatMap((change) =>
+      change.kind === 'route' || change.kind === 'route-unassign' ? [change.useCase] : []
+    )
+  );
+
 interface SelectorGroup {
   changes: RouteChange[];
   /** The confirmation set (`ProjectedDraft.selectorUseCases`). */
@@ -1373,6 +1385,13 @@ function selectorGroups(
 ): Map<string, SelectorGroup> {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  // [W4-10] A sibling's routed use case the draft already moves off the
+  // selector is not there to govern once Apply lands; the group's own changes
+  // are governed by construction, so the filter is exact for them too.
+  // Ceiling: the backend applies changes in stable-id order and validates each
+  // mutation, so a leaving change that sorts AFTER the join is a transient
+  // conflict the backend still refuses; not mirrored here.
+  const stagedAway = stagedAwayUseCases(changes);
   const groups = new Map<string, SelectorGroup>();
   for (const change of changes) {
     if (change.kind !== 'route') continue;
@@ -1399,7 +1418,7 @@ function selectorGroups(
         if (selectorKey(model.provider, model.modelName) !== key) continue;
         for (const useCase of model.routedUseCases) {
           group.affected.add(useCase);
-          group.governed.add(useCase);
+          if (!stagedAway.has(useCase)) group.governed.add(useCase);
         }
       }
     }
@@ -1565,11 +1584,7 @@ export function providerUsage(
     if (target === null) continue;
     add(target.provider, useCase);
   }
-  const staged = new Set(
-    changes
-      .filter((change) => change.kind === 'route' || change.kind === 'route-unassign')
-      .map((change) => (change as Extract<Change, { useCase: string }>).useCase)
-  );
+  const staged = stagedAwayUseCases(changes);
   for (const model of base.models)
     for (const useCase of model.routedUseCases)
       if (!staged.has(useCase)) add(model.provider, useCase);
@@ -1650,18 +1665,18 @@ export function governedUseCasesOf(
 
 /**
  * The change the editor would stage for a defined model before any exposure
- * edit — its selector-persisted exposure plus the use case's own floor — so
- * the picker can ask `affectedUseCases` about every card it shows.
+ * edit: the model's own exposure, nothing added. This is the question
+ * `governedUseCasesOf` asks per card — the picker's verdicts and the Assign
+ * list's reasons — and a floor that exposure misses is the verdict, never
+ * something the probe asserts on the user's behalf.
  */
 export const probeRouteChange = (useCase: string, model: ModelProjection): RouteChange => ({
   kind: 'route',
   useCase,
   modelFacts: modelFactsOf(model),
   capabilityFacts: model.capabilityFacts,
-  exposedCaps: CAPABILITY_NAMES.filter(
-    (cap) =>
-      model.exposedCapabilities.includes(cap) || (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap)
-  ),
+  // Canonical order, as every capability array crosses the transport.
+  exposedCaps: CAPABILITY_NAMES.filter((cap) => model.exposedCapabilities.includes(cap)),
   thinkMode: model.thinkMode,
   confirmUnknown: false,
 });

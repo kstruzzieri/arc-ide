@@ -337,6 +337,9 @@ export function RoutingCard({
     document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
   };
 
+  /** Close this row's list if it is the open one, without touching another row's. */
+  const dropAssign = (role: string) => setAssigning((open) => (open === role ? null : open));
+
   /** Escape or a second press: the list unmounts and focus returns to the trigger it opened from. */
   const closeAssign = (index: number) => {
     setAssigning(null);
@@ -691,7 +694,9 @@ export function RoutingCard({
                           onClick={() => (listOpen ? closeAssign(index) : setAssigning(model.role))}
                         >
                           Assign…
-                          <span className={styles.srOnly}>{` model ${model.modelName}`}</span>
+                          <span className={styles.srOnly}>
+                            {` model ${model.modelName}, role ${model.role}`}
+                          </span>
                         </button>
                       )}
                       {/* §5.2b: removal is guarded backend-side and offered only
@@ -699,14 +704,19 @@ export function RoutingCard({
                           fallback targets included. Once staged, the same
                           control takes it back: re-pressing Remove would only
                           re-stage the identity it already holds, which is no
-                          undo at all. */}
+                          undo at all. Either press closes this row's Assign
+                          list for good: left merely hidden, it would remount
+                          and take focus when the removal is unstaged. */}
                       {editable &&
                         model.removable &&
                         (markers?.modified === true ? (
                           <button
                             type="button"
                             className={`${styles.button} ${styles.small} ${styles.quiet}`}
-                            onClick={() => onStage([], [`role:${model.role}`])}
+                            onClick={() => {
+                              dropAssign(model.role);
+                              onStage([], [`role:${model.role}`]);
+                            }}
                           >
                             Unstage removal
                             <span className={styles.srOnly}>{` of model role ${model.role}`}</span>
@@ -715,7 +725,10 @@ export function RoutingCard({
                           <button
                             type="button"
                             className={`${styles.button} ${styles.small} ${styles.quiet}`}
-                            onClick={() => onStage([{ kind: 'role-remove', role: model.role }], [])}
+                            onClick={() => {
+                              dropAssign(model.role);
+                              onStage([{ kind: 'role-remove', role: model.role }], []);
+                            }}
                           >
                             Remove
                             <span className={styles.srOnly}>{` model role ${model.role}`}</span>

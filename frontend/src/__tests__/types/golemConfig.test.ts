@@ -1166,7 +1166,7 @@ describe('floors across a selector (wave 4c)', () => {
     ]);
   });
 
-  it('lists what a candidate governs with the edited use case first', () => {
+  it('lists what a candidate asks the user to confirm, the edited use case first', () => {
     // reasoning's current role also serves agent; gpt-5's selector serves agent directly.
     expect(
       affectedUseCases(
@@ -1233,7 +1233,7 @@ describe('floors across a selector (wave 4c)', () => {
     expect(floorShortfalls(['chat', 'stream', 'tool_call'], ['reasoning', 'agent'])).toEqual([]);
   });
 
-  it('carries every optional fact into the probe and asserts the use case floor', () => {
+  it("carries every optional fact and the model's own exposure into the probe", () => {
     const probe = probeRouteChange('agent', modelRow({ parameters: '7b', contextWindow: 4096 }));
     expect(probe.modelFacts).toEqual({
       provider: 'hosted',
@@ -1242,7 +1242,37 @@ describe('floors across a selector (wave 4c)', () => {
       parameters: '7b',
       contextWindow: 4096,
     });
-    expect(probe.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+    // What the card exposes, nothing added: the floor it misses is the verdict, not the probe.
+    expect(probe.exposedCaps).toEqual(['chat', 'stream']);
     expect(probe.thinkMode).toBe('');
+  });
+
+  it('drops a sibling the draft already moves off the selector from the governed set', () => {
+    // [W4-10] agent sits on gpt-5 today. A draft that moves it elsewhere (or
+    // unassigns it) leaves nothing of it on the selector for chat to govern; a
+    // draft that moves it ONTO gpt-5 is in chat's own selector group.
+    const gpt5 = byRole('agent-role');
+    const twoRoutes: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [gpt5, modelRow({ routedUseCases: ['chat'] })],
+    };
+    const probe = probeRouteChange('chat', gpt5);
+    const agentOnto = (model: string): RouteChange =>
+      routeChange({
+        useCase: 'agent',
+        modelFacts: { provider: 'hosted', model, type: 'dense' },
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+      });
+    expect(governedUseCasesOf(twoRoutes, stage([agentOnto('claude')]), probe)).toEqual(['chat']);
+    expect(
+      governedUseCasesOf(twoRoutes, stage([{ kind: 'route-unassign', useCase: 'agent' }]), probe)
+    ).toEqual(['chat']);
+    expect(governedUseCasesOf(twoRoutes, stage([agentOnto('gpt-5')]), probe)).toEqual([
+      'chat',
+      'agent',
+    ]);
   });
 });

@@ -48,6 +48,7 @@ import {
   probeRouteChange,
   sameModelFacts,
   shortfallLine,
+  stagedAwayUseCases,
   unionFloor,
   USE_CASE_FLOORS,
   type Change,
@@ -361,14 +362,21 @@ export function RouteEditor({
    * [W4-9] A role joining a selector cannot set a Think mode a sibling on it
    * already sets differently: go-llm refuses the finished document
    * (selectorPairConflict — both sides non-empty). One entry per conflicting
-   * mode, naming the routes that set it. The role being edited is a sibling
-   * only when it is shared (the fork leaves it behind); unshared, it is
-   * rewritten. Capability overrides conflict the same way, but the projection
-   * cannot tell a sibling's explicit override from its declared caps, so that
-   * half stays with the backend.
+   * mode, naming the routes that set it — each once, since `routedUseCases`
+   * is fallback-inclusive and two roles can name the same route. [W4-10] A
+   * sibling counts for what it STILL serves once the draft has moved routes
+   * off it (and, for the role being edited, once this route has left): a
+   * role left serving nothing is rewritten or forked away, while an unrouted
+   * role never leaves and is named `role <name>`. Same ceiling as
+   * `selectorGroups`: a leaving change the backend applies after the join is
+   * a transient conflict it still refuses; not mirrored here. Capability
+   * overrides conflict the same way, but the projection cannot tell a
+   * sibling's explicit override from its declared caps, so that half stays
+   * with the backend.
    */
-  const thinkConflicts: { mode: ThinkMode; names: string[] }[] = [];
+  const conflictsByMode = new Map<ThinkMode, Set<string>>();
   if (!isOverride && candidate !== null && candidate.thinkMode !== '') {
+    const stagedAway = stagedAwayUseCases(draft.changes);
     for (const sibling of base.models) {
       if (
         sibling.provider !== candidate.modelFacts.provider ||
@@ -377,17 +385,16 @@ export function RouteEditor({
         sibling.thinkMode === candidate.thinkMode
       )
         continue;
-      const routed =
-        sibling.role === role
-          ? sibling.routedUseCases.filter((other) => other !== useCase)
-          : sibling.routedUseCases;
-      if (sibling.role === role && routed.length === 0) continue;
-      const names = routed.length > 0 ? routed : [`role ${sibling.role}`];
-      const entry = thinkConflicts.find((conflict) => conflict.mode === sibling.thinkMode);
-      if (entry === undefined) thinkConflicts.push({ mode: sibling.thinkMode, names: [...names] });
-      else entry.names.push(...names);
+      const staying = sibling.routedUseCases.filter(
+        (other) => !stagedAway.has(other) && (sibling.role !== role || other !== useCase)
+      );
+      if (staying.length === 0 && sibling.routedUseCases.length > 0) continue;
+      const names = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
+      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}`]) names.add(name);
+      conflictsByMode.set(sibling.thinkMode, names);
     }
   }
+  const thinkConflicts = [...conflictsByMode].map(([mode, names]) => ({ mode, names: [...names] }));
   const thinkConflictLine = ({ mode, names }: { mode: ThinkMode; names: string[] }): string =>
     `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} Think to ${mode} on this model; a route joining it cannot set a different Think mode.`;
 
@@ -565,6 +572,15 @@ export function RouteEditor({
                                   : currentCaps.filter((other) => other !== cap)
                               )
                             );
+                            // A hand-declared model cannot expose what it does not
+                            // declare: this tick is the declare form's assertion too.
+                            // Adding only — unticking never withdraws a declaration.
+                            if (
+                              event.target.checked &&
+                              manual !== null &&
+                              !manual.caps.includes(cap)
+                            )
+                              setManual({ ...manual, caps: canonicalCaps([...manual.caps, cap]) });
                             clearRefusal();
                           }}
                         />

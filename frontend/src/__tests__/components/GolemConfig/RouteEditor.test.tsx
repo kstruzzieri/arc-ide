@@ -242,7 +242,7 @@ describe('RoutingCard defined models', () => {
     // Every defined row can be assigned; only a removable one offers Remove.
     const orphan = screen.getByTestId('defined-model-row-orphan-role');
     expect(
-      within(orphan).getByRole('button', { name: 'Assign… model orphan-m' })
+      within(orphan).getByRole('button', { name: 'Assign… model orphan-m, role orphan-role' })
     ).toBeInTheDocument();
     expect(within(orphan).queryByRole('button', { name: /Remove/ })).not.toBeInTheDocument();
     expect(
@@ -697,6 +697,74 @@ describe('RouteEditor', () => {
     await stage();
     expect(onStage).toHaveBeenCalledTimes(1);
     expect(onStage.mock.calls[0][0][0].thinkMode).toBe('auto');
+  });
+
+  /** gpt-5 as a sibling role that sets Think, so a join has something to conflict with. */
+  const thinkingGpt5 = (over: Partial<ModelProjection>): ModelProjection =>
+    model({
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'auto',
+      ...over,
+    });
+
+  it('ignores a Think-setting sibling the draft already moves off the model', async () => {
+    // [W4-10] agent-role sets Think to auto on gpt-5, but the draft already
+    // routes agent elsewhere: once applied, nothing of agent-role is left on
+    // the selector for chat to conflict with.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), thinkingGpt5({ role: 'agent-role', routedUseCases: ['agent'] })],
+      draft: draftWith({
+        kind: 'route',
+        useCase: 'agent',
+        modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+        thinkMode: '',
+        confirmUnknown: false,
+      }),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.queryByText(/already sets Think/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].thinkMode).toBe('always');
+  });
+
+  it('names a route once in the Think conflict, however many sibling roles reach it', async () => {
+    // routedUseCases is fallback-inclusive: judge-role is reached only through
+    // agent-role's chain, so both roles name agent. The notice says it once.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [
+        model(),
+        thinkingGpt5({ role: 'agent-role', routedUseCases: ['agent'] }),
+        thinkingGpt5({ role: 'judge-role', routedUseCases: ['agent'] }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets? Think/)).toHaveTextContent(
+      /^agent already sets Think to auto on this model; a route joining it cannot set a different Think mode\.$/
+    );
   });
 
   it('requires the unknown-requirement acknowledgement and sets confirmUnknown', async () => {
@@ -1383,5 +1451,51 @@ describe('RouteEditor union floor (wave 4c)', () => {
     const staged = onStage.mock.calls[0][0][0];
     expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call']);
     expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  /** chat declared onto gpt-5 by hand, beside agent-role's gpt-5: tool_call is required, not declared. */
+  const declareOntoAgentSelector = async () => {
+    const view = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5x');
+    const name = screen.getByLabelText('Model name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    return view;
+  };
+  const declared = () => screen.getByRole('group', { name: 'Capabilities this model supports' });
+  const exposed = () =>
+    screen.getByRole('group', { name: 'Capabilities exposed to chat — from gpt-5' });
+
+  it('declares a cap ticked in the exposure checklist of a hand-declared model', async () => {
+    // A route cannot expose what its model does not declare: the tick in the
+    // exposure checklist is the same assertion as the tick in the declare form.
+    const { onStage } = await declareOntoAgentSelector();
+    expect(within(declared()).getByLabelText('tool_call required')).not.toBeChecked();
+
+    await userEvent.click(within(exposed()).getByLabelText('tool_call required'));
+    expect(within(declared()).getByLabelText('tool_call required')).toBeChecked();
+    expect(within(declared()).getByLabelText('tool_call required')).toBeDisabled();
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call']);
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('never withdraws a declared cap when the exposure unticks it', async () => {
+    await declareOntoAgentSelector();
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(within(declared()).getByLabelText('thinking')).toBeChecked();
+    await userEvent.click(within(exposed()).getByLabelText('thinking'));
+    expect(within(exposed()).getByLabelText('thinking')).not.toBeChecked();
+    expect(within(declared()).getByLabelText('thinking')).toBeChecked();
   });
 });

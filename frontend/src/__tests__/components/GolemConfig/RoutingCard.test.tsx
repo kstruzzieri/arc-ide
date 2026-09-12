@@ -522,7 +522,7 @@ describe('Defined models — Assign (wave 4d)', () => {
   // The list routes the MODEL: the staged change carries spare-m's facts, and
   // the backend retargets or forks the use case's own role — role `spare` is
   // never bound. The row's eyebrow still says which role defines it.
-  const assign = () => screen.getByRole('button', { name: 'Assign… model spare-m' });
+  const assign = () => screen.getByRole('button', { name: 'Assign… model spare-m, role spare' });
   const list = () => screen.getByRole('listbox', { name: 'Assign spare-m to' });
   let reveal: jest.SpyInstance | undefined;
   afterEach(() => {
@@ -651,9 +651,34 @@ describe('Defined models — Assign (wave 4d)', () => {
     const { rerender } = render(
       <RoutingCard {...props()} roleRows={new Map([['spare', removal]])} />
     );
-    expect(screen.queryByRole('button', { name: 'Assign… model spare-m' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Assign… model spare-m, role spare' })
+    ).not.toBeInTheDocument();
     rerender(<RoutingCard {...props()} />);
     expect(assign()).toBeInTheDocument();
+  });
+
+  it('leaves a list closed by Remove closed once the removal is unstaged', async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const removal = { modified: true, keyStaged: false, needsReview: false };
+    const { rerender } = render(<RoutingCard {...p} />);
+    await user.click(assign());
+    expect(list()).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'Remove model role spare' }));
+    expect(p.onStage).toHaveBeenLastCalledWith([{ kind: 'role-remove', role: 'spare' }], []);
+    rerender(<RoutingCard {...p} roleRows={new Map([['spare', removal]])} />);
+    expect(screen.queryByRole('listbox', { name: 'Assign spare-m to' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Unstage removal of model role spare' }));
+    expect(p.onStage).toHaveBeenLastCalledWith([], ['role:spare']);
+    rerender(<RoutingCard {...p} />);
+    // The row is assignable again, but the list the removal closed stays closed:
+    // a remount would take focus from the control the user just pressed.
+    expect(screen.queryByRole('listbox', { name: 'Assign spare-m to' })).not.toBeInTheDocument();
+    expect(assign()).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement?.closest('[role="listbox"]')).toBeNull();
   });
 
   it('drops the preselect with the editor: after Cancel, Edit reopens on the row itself', async () => {
