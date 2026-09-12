@@ -1309,10 +1309,23 @@ export interface ProjectedDraft {
   /** Keyed by provider name. */
   providerRows: Map<string, RowMarkers>;
   /**
-   * Staged use case → every use case its selector governs, for the editor's
-   * "also governs" disclosure (§4.5).
+   * Staged use case → the use cases the backend asks the user to CONFIRM
+   * (`gateRolesFor`): the ones its current role serves, plus the ones the
+   * target selector's roles serve when the change overrides or asserts
+   * exposure. Sorted. Wider than what changes — a fork leaves the source
+   * role's other use cases as they are — so this feeds row markers and the
+   * unknown-requirements acknowledgement, never a floor.
    */
   selectorUseCases: Map<string, string[]>;
+  /**
+   * Staged use case → the use cases the change actually GOVERNS (go-llm's
+   * `gateRoleEligibility`): the changed one, plus the ones the roles already
+   * on the target selector serve under the same override-or-asserted-exposure
+   * condition. Sorted. The current role counts only when it sits on that
+   * selector. This is the eligibility set: what the picker's floors and the
+   * editor's caution notice must read.
+   */
+  governedUseCases: Map<string, string[]>;
 }
 
 // NUL cannot occur inside an identifier (Cc is forbidden), so it separates the
@@ -1338,15 +1351,21 @@ export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boole
 
 interface SelectorGroup {
   changes: RouteChange[];
+  /** The confirmation set (`ProjectedDraft.selectorUseCases`). */
   affected: Set<string>;
+  /** The eligibility set (`ProjectedDraft.governedUseCases`). */
+  governed: Set<string>;
 }
 
 /**
- * Groups staged route changes by provider+model and collects, per group, every
- * use case the resulting override governs — the mirror of the backend's
- * gateRolesFor: the role the use case resolves to today, plus every role
+ * Groups staged route changes by provider+model and collects, per group, two
+ * sets. `affected` mirrors the backend's gateRolesFor — what the user is asked
+ * to confirm: the role each use case resolves to today, plus every role
  * already sharing the selector when the change is an override or asserts
- * capabilities explicitly.
+ * capabilities explicitly. `governed` mirrors go-llm's gateRoleEligibility —
+ * what the change actually gates: the changed use cases plus the selector's
+ * roles under that same condition, never the current role's other use cases
+ * unless that role sits on the selector (a fork leaves it as it is).
  */
 function selectorGroups(
   base: DraftBaseProjection,
@@ -1360,26 +1379,29 @@ function selectorGroups(
     const key = selectorKey(change.modelFacts.provider, change.modelFacts.model);
     let group = groups.get(key);
     if (group === undefined) {
-      group = { changes: [], affected: new Set() };
+      group = { changes: [], affected: new Set(), governed: new Set() };
       groups.set(key, group);
     }
     group.changes.push(change);
     group.affected.add(change.useCase);
+    group.governed.add(change.useCase);
 
     const role = roleOf.get(change.useCase);
     const current = role === undefined ? undefined : modelOf.get(role);
-    const gateRoles = new Set<string>();
-    if (role !== undefined) gateRoles.add(role);
+    // The current role feeds the confirmation set only.
+    for (const useCase of current?.routedUseCases ?? []) group.affected.add(useCase);
     if (
       (current !== undefined && sameModelFacts(current, change.modelFacts)) ||
       change.exposedCaps.length > 0
     ) {
+      // The roles already on the selector feed both.
       for (const model of base.models) {
-        if (selectorKey(model.provider, model.modelName) === key) gateRoles.add(model.role);
+        if (selectorKey(model.provider, model.modelName) !== key) continue;
+        for (const useCase of model.routedUseCases) {
+          group.affected.add(useCase);
+          group.governed.add(useCase);
+        }
       }
-    }
-    for (const name of gateRoles) {
-      for (const useCase of modelOf.get(name)?.routedUseCases ?? []) group.affected.add(useCase);
     }
   }
   return groups;
@@ -1423,16 +1445,19 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
   const roleRows = new Map<string, RowMarkers>();
   const providerRows = new Map<string, RowMarkers>();
   const selectorUseCases = new Map<string, string[]>();
+  const governedUseCases = new Map<string, string[]>();
   const normalized = new Map<string, RouteChange>();
 
   for (const group of selectorGroups(base, draft.changes).values()) {
     const affected = [...group.affected].sort(compareString);
+    const governed = [...group.governed].sort(compareString);
     const unknownUseCases = affected.filter((useCase) => !USE_CASE_FLOORS.has(useCase));
     const authority = group.changes[group.changes.length - 1];
     const inReview = group.changes.some((change) => review.has(changeStableID(change)));
     for (const change of group.changes) {
       normalized.set(change.useCase, coalesceRouteChange(change, authority, unknownUseCases));
       selectorUseCases.set(change.useCase, affected);
+      governedUseCases.set(change.useCase, governed);
     }
     // Selector-wide fields mark every affected sibling row, and siblings
     // inherit the originating operation's review state (§3.3, §4.6).
@@ -1472,6 +1497,7 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
     roleRows,
     providerRows,
     selectorUseCases,
+    governedUseCases,
   };
 }
 
@@ -1578,21 +1604,48 @@ export const unionFloor = (useCases: readonly string[]): CapabilityName[] =>
     useCases.some((useCase) => (USE_CASE_FLOORS.get(useCase) ?? []).includes(cap))
   );
 
+/** `change` staged over the draft as it stands, projected. Route changes never
+ *  touch a key ref, so a throwaway vault is honest here. */
+const probeProjection = (base: DraftBaseProjection, draft: Draft, change: RouteChange) =>
+  projectDraft(base, stageChange(draft, change, new KeyVault(new Map())));
+
+const changedFirst = (useCase: string, set: readonly string[] | undefined): string[] => [
+  useCase,
+  ...(set ?? []).filter((other) => other !== useCase),
+];
+
 /**
- * Every use case `change` would govern, the changed one first: the set
- * `projectDraft` reports for its selector group, over the draft as it stands.
- * Route changes never touch a key ref, so a throwaway vault is honest here.
+ * Every use case the backend would ask the user to CONFIRM for `change`, the
+ * changed one first: `projectDraft`'s `selectorUseCases` for its selector
+ * group. Wider than what the change governs — the editor reads it for the
+ * unknown-requirements acknowledgement only; floors read `governedUseCasesOf`.
  */
 export function affectedUseCases(
   base: DraftBaseProjection,
   draft: Draft,
   change: RouteChange
 ): string[] {
-  const affected = projectDraft(
-    base,
-    stageChange(draft, change, new KeyVault(new Map()))
-  ).selectorUseCases.get(change.useCase) ?? [change.useCase];
-  return [change.useCase, ...affected.filter((useCase) => useCase !== change.useCase)];
+  return changedFirst(
+    change.useCase,
+    probeProjection(base, draft, change).selectorUseCases.get(change.useCase)
+  );
+}
+
+/**
+ * Every use case `change` would GOVERN, the changed one first, then the rest
+ * sorted: `projectDraft`'s `governedUseCases` for its selector group. The
+ * eligibility set — what the picker's floors, the exposure checklist's
+ * required caps and the caution notice read.
+ */
+export function governedUseCasesOf(
+  base: DraftBaseProjection,
+  draft: Draft,
+  change: RouteChange
+): string[] {
+  return changedFirst(
+    change.useCase,
+    probeProjection(base, draft, change).governedUseCases.get(change.useCase)
+  );
 }
 
 /**
@@ -1622,7 +1675,7 @@ export interface FloorShortfall {
 /**
  * What `caps` is missing against the floors of `useCases`, in canonical
  * capability order; the use cases keep the order they were given (the edited
- * one first, from `affectedUseCases`). Empty means the model can serve them all.
+ * one first, from `governedUseCasesOf`). Empty means the model can serve them all.
  */
 export function floorShortfalls(
   caps: readonly CapabilityName[],
@@ -1636,6 +1689,18 @@ export function floorShortfalls(
     return needing.length === 0 ? [] : [{ cap, useCases: needing }];
   });
 }
+
+/**
+ * `agent needs tool_call` / `chat, agent need tool_call` — a shortfall as one
+ * clause per missing capability: the picker's blocked-card line, the Assign
+ * list's reason and the editor's refusal, so all three say the same thing.
+ */
+export const shortfallLine = (short: readonly FloorShortfall[]): string =>
+  short
+    .map(
+      ({ cap, useCases }) => `${useCases.join(', ')} need${useCases.length === 1 ? 's' : ''} ${cap}`
+    )
+    .join('; ');
 
 /**
  * The request the draft currently means, validated by the same parser that

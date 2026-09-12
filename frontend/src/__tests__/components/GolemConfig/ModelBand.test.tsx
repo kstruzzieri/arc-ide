@@ -50,7 +50,6 @@ function renderBand(over: Partial<ModelBandProps> = {}) {
     id: 'route-editor-chat',
     useCase: 'chat',
     floor: ['chat', 'stream'] as readonly CapabilityName[],
-    serves: ['chat'],
     required: ['chat', 'stream'] as readonly CapabilityName[],
     shortfalls: (candidate) => floorShortfalls(candidate.exposedCapabilities, ['chat']),
     models: [model(), agentModel, embedModel],
@@ -263,14 +262,14 @@ describe('ModelBand floor filter', () => {
   });
 
   it('hides a card that serves the edited use case but fails a sibling floor, naming the sibling', async () => {
-    // chat's current role also serves agent: every card must carry tool_call.
+    // The caller's verdict says every card governs agent too: each must carry
+    // tool_call, while the headline still names only the use case being routed.
     renderBand({
-      serves: ['chat', 'agent'],
       floor: ['chat', 'stream', 'tool_call'],
       required: ['chat', 'stream', 'tool_call'],
       shortfalls: (candidate) => floorShortfalls(candidate.exposedCapabilities, ['chat', 'agent']),
     });
-    expect(screen.getByText('Model — every card below can serve chat, agent')).toBeVisible();
+    expect(screen.getByText('Model — every card below can serve chat')).toBeVisible();
     expect(screen.getByText('filter: chat · stream · tool_call')).toBeVisible();
     expect(cards().map((card) => within(card).getByText(/gpt|nomic/).textContent)).toEqual([
       'gpt-5',
@@ -391,16 +390,20 @@ describe('ModelBand declare path', () => {
     expect(onManual).toHaveBeenCalledWith(null);
   });
 
-  it('locks the required caps of the current candidate in the declare form, not the band floor', async () => {
-    // The candidate's selector serves agent: tool_call is required and locked
-    // in the declare form, while the band still filters on chat's floor.
+  it('tags the required caps of the current candidate in the declare form, locking only what is declared', async () => {
+    // The candidate's selector serves agent: tool_call is required, but a
+    // declaration is what the user asserts — an undeclared cap stays unchecked
+    // and enabled under its `required` tag; a declared one locks. The band
+    // still filters on chat's floor.
     const { onManual } = renderBand({
       required: ['chat', 'stream', 'tool_call'],
       manual: { model: 'gpt-5', type: '', caps: ['chat', 'stream'] },
     });
     const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
-    expect(within(declared).getByLabelText('tool_call required')).toBeChecked();
-    expect(within(declared).getByLabelText('tool_call required')).toBeDisabled();
+    expect(within(declared).getByLabelText('tool_call required')).not.toBeChecked();
+    expect(within(declared).getByLabelText('tool_call required')).toBeEnabled();
+    expect(within(declared).getByLabelText('chat required')).toBeChecked();
+    expect(within(declared).getByLabelText('chat required')).toBeDisabled();
     expect(screen.getByText('filter: chat · stream')).toBeVisible();
     // A fresh declaration still starts from the band floor alone.
     await userEvent.type(screen.getByLabelText('Filter models'), 'llama-4');

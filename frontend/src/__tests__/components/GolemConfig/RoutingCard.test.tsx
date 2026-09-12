@@ -547,11 +547,14 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(assign()).toHaveAttribute('aria-controls', list().id);
     expect(list()).toHaveFocus();
     expect(within(list()).getAllByRole('option')).toHaveLength(4);
-    // spare-m declares chat + stream: agent and planning need tool_call, embedding needs embed.
+    // spare-m declares chat + stream: agent and planning need tool_call, embedding
+    // needs embed — the same clause the picker's blocked card carries.
     expect(optionNamed('agent')).toHaveAttribute('aria-disabled', 'true');
-    expect(within(optionNamed('agent')).getByText('needs tool_call')).toBeInTheDocument();
-    expect(within(optionNamed('embedding')).getByText('needs embed')).toBeInTheDocument();
-    expect(within(optionNamed('planning')).getByText('needs tool_call')).toBeInTheDocument();
+    expect(within(optionNamed('agent')).getByText('agent needs tool_call')).toBeInTheDocument();
+    expect(within(optionNamed('embedding')).getByText('embedding needs embed')).toBeInTheDocument();
+    expect(
+      within(optionNamed('planning')).getByText('planning needs tool_call')
+    ).toBeInTheDocument();
     expect(optionNamed('chat')).not.toHaveAttribute('aria-disabled');
     // The open row and its list are one outlined group, keyed apart from the bare row (C6).
     expect(screen.getByTestId('defined-model-row-spare').parentElement).toHaveAttribute(

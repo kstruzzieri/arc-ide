@@ -16,6 +16,7 @@ import {
   draftChangeCount,
   effectiveRoutes,
   floorShortfalls,
+  governedUseCasesOf,
   isDraftDirty,
   KeyVault,
   meetsUseCaseFloor,
@@ -645,6 +646,21 @@ describe('projected draft normalization', () => {
     const projected = projectDraft(base, stage([routeChange({ useCase: 'chat' })]));
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
+    // An override sits on the selector the current role is on, so it governs
+    // summarize too; a fork onto a selector nobody is on governs chat alone and
+    // summarize is confirmation-only (the source role is left as it was).
+    expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    const forked = projectDraft(
+      base,
+      stage([
+        routeChange({
+          useCase: 'chat',
+          modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        }),
+      ])
+    );
+    expect(forked.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    expect(forked.governedUseCases.get('chat')).toEqual(['chat']);
   });
 
   it('marks shared selector siblings Modified and inherits Needs review', () => {
@@ -1167,6 +1183,29 @@ describe('floors across a selector (wave 4c)', () => {
         probeRouteChange('reasoning', byRole('chat-role'))
       )
     ).toEqual(['reasoning', 'agent', 'chat']);
+  });
+
+  it('lists what a candidate governs: the changed use case, then the target selector routes', () => {
+    // agent-role is on gpt-5's selector, so a fork of reasoning onto it governs agent…
+    expect(
+      governedUseCasesOf(
+        base,
+        cleanDraft(REVISION_A),
+        probeRouteChange('reasoning', byRole('agent-role'))
+      )
+    ).toEqual(['reasoning', 'agent']);
+    // …while on chat-role's selector agent — reached only through reasoning's
+    // CURRENT role — is confirmation-only: the fork leaves that role as it is.
+    const ontoChat = probeRouteChange('reasoning', byRole('chat-role'));
+    expect(governedUseCasesOf(base, cleanDraft(REVISION_A), ontoChat)).toEqual([
+      'reasoning',
+      'chat',
+    ]);
+    expect(affectedUseCases(base, cleanDraft(REVISION_A), ontoChat)).toEqual([
+      'reasoning',
+      'agent',
+      'chat',
+    ]);
   });
 
   it('folds a staged change on the same selector into the set', () => {

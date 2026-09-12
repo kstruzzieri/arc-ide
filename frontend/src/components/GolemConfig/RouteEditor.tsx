@@ -17,10 +17,16 @@
  * - a real retarget drops the authored, model-specific ThinkTags/Slots, which
  *   the projection reports only as existence facts (§5.2b, plan amendment 13).
  *
- * The affected set is NEVER re-derived here: the candidate change is projected
- * through `projectDraft`, the same reducer whose normalization Apply sends, so
- * the disclosure and the request cannot disagree. The backend re-derives both
- * sets independently and refuses an omission or an extra.
+ * Two more block Done outright, because the backend would refuse the request:
+ * a floor capability the checked set lacks (never ticked for the user — an
+ * asserted cap is taken as truth), and a Think mode a selector sibling already
+ * sets differently (go-llm's selectorPairConflict).
+ *
+ * The affected and governed sets are NEVER re-derived here: the candidate
+ * change is projected through `projectDraft`, the same reducer whose
+ * normalization Apply sends, so the disclosures and the request cannot
+ * disagree. The backend re-derives both sets independently and refuses an
+ * omission or an extra.
  */
 
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -37,16 +43,18 @@ import {
 import {
   affectedUseCases,
   floorShortfalls,
-  meetsUseCaseFloor,
+  governedUseCasesOf,
   modelFactsOf,
   probeRouteChange,
   sameModelFacts,
+  shortfallLine,
   unionFloor,
   USE_CASE_FLOORS,
   type Change,
   type Draft,
   type DraftBaseProjection,
   type DropField,
+  type FloorShortfall,
   type ModelFacts,
   type RouteChange,
 } from '../../types/golemConfig';
@@ -163,9 +171,11 @@ interface Seed {
 function seedFrom(
   staged: Change | undefined,
   current: ModelProjection | null,
-  models: readonly ModelProjection[],
-  floor: readonly CapabilityName[]
+  models: readonly ModelProjection[]
 ): Seed {
+  // [W4-7] The exposure seeds EXACTLY from what is staged or applied. A floor
+  // cap the model lacks is never added here: go-llm takes an asserted cap as
+  // truth, so only the user's own tick may assert one.
   if (staged?.kind === 'route') {
     const facts = staged.modelFacts;
     const defined = models.find((model) => sameModelFacts(model, facts)) ?? null;
@@ -180,10 +190,7 @@ function seedFrom(
               caps: canonicalCaps(staged.capabilityFacts.caps),
             }
           : null,
-      // The floor is always in: its checkboxes render locked-on, and a state
-      // that disagreed with them would make the surface lie about what it is
-      // about to send.
-      exposed: canonicalCaps([...staged.exposedCaps, ...floor]),
+      exposed: canonicalCaps(staged.exposedCaps),
       think: staged.thinkMode,
       ackUnknown: staged.confirmUnknown,
       ackDrops: staged.confirmDrops !== undefined,
@@ -194,7 +201,7 @@ function seedFrom(
       provider: current.provider,
       defined: current,
       manual: null,
-      exposed: canonicalCaps([...current.exposedCapabilities, ...floor]),
+      exposed: canonicalCaps(current.exposedCapabilities),
       think: current.thinkMode,
       ackUnknown: false,
       ackDrops: false,
@@ -204,7 +211,7 @@ function seedFrom(
     provider: '',
     defined: null,
     manual: null,
-    exposed: canonicalCaps(floor),
+    exposed: [],
     think: '',
     ackUnknown: false,
     ackDrops: false,
@@ -230,22 +237,8 @@ export function RouteEditor({
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
   const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
-  /**
-   * [W4-2] What every candidate governs at least: this use case and the ones
-   * its current role already serves. A chosen card adds the use cases ITS
-   * selector's roles serve (`affected` below); a hand-declared name has no
-   * selector yet, so the baseline is exactly its floor.
-   */
-  const baseline = [useCase, ...sharedRole];
-  const baselineFloor = unionFloor(baseline);
   const seed = useMemo(
-    () =>
-      seedFrom(
-        preselect === undefined ? staged : undefined,
-        preselect ?? current,
-        models,
-        baselineFloor
-      ),
+    () => seedFrom(preselect === undefined ? staged : undefined, preselect ?? current, models),
     // Derived once, at mount: the row remounts when the document moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -276,37 +269,12 @@ export function RouteEditor({
   /**
    * A manual declaration is authoritative: `caps` is the checked set and
    * `knownCaps` the full vocabulary shown (§4.4). A defined model carries the
-   * facts the projection already computed. Parameterised on the floor because
-   * the candidate's own floor is derived from a probe built with the baseline's.
+   * facts the projection already computed.
    */
-  const declaredFacts = (withFloor: readonly CapabilityName[]): CapabilityFacts | null =>
+  const capabilityFacts: CapabilityFacts | null =
     manual !== null
-      ? { caps: canonicalCaps([...manual.caps, ...withFloor]), knownCaps: [...CAPABILITY_NAMES] }
+      ? { caps: canonicalCaps(manual.caps), knownCaps: [...CAPABILITY_NAMES] }
       : (defined?.capabilityFacts ?? null);
-
-  /**
-   * Every use case this candidate governs, from the same reducer Apply sends
-   * through — the edited one first (§4.5). Only the selector and whether ANY
-   * exposure is asserted matter to that reducer, so the probe carries the
-   * baseline floor; the candidate below carries the floor derived from it.
-   */
-  const probeFacts = declaredFacts(baselineFloor);
-  const affected =
-    facts === null || probeFacts === null
-      ? baseline
-      : affectedUseCases(base, draft, {
-          kind: 'route',
-          useCase,
-          modelFacts: facts,
-          capabilityFacts: probeFacts,
-          exposedCaps: canonicalCaps([...exposed, ...baselineFloor]),
-          thinkMode: '',
-          confirmUnknown: false,
-        });
-  /** [W4-2] The floor this route must meet: the union over everything it governs. */
-  const floor = unionFloor(affected);
-  const floorOwners = affected.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0);
-  const capabilityFacts = declaredFacts(floor);
 
   /**
    * What arrives checked for a selection. §4.5's "declared caps arrive checked"
@@ -317,12 +285,9 @@ export function RouteEditor({
    * paths (staged, applied, freshly chosen) on one notion of "offered", so
    * retargeting onto a model whose selector another use case narrowed cannot
    * silently re-widen that sibling's persisted contract through
-   * `SetRoleOverrides`.
+   * `SetRoleOverrides`. Nothing is added to it (see `seedFrom`).
    */
-  const offeredCaps = canonicalCaps([
-    ...(defined?.exposedCapabilities ?? capabilityFacts?.caps ?? []),
-    ...floor,
-  ]);
+  const offeredCaps = defined?.exposedCapabilities ?? capabilityFacts?.caps ?? [];
 
   // Choosing a different model re-seeds the checklist from ITS exposure. Keyed
   // on the declaration, not the half-typed name, so a keystroke never discards
@@ -335,7 +300,7 @@ export function RouteEditor({
   const [seenKey, setSeenKey] = useState(factsKey);
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
-    setExposed(offeredCaps);
+    setExposed(canonicalCaps(offeredCaps));
     setThink(manual === null ? (defined?.thinkMode ?? '') : '');
     setAckDrops(false);
     setAckUnknown(false);
@@ -349,25 +314,101 @@ export function RouteEditor({
           useCase,
           modelFacts: facts,
           capabilityFacts,
-          // The floor is always in: what the locked checkboxes show is what is sent.
-          exposedCaps: canonicalCaps([...exposed, ...floor]),
+          // The checked set, nothing added: what the checklist shows is what is sent.
+          exposedCaps: exposed,
           // A think mode is meaningless without the capability that justifies it.
           thinkMode: exposed.includes('thinking') ? think : '',
           confirmUnknown: false,
         };
 
-  const alsoGoverns = affected.filter((other) => other !== useCase);
+  /**
+   * Two sets from the same reducer Apply sends through, the edited use case
+   * first (§4.5). `affected` is what the backend asks the user to CONFIRM —
+   * it feeds the unknown-requirements acknowledgement. `governed` is what the
+   * change actually gates: the floors, the required caps and the caution
+   * notice read it, because a fork leaves the source role's other use cases
+   * exactly as they are.
+   */
+  const affected = candidate === null ? [useCase] : affectedUseCases(base, draft, candidate);
+  const governed = candidate === null ? [useCase] : governedUseCasesOf(base, draft, candidate);
+  /** [W4-2] The floor this route must meet: the union over everything it governs. */
+  const floor = unionFloor(governed);
+  const floorOwners = governed.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0);
+  /** [W4-7] What the checked set lacks against that floor — named, never ticked for the user. */
+  const short = candidate === null ? [] : floorShortfalls(exposed, governed);
+  const alsoGoverns = governed.filter((other) => other !== useCase);
   const unknownUseCases = affected.filter((other) => !USE_CASE_FLOORS.has(other));
 
   /**
-   * What a real retarget would drop. An override — the same provider+model the
-   * role already names — drops nothing, and a confirmation the backend cannot
-   * match is refused outright, so this stays exactly the backend's rule.
+   * An override — the same full facts the role already names — is the one
+   * change that rewrites every role on the selector (`SetRoleOverrides`); a
+   * join or fork writes Think to its own role alone. The same question the
+   * backend's planRouteChanges asks, through the same comparison.
+   */
+  const isOverride = current !== null && facts !== null && sameModelFacts(current, facts);
+
+  /**
+   * What a real retarget would drop. An override drops nothing, and a
+   * confirmation the backend cannot match is refused outright, so this stays
+   * exactly the backend's rule.
    */
   const drops: DropField[] =
-    current === null || facts === null || sameModelFacts(current, facts)
+    current === null || facts === null || isOverride
       ? []
       : DROP_ORDER.filter((field) => (field === 'slots' ? current.hasSlots : current.hasThinkTags));
+
+  /**
+   * [W4-9] A role joining a selector cannot set a Think mode a sibling on it
+   * already sets differently: go-llm refuses the finished document
+   * (selectorPairConflict — both sides non-empty). One entry per conflicting
+   * mode, naming the routes that set it. The role being edited is a sibling
+   * only when it is shared (the fork leaves it behind); unshared, it is
+   * rewritten. Capability overrides conflict the same way, but the projection
+   * cannot tell a sibling's explicit override from its declared caps, so that
+   * half stays with the backend.
+   */
+  const thinkConflicts: { mode: ThinkMode; names: string[] }[] = [];
+  if (!isOverride && candidate !== null && candidate.thinkMode !== '') {
+    for (const sibling of base.models) {
+      if (
+        sibling.provider !== candidate.modelFacts.provider ||
+        sibling.modelName !== candidate.modelFacts.model ||
+        sibling.thinkMode === '' ||
+        sibling.thinkMode === candidate.thinkMode
+      )
+        continue;
+      const routed =
+        sibling.role === role
+          ? sibling.routedUseCases.filter((other) => other !== useCase)
+          : sibling.routedUseCases;
+      if (sibling.role === role && routed.length === 0) continue;
+      const names = routed.length > 0 ? routed : [`role ${sibling.role}`];
+      const entry = thinkConflicts.find((conflict) => conflict.mode === sibling.thinkMode);
+      if (entry === undefined) thinkConflicts.push({ mode: sibling.thinkMode, names: [...names] });
+      else entry.names.push(...names);
+    }
+  }
+  const thinkConflictLine = ({ mode, names }: { mode: ThinkMode; names: string[] }): string =>
+    `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} Think to ${mode} on this model; a route joining it cannot set a different Think mode.`;
+
+  /**
+   * [K6] One verdict per card, cached by role for the life of the draft: the
+   * band re-renders on every keystroke in the declare form, and every verdict
+   * projects the whole draft.
+   */
+  const shortfalls = useMemo(() => {
+    const cache = new Map<string, readonly FloorShortfall[]>();
+    return (model: ModelProjection): readonly FloorShortfall[] => {
+      const cached = cache.get(model.role);
+      if (cached !== undefined) return cached;
+      const verdict = floorShortfalls(
+        model.exposedCapabilities,
+        governedUseCasesOf(base, draft, probeRouteChange(useCase, model))
+      );
+      cache.set(model.role, verdict);
+      return verdict;
+    };
+  }, [base, draft, useCase]);
 
   /** The editor's state as one comparable string: what Done would stage, minus the derivations. */
   const snapshotOf = (state: Seed): string =>
@@ -383,7 +424,7 @@ export function RouteEditor({
   const snapshot = snapshotOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
-  const [committed] = useState(() => snapshotOf(seedFrom(staged, current, models, baselineFloor)));
+  const [committed] = useState(() => snapshotOf(seedFrom(staged, current, models)));
   const unstaged = snapshot !== committed;
 
   useEffect(() => {
@@ -418,8 +459,13 @@ export function RouteEditor({
       setRefusal('Choose a model, or enter one manually.');
       return;
     }
-    if (!meetsUseCaseFloor(useCase, exposed)) {
-      setRefusal(`${INELIGIBLE} Expose ${floor.join(', ')} for ${useCase}.`);
+    // The clause the backend would refuse with, before the round trip.
+    if (short.length > 0) {
+      setRefusal(`${INELIGIBLE} ${shortfallLine(short)}.`);
+      return;
+    }
+    if (thinkConflicts.length > 0) {
+      setRefusal(thinkConflicts.map(thinkConflictLine).join(' '));
       return;
     }
     if (unknownUseCases.length > 0 && !ackUnknown) {
@@ -482,15 +528,9 @@ export function RouteEditor({
       <ModelBand
         id={id}
         useCase={useCase}
-        serves={baseline}
-        floor={baselineFloor}
+        floor={USE_CASE_FLOORS.get(useCase) ?? []}
         required={floor}
-        shortfalls={(candidateModel) =>
-          floorShortfalls(
-            candidateModel.exposedCapabilities,
-            affectedUseCases(base, draft, probeRouteChange(useCase, candidateModel))
-          )
-        }
+        shortfalls={shortfalls}
         models={models}
         provider={provider}
         providers={providers}
@@ -503,7 +543,10 @@ export function RouteEditor({
                 <fieldset className={styles.capabilities}>
                   <legend className={styles.fieldLabel}>{capsLegend}</legend>
                   {(capabilityFacts?.knownCaps ?? CAPABILITY_NAMES).map((cap) => {
-                    const locked = floor.includes(cap);
+                    const required = floor.includes(cap);
+                    // A required cap locks only once it is checked: the tick is
+                    // the user's assertion, never the checklist's (§4.4).
+                    const locked = required && exposed.includes(cap);
                     return (
                       <label
                         key={cap}
@@ -513,7 +556,7 @@ export function RouteEditor({
                           className={styles.checkboxInput}
                           type="checkbox"
                           disabled={locked}
-                          checked={locked || exposed.includes(cap)}
+                          checked={exposed.includes(cap)}
                           onChange={(event) => {
                             setExposed((currentCaps) =>
                               canonicalCaps(
@@ -527,9 +570,9 @@ export function RouteEditor({
                         />
                         <span className={styles.checkboxBox} aria-hidden="true" />
                         {cap}
-                        {/* v9 names the reason beside the locked control rather than
-                        leaving a disabled box to explain itself. */}
-                        {locked && (
+                        {/* v9 names the reason beside the control rather than
+                        leaving a locked box to explain itself. */}
+                        {required && (
                           <>
                             {' '}
                             <span className={styles.requiredTag}>required</span>
@@ -539,9 +582,11 @@ export function RouteEditor({
                     );
                   })}
                   <span className={styles.fieldHint}>
-                    What this route may use.
-                    {floorOwners.length > 0 &&
-                      ` The capabilities ${listUseCases(floorOwners)} ${agrees(floorOwners, 'requires', 'require')} are checked and locked.`}
+                    {`What this route may use.${
+                      floorOwners.length > 0
+                        ? ` Required by ${listUseCases(floorOwners)}: ${floor.join(', ')}.`
+                        : ''
+                    }`}
                   </span>
                 </fieldset>
               </div>
@@ -611,15 +656,37 @@ export function RouteEditor({
         </div>
       )}
 
-      {/* This edit reaches past the row being edited. */}
+      {/* This edit reaches past the row being edited. [W4-8] Only an override
+          writes Think selector-wide; a join carries its Think on its own role. */}
       {alsoGoverns.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            Capabilities and Think are properties of <strong>the model</strong>, not the route.
-            Changing them here also changes them for {boldList(alsoGoverns)}.
+            {isOverride ? (
+              <>
+                Capabilities and Think are properties of <strong>the model</strong>, not the route.
+                Changing them here also changes them for {boldList(alsoGoverns)}.
+              </>
+            ) : (
+              <>
+                Capabilities are a property of <strong>the model</strong>, not the route. Changing
+                them here also changes them for {boldList(alsoGoverns)}; Think applies to this route
+                only.
+              </>
+            )}
           </p>
         </div>
       )}
+
+      {/* Staging is refused while any of these stand. */}
+      {thinkConflicts.map(({ mode, names }) => (
+        <div key={mode} className={styles.disclosure} data-tone="blocking">
+          <p className={styles.disclosureText}>
+            <strong>{listUseCases(names)}</strong> already {agrees(names, 'sets', 'set')} Think to{' '}
+            <strong>{mode}</strong> on this model; a route joining it cannot set a different Think
+            mode.
+          </p>
+        </div>
+      ))}
 
       {/* Staging is refused until this is acknowledged. */}
       {unknownUseCases.length > 0 && (
@@ -667,6 +734,19 @@ export function RouteEditor({
             <span className={styles.checkboxBox} aria-hidden="true" />
             Remove them and continue
           </label>
+        </div>
+      )}
+
+      {/* [W4-7] A required cap the model lacks is named, never ticked for the
+          user: the tick is an assertion go-llm takes as truth. */}
+      {facts !== null && short.length > 0 && (
+        <div className={styles.disclosure} data-tone="blocking">
+          <p className={styles.disclosureText}>
+            <strong>{facts.model}</strong> does not declare{' '}
+            <strong>{short.map(({ cap }) => cap).join(', ')}</strong>: {shortfallLine(short)}. Pick
+            a model that does, or tick {short.length === 1 ? 'it' : 'them'} here to declare that it
+            can.
+          </p>
         </div>
       )}
 

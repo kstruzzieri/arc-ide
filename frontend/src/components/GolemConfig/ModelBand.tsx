@@ -31,7 +31,7 @@ import {
   type ModelType,
   type ProviderProjection,
 } from '../../types/golem';
-import type { FloorShortfall } from '../../types/golemConfig';
+import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
@@ -133,42 +133,29 @@ const factsLine = (model: ModelProjection): string =>
 const contextTitle = (model: ModelProjection): string | undefined =>
   model.contextWindow === undefined ? undefined : `${model.contextWindow} tokens`;
 
-/**
- * `agent needs tool_call` / `chat, agent need tool_call` — the verdict on a
- * blocked card, one clause per missing capability.
- */
-const shortfallLine = (short: readonly FloorShortfall[]): string =>
-  short
-    .map(
-      ({ cap, useCases }) => `${useCases.join(', ')} need${useCases.length === 1 ? 's' : ''} ${cap}`
-    )
-    .join('; ');
-
 export interface ModelBandProps {
   /** DOM id root; the grid is `<id>-grid` and its cards `<id>-card-N`. */
   id: string;
+  /** The use case being routed — the one thing every card below can serve. */
   useCase: string;
   /**
-   * Every use case the cards below must serve — the edited one first, then the
-   * ones its current role already serves (§4.5): the band's headline.
-   */
-  serves: readonly string[];
-  /**
-   * The union of those use cases' floors: the filter label, and what a fresh
-   * declaration starts with (a new name has no selector siblings yet).
+   * That use case's own floor: the filter label, and what a fresh declaration
+   * starts with (a new name has no selector siblings yet).
    */
   floor: readonly CapabilityName[];
   /**
-   * The union floor of the CURRENT candidate — `floor` plus whatever its own
-   * selector siblings need: the declare form's locked capabilities (a declared
-   * name can join an existing selector) and the readout's highlighted chips.
+   * The union floor of everything the CURRENT candidate governs — `floor` plus
+   * whatever its own selector siblings need: the declare form's `required`
+   * tags (a declared name can join an existing selector) and the readout's
+   * highlighted chips. A tag is not a lock: only a cap the declaration already
+   * carries locks, because a declaration is what the user asserts.
    */
   required: readonly CapabilityName[];
   /**
    * One card's verdict: each floor capability the model lacks, with the use
-   * cases that need it. Beyond `serves`, a card's OWN selector siblings count
-   * too, which is why this is a question per card rather than one floor.
-   * Empty means the card can be chosen.
+   * cases that need it. A card's OWN selector siblings count beyond `useCase`,
+   * which is why this is a question per card rather than one floor. Empty
+   * means the card can be chosen.
    */
   shortfalls: (model: ModelProjection) => readonly FloorShortfall[];
   /** Every model the document defines, across providers. */
@@ -193,7 +180,6 @@ export interface ModelBandProps {
 export function ModelBand({
   id,
   useCase,
-  serves,
   floor,
   required,
   shortfalls,
@@ -223,14 +209,14 @@ export function ModelBand({
 
   const gridId = `${id}-grid`;
 
-  const rows = buildModelRows(models, provider);
-  // One verdict per card per render: `shortfalls` projects the draft per card —
-  // a few dozen cards at most — and the band re-renders on every filter keystroke.
-  const verdicts = new Map(rows.map((row) => [rowKey(row.model), shortfalls(row.model)] as const));
-  const shortfallOf = (model: ModelProjection): readonly FloorShortfall[] =>
-    verdicts.get(rowKey(model)) ?? [];
-  const eligible = rows.filter((row) => shortfallOf(row.model).length === 0);
-  const blocked = rows.filter((row) => shortfallOf(row.model).length > 0);
+  // The verdict rides on the row: one call per card per render, and a blocked
+  // card renders the very shortfall that blocked it.
+  const judged = buildModelRows(models, provider).map((row) => ({
+    ...row,
+    short: shortfalls(row.model),
+  }));
+  const eligible = judged.filter((row) => row.short.length === 0);
+  const blocked = judged.filter((row) => row.short.length > 0);
 
   const needle = query.trim().toLowerCase();
   const matches = eligible.filter((row) => row.model.modelName.toLowerCase().includes(needle));
@@ -411,7 +397,10 @@ export function ModelBand({
         <fieldset className={styles.capabilities}>
           <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
           {CAPABILITY_NAMES.map((cap) => {
-            const locked = required.includes(cap);
+            // A required cap the declaration lacks stays unchecked and enabled:
+            // ticking it is the user's assertion, never the form's (§4.4).
+            const needed = required.includes(cap);
+            const locked = needed && manual.caps.includes(cap);
             return (
               <label
                 key={cap}
@@ -421,7 +410,7 @@ export function ModelBand({
                   className={styles.checkboxInput}
                   type="checkbox"
                   disabled={locked}
-                  checked={locked || manual.caps.includes(cap)}
+                  checked={manual.caps.includes(cap)}
                   onChange={(event) =>
                     patch({
                       caps: canonicalCaps(
@@ -434,7 +423,7 @@ export function ModelBand({
                 />
                 <span className={styles.checkboxBox} aria-hidden="true" />
                 {cap}
-                {locked && (
+                {needed && (
                   <>
                     {' '}
                     <span className={styles.requiredTag}>required</span>
@@ -444,8 +433,8 @@ export function ModelBand({
             );
           })}
           <span className={styles.fieldHint}>
-            What you declare here is what Golem may use. The capabilities this use case requires are
-            checked and locked.
+            What you declare here is what Golem may use. The route needs the capabilities tagged
+            required.
           </span>
         </fieldset>
         <button
@@ -463,9 +452,7 @@ export function ModelBand({
   return (
     <div className={styles.band}>
       <div className={styles.bandHead}>
-        <span
-          className={styles.fieldLabel}
-        >{`Model — every card below can serve ${serves.join(', ')}`}</span>
+        <span className={styles.fieldLabel}>{`Model — every card below can serve ${useCase}`}</span>
         <span className={styles.bandFilter}>{filterLabel}</span>
         <span className={styles.grow} />
         {/* SLICE D: the "Refresh list" affordance lands here, explicit-only
@@ -582,9 +569,7 @@ export function ModelBand({
             >
               <span className={styles.modelCardTop}>
                 <span className={styles.modelName}>{row.model.modelName}</span>
-                <span className={styles.modelCardFacts}>
-                  {shortfallLine(shortfallOf(row.model))}
-                </span>
+                <span className={styles.modelCardFacts}>{shortfallLine(row.short)}</span>
               </span>
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
@@ -593,7 +578,7 @@ export function ModelBand({
                 </span>
               </span>
               <span className={styles.capChips}>
-                {shortfallOf(row.model).map(({ cap }) => (
+                {row.short.map(({ cap }) => (
                   <span key={cap} className={`${styles.capChip} ${styles.capChipMissing}`}>
                     {`✕ ${cap}`}
                   </span>

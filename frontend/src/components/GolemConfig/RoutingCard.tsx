@@ -18,7 +18,7 @@
  * illegal directly inside a row — has a legal home.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   compareString,
   type CapabilityName,
@@ -30,12 +30,13 @@ import {
 } from '../../types/golem';
 import {
   USE_CASE_FLOORS,
-  affectedUseCases,
   changeStableID,
   floorShortfalls,
+  governedUseCasesOf,
   meetsUseCaseFloor,
   probeRouteChange,
   sameModelFacts,
+  shortfallLine,
   type Change,
   type Draft,
   type RouteChange,
@@ -268,7 +269,8 @@ export function RoutingCard({
     providers
   );
   const sourceReplaced = draft.source.kind !== 'applied';
-  const base = { routes, models };
+  // One object per document: the editor caches its per-card verdicts on it.
+  const base = useMemo(() => ({ routes, models }), [routes, models]);
 
   const stagedFor = (useCase: string): Change | undefined =>
     changes.find((change) => changeStableID(change) === `route:${useCase}`);
@@ -321,12 +323,9 @@ export function RoutingCard({
       if (open.has(useCase)) return { useCase, reason: 'editor open' };
       const short = floorShortfalls(
         model.exposedCapabilities,
-        affectedUseCases(base, draft, probeRouteChange(useCase, model))
+        governedUseCasesOf(base, draft, probeRouteChange(useCase, model))
       );
-      return {
-        useCase,
-        reason: short.length === 0 ? '' : `needs ${short.map(({ cap }) => cap).join(', ')}`,
-      };
+      return { useCase, reason: shortfallLine(short) };
     });
 
   /** Choosing a use case opens ITS editor on this model — the Edit path, seeded. */
