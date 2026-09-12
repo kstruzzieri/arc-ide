@@ -6,7 +6,8 @@
  * carry the very text an assertion looks for, and a `}` inside one would
  * truncate the body. `{` must follow the selector directly, so `.dialog`
  * cannot bind to `.dialogTitle` or `.dialog::backdrop`; the selector must
- * also start a line, so it cannot bind to a compound such as `.root .dialog`.
+ * also start a line, so it cannot bind inside a complex selector such as
+ * `.root .dialog`.
  *
  * Ceiling: `[^}]*` also stops at a `}` inside a string or url(); only the
  * first block for the selector is returned, so a later block for the same

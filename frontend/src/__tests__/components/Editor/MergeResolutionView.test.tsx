@@ -1356,7 +1356,7 @@ describe('MergeResolutionView stylesheet', () => {
 
   // The universal `* { margin: 0 }` in reset.css cancels the UA stylesheet's
   // `dialog { margin: auto }`; before this rule restated it the modal drew at
-  // the window's top-left, under the frameless titlebar and across the macOS
+  // the window's top-left, under the transparent macOS titlebar and across the
   // traffic lights. reset.css now restores the UA margin too, and this rule
   // restates it so the module stands alone, then pins the box below the
   // header. jsdom resolves no CSS from a module, so the stylesheet itself is
@@ -1378,13 +1378,16 @@ describe('MergeResolutionView stylesheet', () => {
     expect(body).toMatch(/^\s*overflow: auto;$/m);
   });
 
-  // A var() whose token is undefined is invalid at computed-value time, so
-  // `inset` would fall back to auto and `max-height` to none: the dialog
-  // would sit at the top-left again with nothing else failing.
-  it('references only tokens that tokens.css declares', () => {
-    const tokens = read('../../../styles/tokens.css');
-    const used = [...dialog().matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]);
+  // If `--header-height` is undefined the declaration is invalid at
+  // computed-value time, so `inset` falls to auto and `max-height` to none and
+  // the dialog sits at the top-left again with nothing else failing. The check
+  // covers every token the rule references, against the :root block only, so
+  // a declaration in a comment or under a [data-accent] selector cannot
+  // satisfy it.
+  it('references only tokens that tokens.css declares on :root', () => {
+    const root = cssRule(read('../../../styles/tokens.css'), ':root');
+    const used = [...dialog().matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
     expect(used).toContain('--header-height');
-    for (const token of used) expect(tokens).toMatch(new RegExp(`^\\s*${token}:`, 'm'));
+    for (const token of used) expect(root).toMatch(new RegExp(`^\\s*${token}:`, 'm'));
   });
 });
