@@ -28,7 +28,7 @@ it('requires { to follow the selector, so .dialog cannot bind to .dialogTitle', 
   expect(cssRule(sheet, '.dialog')).not.toMatch(/blue/);
 });
 
-it('anchors the selector to a line start, so a compound cannot satisfy its last part', () => {
+it('anchors the selector to a line start, so a complex selector cannot satisfy its last part', () => {
   expect(cssRule(sheet, '.root .dialog')).toMatch(/color:\s*green/);
   expect(cssRule(sheet, '.dialog')).not.toMatch(/green/);
   expect(() => cssRule('.root .dialog { color: green; }', '.dialog')).toThrow(
@@ -38,4 +38,8 @@ it('anchors the selector to a line start, so a compound cannot satisfy its last 
 
 it('throws when the rule is missing rather than returning an empty body', () => {
   expect(() => cssRule(sheet, '.missing')).toThrow('Missing CSS rule .missing');
+});
+
+it('returns an empty body for an empty rule instead of reporting it missing', () => {
+  expect(cssRule('.empty{}', '.empty')).toBe('');
 });
