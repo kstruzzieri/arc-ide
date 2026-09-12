@@ -23,7 +23,7 @@
  * sets independently and refuses an omission or an extra.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   CAPABILITY_NAMES,
   isIdentifier,
@@ -83,6 +83,19 @@ const listUseCases = (useCases: readonly string[]): string =>
 
 const agrees = (useCases: readonly string[], singular: string, plural: string): string =>
   useCases.length === 1 ? singular : plural;
+
+/**
+ * The same list with the names carrying the weight —
+ * `<strong>a</strong>, <strong>b</strong> and <strong>c</strong>` — so a
+ * notice reads as a sentence about THOSE routes, not a wall of equal words.
+ */
+const boldList = (names: readonly string[]): ReactNode =>
+  names.map((name, index) => (
+    <Fragment key={name}>
+      {index === 0 ? '' : index === names.length - 1 ? ' and ' : ', '}
+      <strong>{name}</strong>
+    </Fragment>
+  ));
 
 /**
  * Amendment 13 copy, one clause per hidden fact the current model carries.
@@ -544,13 +557,17 @@ export function RouteEditor({
           Names the mechanism — the model CHOICE belongs to this route alone —
           so it cannot read as contradicting the capability notice below, whose
           settings belong to the model and reach every route on it. */}
-      {sharedRole.length > 0 && (
+      {current !== null && sharedRole.length > 0 && (
         <div className={styles.disclosure} data-tone="info">
           <p className={styles.disclosureText}>
-            {`This model also serves ${listUseCases(sharedRole)}.`}
+            {boldList([useCase, ...sharedRole])} share this model.
           </p>
           <p className={styles.disclosureText}>
-            {`Choosing a different model here changes ${useCase} only; ${listUseCases(sharedRole)} ${agrees(sharedRole, 'keeps', 'keep')} using the current model.`}
+            Picking a different model here changes <strong>{useCase} only</strong>;{' '}
+            <strong>
+              {listUseCases(sharedRole)} {agrees(sharedRole, 'keeps', 'keep')}
+            </strong>{' '}
+            {current.modelName}.
           </p>
         </div>
       )}
@@ -559,7 +576,8 @@ export function RouteEditor({
       {alsoGoverns.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {`Capability and think settings belong to the model itself. ${listUseCases(alsoGoverns)} ${agrees(alsoGoverns, 'uses', 'use')} this same model, so these changes apply to ${agrees(alsoGoverns, 'it', 'them')} as well.`}
+            Capabilities and Think are properties of <strong>the model</strong>, not the route.
+            Changing them here also changes them for {boldList(alsoGoverns)}.
           </p>
         </div>
       )}
@@ -568,7 +586,9 @@ export function RouteEditor({
       {unknownUseCases.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {`Firn has no capability requirements on record for ${listUseCases(unknownUseCases)}, so it can't confirm this model suits ${agrees(unknownUseCases, 'it', 'them')}.`}
+            Firn has <strong>no requirements on record for {listUseCases(unknownUseCases)}</strong>,
+            so it cannot check this model for {agrees(unknownUseCases, 'it', 'them')}. Tick{' '}
+            <strong>Apply anyway</strong> to accept that.
           </p>
           <label className={styles.checkbox}>
             <input

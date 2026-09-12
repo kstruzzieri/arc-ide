@@ -495,12 +495,16 @@ describe('RouteEditor', () => {
       models: [model({ routedUseCases: ['chat', 'summarize'] }), other],
     });
     await openRoute('chat');
-    expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Choosing a different model here changes chat only; summarize keeps using the current model.'
-      )
-    ).toBeInTheDocument();
+    const share = screen.getByText(/share this model/);
+    expect(share).toHaveTextContent('chat and summarize share this model.');
+    // The names carry the weight: every route named is emphasised, the grammar is not.
+    expect([...share.querySelectorAll('strong')].map((node) => node.textContent)).toEqual([
+      'chat',
+      'summarize',
+    ]);
+    expect(screen.getByText(/Picking a different model/)).toHaveTextContent(
+      'Picking a different model here changes chat only; summarize keeps gpt-5-mini.'
+    );
   });
 
   // The verb has to agree with the list, or a careful notice reads as machine
@@ -516,14 +520,12 @@ describe('RouteEditor', () => {
     });
     await openRoute('chat');
 
-    expect(
-      screen.getByText('This model also serves completion and summarize.')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Choosing a different model here changes chat only; completion and summarize keep using the current model.'
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText(/share this model/)).toHaveTextContent(
+      'chat, completion and summarize share this model.'
+    );
+    expect(screen.getByText(/Picking a different model/)).toHaveTextContent(
+      'Picking a different model here changes chat only; completion and summarize keep gpt-5-mini.'
+    );
   });
 
   // The coupling surfaces BEFORE the editor opens: a neutral strip marker
@@ -578,7 +580,9 @@ describe('RouteEditor', () => {
     // One coupling, told once: the marker hides and the info notice names the
     // same sibling the marker's title named.
     expect(within(routeCells('chat')).queryByText(/shared with 1 other/)).not.toBeInTheDocument();
-    expect(screen.getByText('This model also serves summarize.')).toBeInTheDocument();
+    expect(screen.getByText(/share this model/)).toHaveTextContent(
+      'chat and summarize share this model.'
+    );
   });
 
   it('suppresses the marker while a staged retarget paints a different model', () => {
@@ -637,9 +641,9 @@ describe('RouteEditor', () => {
     // Staging chat onto the agent's selector makes the capability edit govern
     // the agent route too.
     await pickModel('gpt-5');
-    expect(
-      screen.getByText(/agent uses this same model, so these changes apply/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities and Think are properties of the model, not the route. Changing them here also changes them for agent.'
+    );
   });
 
   it('requires the unknown-requirement acknowledgement and sets confirmUnknown', async () => {
@@ -656,9 +660,9 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
 
-    expect(
-      screen.getByText(/no capability requirements on record for summarize/)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'Firn has no requirements on record for summarize, so it cannot check this model for it. Tick Apply anyway to accept that.'
+    );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/requirements are unknown/i);
@@ -869,19 +873,16 @@ describe('RouteEditor', () => {
     await openRoute('chat');
 
     // A fact about the fork: nothing is asked of the reader.
-    const sharedRole = screen.getByText(/This model also serves/).closest('div');
+    const sharedRole = screen.getByText(/share this model/).closest('div');
     expect(sharedRole).toHaveAttribute('data-tone', 'info');
 
     // Retargeting reaches the sibling use case and drops authored fields.
     await pickModel('gpt-5');
-    expect(screen.getByText(/belong to the model itself/).closest('div')).toHaveAttribute(
+    expect(screen.getByText(/not the route/).closest('div')).toHaveAttribute(
       'data-tone',
       'caution'
     );
-    expect(screen.getByText(/no capability requirements on record/).closest('div')).toHaveAttribute(
-      'data-tone',
-      'caution'
-    );
+    expect(screen.getByText(/Firn has/).closest('div')).toHaveAttribute('data-tone', 'caution');
     expect(screen.getByText(/set up by hand/).closest('div')).toHaveAttribute(
       'data-tone',
       'blocking'
