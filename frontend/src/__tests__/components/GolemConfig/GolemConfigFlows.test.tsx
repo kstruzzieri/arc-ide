@@ -1447,6 +1447,31 @@ describe('unsaved-work transitions', () => {
     await expect(second).resolves.toBe(true);
   });
 
+  // [W2] WKWebView with Full Keyboard Access off skips buttons on Tab, so the
+  // dialog owns its own keys: every move key hands focus to the other button,
+  // which makes Tab, Shift+Tab and the arrows wrap between exactly two choices.
+  it('moves focus between its two buttons on Tab and the arrows', async () => {
+    await mountWorkspace();
+    await stageKey();
+    const pending = confirmConfigClose('quit');
+    const dialog = await screen.findByRole('alertdialog');
+    const keep = within(dialog).getByRole('button', { name: 'Keep editing' });
+    const discard = within(dialog).getByRole('button', { name: 'Discard & quit' });
+    expect(keep).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(discard).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'ArrowRight' });
+    expect(keep).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(discard).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'ArrowUp' });
+    expect(keep).toHaveFocus();
+
+    await userEvent.click(keep);
+    await expect(pending).resolves.toBe(false);
+  });
+
   it('cancels a pending challenge before it lets the app close', async () => {
     applyReturns({ status: 'consent_required', challenge: challenge() });
     await mountWorkspace();

@@ -25,7 +25,7 @@
  * settings calls read one process-wide snapshot.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ApplyGolemSettings,
   CancelGolemSettingsApply,
@@ -248,6 +248,13 @@ const DISCARD_BODY_CHALLENGED = `${DISCARD_BODY} The pending destination approva
  * is protecting is the open approval, so the dialog says exactly that instead
  * of claiming staged changes and a key are being dropped.
  */
+/**
+ * A draft whose ONLY change is the replacement source (§3.3 counts that as one
+ * change, so the guard fires) has nothing staged and no key: claiming staged
+ * changes and an API key are dropped would be a lie. It says what actually goes.
+ */
+const SOURCE_ONLY_BODY =
+  'This draft only replaces the source; switching drops that replacement. Nothing has been written, and the file on disk does not change.';
 const CANCEL_GRANT_TITLE = 'Cancel the pending approval?';
 const CANCEL_GRANT_BODY = 'The destination approval is cancelled. Nothing staged is dropped.';
 const CANCEL_GRANT_CONFIRM = 'Cancel approval';
@@ -653,9 +660,19 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       outcomeRef.current.intent === 'grant-only' &&
       !isDraftDirty(draft) &&
       unstagedEditors.size === 0;
+    const sourceOnly =
+      challenge === null &&
+      draft.changes.length === 0 &&
+      unstagedEditors.size === 0 &&
+      draft.source.kind !== 'applied';
+    const discardBody = sourceOnly
+      ? SOURCE_ONLY_BODY
+      : challenge === null
+        ? DISCARD_BODY
+        : DISCARD_BODY_CHALLENGED;
     const dialog = grantOnlyCancel
       ? { title: CANCEL_GRANT_TITLE, body: CANCEL_GRANT_BODY, confirmLabel: CANCEL_GRANT_CONFIRM }
-      : { title, body: challenge === null ? DISCARD_BODY : DISCARD_BODY_CHALLENGED, confirmLabel };
+      : { title, body: discardBody, confirmLabel };
     if (!(await ask(dialog))) return false;
     return cancelChallenge();
   };
@@ -2013,6 +2030,7 @@ function Countdown({ expiresAt }: { expiresAt: number }) {
 function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: boolean) => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -2033,6 +2051,19 @@ function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: bo
     if (invoker?.isConnected) invoker.focus();
   };
 
+  /**
+   * WKWebView with "Full Keyboard Access" off skips buttons on Tab, which left
+   * this dialog with no way to reach Discard from the keyboard. A two-button
+   * dialog needs no roving index: every move key simply hands focus to the
+   * other button, so Tab, Shift+Tab and the arrows all wrap by construction.
+   */
+  const moveFocus = (event: KeyboardEvent<HTMLDialogElement>) => {
+    if (!['Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const [keep, confirm] = [keepRef.current, confirmRef.current];
+    (document.activeElement === keep ? confirm : keep)?.focus();
+  };
+
   return (
     <dialog
       ref={dialogRef}
@@ -2041,6 +2072,7 @@ function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: bo
       aria-modal="true"
       aria-labelledby="golem-config-confirm-title"
       aria-describedby="golem-config-confirm-body"
+      onKeyDown={moveFocus}
       onCancel={(event) => {
         event.preventDefault(); // Escape cancels the transition, not the draft
         settleWith(false);
@@ -2062,6 +2094,7 @@ function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: bo
           Keep editing
         </button>
         <button
+          ref={confirmRef}
           type="button"
           className={`${styles.button} ${styles.primary}`}
           onClick={() => settleWith(true)}

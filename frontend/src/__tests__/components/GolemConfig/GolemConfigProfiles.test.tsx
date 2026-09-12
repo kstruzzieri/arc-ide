@@ -360,6 +360,33 @@ describe('masthead profile select', () => {
     );
   });
 
+  // [W3] §3.3 counts the replacement source as a change, so the guard fires on a
+  // draft holding nothing else. The shipped copy then claimed staged changes and
+  // an API key were being dropped — neither existed.
+  it('names only the source when the source is the only thing the draft replaces', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('curated/local'));
+    await mountReady();
+    const user = userEvent.setup();
+    await pickSource(user, 'local', 'Curated');
+    await waitFor(() => expect(sourceValue()).toBe('curated/local'));
+
+    await pickSource(user, /mine/, 'Yours');
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(
+      'This draft only replaces the source; switching drops that replacement. Nothing has been written, and the file on disk does not change.'
+    );
+    expect(dialog).not.toHaveTextContent(/API key/);
+
+    // One staged change and the shipped discard copy is back, key sentence and all.
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await user.click(screen.getByRole('button', { name: /edit route/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await pickSource(user, /mine/, 'Yours');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'The staged changes and any API key you entered are dropped.'
+    );
+  });
+
   it('guards a source switch while work is unsaved', async () => {
     (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
     await mountReady();

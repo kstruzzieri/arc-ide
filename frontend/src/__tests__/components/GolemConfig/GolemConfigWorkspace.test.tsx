@@ -244,6 +244,27 @@ describe('GolemConfig stylesheet', () => {
     expect(text).toContain('.pickerOption[data-active],\n.pickerOption:hover {');
   });
 
+  // [W1] `.button`'s own padding and line-height beat symmetric padding on a
+  // 28px box, so the cross drew off-centre. The flex centre is the guard.
+  it('centres the close glyph instead of trusting padding', () => {
+    const rule = css().match(/^\.closeIcon \{[^}]*\}/m)?.[0] ?? '';
+    expect(rule).toContain('justify-content: center');
+    expect(rule).toContain('align-items: center');
+    expect(rule).toContain('padding: 0');
+  });
+
+  // [W2] reset.css zeroes every margin, which cancels the UA stylesheet's
+  // `dialog { margin: auto }`: the modal drew at the window's top-left, under
+  // the frameless titlebar and across the macOS traffic lights.
+  it('centres the confirmation dialog clear of the frameless titlebar', () => {
+    const rule = css().match(/^\.dialog \{[^}]*\}/m)?.[0] ?? '';
+    expect(rule).toContain('margin: auto');
+    expect(rule).toContain('inset: 40px 0 0');
+    // Pinned edges with an auto size would stretch the box to fill them.
+    expect(rule).toContain('height: fit-content');
+    expect(rule).toContain('max-height: calc(100% - 80px)');
+  });
+
   it('the picker popover clamps to the pane like the save popover', () => {
     const list = css().match(/\.pickerList\s*\{[^}]*\}/)?.[0] ?? '';
     expect(list).toContain('width: min(320px, calc(100cqw - 32px))');

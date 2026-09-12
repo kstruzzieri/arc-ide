@@ -414,11 +414,18 @@
    the cascade to `.button` / `.button:hover` — which is what silently reverted the
    close icon's square padding and the warn tone's border and colour. */
 
+/* The glyph centres itself rather than riding on symmetric padding: `.button`
+   contributes its own padding and line-height, which pushed the 12px cross off
+   the middle of the 28px box. A flex centre is immune to both. */
 .closeIcon {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   height: 28px;
-  padding: 5px;
+  padding: 0;
+  line-height: 0;
 }
 
 .closeIcon svg {
@@ -1745,8 +1752,22 @@ select.input {
 
 /* ── confirmation dialog (§4.6a) ────────────────────────────────────────── */
 
+/* `reset.css` zeroes every margin, which cancels the UA stylesheet's
+   `dialog { margin: auto }` — the one rule that centres a modal dialog. Without
+   it `showModal` draws at the window's top-left, under the frameless titlebar
+   and over the macOS traffic lights. The margin comes back explicitly, and the
+   40px top inset keeps the dialog clear of that titlebar in a short window too.
+   `fit-content` keeps the box sized to its text: `inset` pins all four edges,
+   and an `auto` size against pinned edges would stretch to fill them. */
 .dialog {
+  position: fixed;
+  inset: 40px 0 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
   max-width: 420px;
+  max-height: calc(100% - 80px);
+  overflow-y: auto;
   padding: 16px;
   border: 1px solid var(--surface-border);
   border-radius: 8px;
