@@ -134,6 +134,10 @@ export function MergeResolutionView({
     // ending an IME composition — key code 229 is the Windows/macOS IME
     // placeholder, where `key` is not the physical key at all.
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // An open confirmation owns Escape. The browser turns an uncancelled
+    // keydown into the dialog's `cancel` event; preventing it here would
+    // suppress that and re-issue a close on top of the one already pending.
+    if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
     // A write or a reload in flight owns the session; Escape must not race it.
     if (finalizing || session.reloadPending) return;
     event.preventDefault();

@@ -126,6 +126,19 @@ beforeAll(() => {
   });
 });
 
+/** jsdom has no close-request algorithm. Mirror the browser's: an Escape
+ * keydown bubbles out of the open dialog, and only if nothing called
+ * preventDefault on it does it become the dialog's `cancel` event. */
+function pressEscapeInside(target: HTMLElement): KeyboardEvent {
+  const keydown = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  fireEvent(target, keydown);
+  const dialog = target.closest('dialog');
+  if (dialog && !keydown.defaultPrevented) {
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+  }
+  return keydown;
+}
+
 const textSession = {
   kind: 'text',
   path: 'src/conflict.ts',
@@ -1123,6 +1136,26 @@ describe('MergeResolutionView discard confirmation', () => {
     expect(confirmMergeClose).not.toHaveBeenCalled();
   });
 
+  it('a real Escape inside the dialog reaches the native cancel, not the surface handler', () => {
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    const invoker = screen.getByRole('button', { name: /next unresolved/i });
+    invoker.focus();
+    // The dialog appears while the invoker holds focus and takes it.
+    rerender(<MergeResolutionView session={closeRequested()} visible />);
+    const keep = screen.getByRole('button', { name: /keep working/i });
+    expect(keep).toHaveFocus();
+
+    const keydown = pressEscapeInside(keep);
+
+    // Preventing the keydown would suppress the browser's close request, and
+    // the surface must not re-issue a close that is already pending.
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(requestMergeClose).not.toHaveBeenCalled();
+    expect(cancelMergeClose).toHaveBeenCalledTimes(1);
+    expect(confirmMergeClose).not.toHaveBeenCalled();
+    expect(invoker).toHaveFocus();
+  });
+
   it('renders one confirmation for a sides session too', () => {
     render(<MergeResolutionView session={closeRequested(sidesSession)} visible />);
 
@@ -1306,6 +1339,23 @@ describe('MergeResolutionView overwrite consent', () => {
 
     expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('a real Escape inside the overwrite dialog cancels it without asking to discard', () => {
+    render(<MergeResolutionView session={worktreeChanged()} visible />);
+    resolveAll();
+    const write = screen.getByRole('button', { name: 'Write & stage' });
+    write.focus();
+    fireEvent.click(write);
+    const cancel = screen.getByRole('button', { name: /^cancel$/i });
+
+    const keydown = pressEscapeInside(cancel);
+
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(requestMergeClose).not.toHaveBeenCalled();
+    expect(mergeOverwriteAndStage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(write).toHaveFocus();
   });
 
   it('never offers an overwrite for a conflict-scoped change', () => {
