@@ -9,7 +9,7 @@ export function Toast() {
   const clearToast = useIDEStore((state) => state.clearToast);
 
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.sticky) return;
     const timer = setTimeout(clearToast, TOAST_DURATION);
     return () => clearTimeout(timer);
   }, [toast, clearToast]);

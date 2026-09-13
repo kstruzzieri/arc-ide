@@ -106,7 +106,9 @@ func TestLoadNormalizesInvalidModeAndRejectsUnknownVersion(t *testing.T) {
 		t.Fatalf("invalid mode must normalize to docked, got %q", got.GolemWindow.Mode)
 	}
 
-	files[path] = []byte(`{"version":2,"state":{}}`)
+	// A newer schema that no longer decodes is still reported as newer, so
+	// Load and the never-loaded probe agree on the same bytes.
+	files[path] = []byte(`{"version":2,"state":{"golemWindow":{"x":"10"}}}`)
 	if _, err := s.Load(); !errors.Is(err, ErrUnknownVersion) {
 		t.Fatalf("unknown version: err = %v, want ErrUnknownVersion", err)
 	}
@@ -147,6 +149,33 @@ func TestLoadTreatsVersionBelowOneAsCorrupt(t *testing.T) {
 		if probeErr := fresh.Save(Default()); probeErr == nil || errors.Is(probeErr, ErrUnknownVersion) {
 			t.Fatalf("Save without Load over %s = %v, want the corrupt-file latch", raw, probeErr)
 		}
+	}
+}
+
+// Zero bytes hold no preference to preserve: an empty app.json reads as
+// absent, latches nothing, and the first Save fills it (the rule the
+// workspace store follows for #290).
+func TestEmptyFileReadsAsAbsentAndDoesNotLatch(t *testing.T) {
+	fsys, files := newMockFS(t)
+	path := filepath.Join(firnDir, "app.json")
+	files[path] = []byte(" \n")
+	s := NewStore(fsys, firnDir)
+	got, err := s.Load()
+	if err != nil || got != Default() {
+		t.Fatalf("Load of an empty file = (%+v, %v), want (Default(), nil)", got, err)
+	}
+	if err := s.Save(Default()); err != nil {
+		t.Fatalf("Save over an empty file after Load: %v", err)
+	}
+	if !strings.Contains(string(files[path]), `"version": 1`) {
+		t.Fatalf("empty file not replaced by a saved envelope, got %q", files[path])
+	}
+
+	// The never-loaded probe reaches the same verdict.
+	files[path] = []byte("")
+	fresh := NewStore(fsys, firnDir)
+	if err := fresh.Save(Default()); err != nil {
+		t.Fatalf("Save over an empty file without Load: %v", err)
 	}
 }
 

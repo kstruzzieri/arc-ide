@@ -203,7 +203,14 @@ interface IDEState {
   cursorPosition: CursorPosition;
 
   // Toast
-  toast: { message: string; type: 'error' | 'info' } | null;
+  // sticky: stays until dismissed, for a message the user must act on.
+  toast: { message: string; type: 'error' | 'info'; sticky?: boolean } | null;
+  // Sticky toasts displaced by a newer toast, restored one at a time as the
+  // covering toast clears, so a message the user must act on is never lost
+  // to a passing one. Session-global like the toast itself: a workspace
+  // switch does not clear it, and nothing expires it but Dismiss or
+  // retireToast.
+  heldToasts: NonNullable<IDEState['toast']>[];
 
   // Terminal
   activeTerminalTab: TerminalTab;
@@ -326,8 +333,11 @@ interface IDEActions {
   updateFileContent: (fileId: string, content: string) => void;
 
   // Toast actions
-  showToast: (message: string, type: 'error' | 'info') => void;
+  showToast: (message: string, type: 'error' | 'info', sticky?: boolean) => void;
   clearToast: () => void;
+  // Drop the toast with this message wherever it is, displayed or held; a
+  // displayed one gives way to the most recent held toast, like clearToast.
+  retireToast: (message: string) => void;
 
   // Terminal actions
   setTerminalTab: (tab: TerminalTab) => void;
@@ -975,6 +985,7 @@ export const useIDEStore = create<IDEStore>()(
       // collected into the persisted state and never in the save-subscribe list.
       centerLayoutRevision: 0,
       toast: null,
+      heldToasts: [],
       activeTerminalTab: 'terminal',
       terminalSessions: [],
       activeTerminalSessionId: null,
@@ -1328,9 +1339,43 @@ export const useIDEStore = create<IDEStore>()(
         ),
 
       // Toast actions
-      showToast: (message, type) => set({ toast: { message, type } }, false, 'showToast'),
+      showToast: (message, type, sticky) =>
+        set(
+          (state) => {
+            // A message shown again is not also kept as a held copy.
+            const held = state.heldToasts.filter((t) => t.message !== message);
+            if (state.toast?.sticky && state.toast.message !== message) held.push(state.toast);
+            return { toast: { message, type, ...(sticky ? { sticky } : {}) }, heldToasts: held };
+          },
+          false,
+          'showToast'
+        ),
 
-      clearToast: () => set({ toast: null }, false, 'clearToast'),
+      clearToast: () =>
+        set(
+          (state) =>
+            state.heldToasts.length === 0
+              ? { toast: null }
+              : {
+                  toast: state.heldToasts[state.heldToasts.length - 1],
+                  heldToasts: state.heldToasts.slice(0, -1),
+                },
+          false,
+          'clearToast'
+        ),
+
+      retireToast: (message) =>
+        set(
+          (state) => {
+            const held = state.heldToasts.filter((t) => t.message !== message);
+            if (state.toast?.message !== message) return { heldToasts: held };
+            return held.length === 0
+              ? { toast: null, heldToasts: held }
+              : { toast: held[held.length - 1], heldToasts: held.slice(0, -1) };
+          },
+          false,
+          'retireToast'
+        ),
 
       // Terminal actions
       setTerminalTab: (activeTerminalTab) => set({ activeTerminalTab }, false, 'setTerminalTab'),

@@ -28,6 +28,13 @@ interface CollectWorkspaceOptions {
   includeTreeSnapshot?: boolean;
 }
 
+interface ReportedSaveFailure {
+  message: string;
+  // Set by a successful restore: the next refusal is reported even if its
+  // message is the one already shown.
+  rearmed: boolean;
+}
+
 /**
  * True when every top-level entry of `snapshot` is an immediate child of `workspacePath`.
  * A snapshot whose entries point elsewhere is cross-workspace pollution
@@ -123,8 +130,15 @@ function collectWorkspaceState(
  * Restores workspace state from the backend after a folder is opened.
  * Accepts an AbortSignal so the caller can cancel a stale restore when
  * the user switches workspaces before the previous restore completes.
+ * A load that resolves re-arms the workspace's refused-save report, so the
+ * next refusal is news again. The toast stays: the backend latch holds for
+ * the session, so the warning is still true until a save succeeds.
  */
-async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal): Promise<void> {
+async function restoreWorkspaceState(
+  workspacePath: string,
+  signal: AbortSignal,
+  reportedSaveFailures: Map<string, ReportedSaveFailure>
+): Promise<void> {
   const store = useIDEStore.getState();
   store.setRestoringWorkspace(true);
 
@@ -140,6 +154,8 @@ async function restoreWorkspaceState(workspacePath: string, signal: AbortSignal)
 
     const state = await LoadWorkspaceState(workspacePath);
     if (signal.aborted) return;
+    const reported = reportedSaveFailures.get(workspacePath);
+    if (reported !== undefined) reported.rearmed = true;
     if (!state) return; // first time opening, use defaults
 
     // Restore layout
@@ -357,6 +373,11 @@ export function useWorkspacePersistence(
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const pendingSaveOptionsRef = useRef<CollectWorkspaceOptions>({});
   const prevWorkspaceRef = useRef<WorkspaceIdentity | null>(null);
+  // Workspace path -> the refused-save toast shown for it. A successful save
+  // retires the toast and the entry. A successful restore keeps the entry
+  // (a later success must still retire the toast) but re-arms the report,
+  // so the next refusal is shown again.
+  const reportedSaveFailuresRef = useRef(new Map<string, ReportedSaveFailure>());
 
   /**
    * Flush save — optionally for a specific workspace identity.
@@ -393,8 +414,31 @@ export function useWorkspacePersistence(
       if (!state) return;
 
       const promise = SaveWorkspaceState(state)
+        .then(() => {
+          // Saving works again: retire the report and its toast, shown or held.
+          const shown = reportedSaveFailuresRef.current.get(state.workspacePath);
+          if (shown === undefined) return;
+          reportedSaveFailuresRef.current.delete(state.workspacePath);
+          useIDEStore.getState().retireToast(shown.message);
+        })
         .catch((err) => {
           console.error('Failed to save workspace state:', err);
+          // Show a refused save once per workspace and reason, in the
+          // backend's own words (#290's latch names the consequence, the
+          // file, the reason and the remedy). Sticky, because the user has
+          // to act on it. The workspace path makes the message this
+          // workspace's own, so retiring it can never take another
+          // workspace's toast down. A different reason replaces the earlier
+          // report: the latest refusal is the one to act on.
+          const message = `Workspace session not saved (${state.workspacePath}): ${err instanceof Error ? err.message : String(err)}`;
+          const previous = reportedSaveFailuresRef.current.get(state.workspacePath);
+          if (previous !== undefined && previous.message === message && !previous.rearmed) return;
+          const ide = useIDEStore.getState();
+          if (previous !== undefined && previous.message !== message) {
+            ide.retireToast(previous.message);
+          }
+          reportedSaveFailuresRef.current.set(state.workspacePath, { message, rearmed: false });
+          ide.showToast(message, 'error', true);
         })
         .finally(() => {
           if (savePromiseRef.current === promise) {
@@ -504,7 +548,7 @@ export function useWorkspacePersistence(
     prevWorkspaceRef.current = { path: workspace.path, name: workspace.name };
 
     const controller = new AbortController();
-    restoreWorkspaceState(workspace.path, controller.signal);
+    restoreWorkspaceState(workspace.path, controller.signal, reportedSaveFailuresRef.current);
 
     return () => {
       controller.abort();

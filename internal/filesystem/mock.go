@@ -27,7 +27,11 @@ func (m *Mock) ReadFile(path string) ([]byte, error) {
 	if m.ReadFileFunc != nil {
 		return m.ReadFileFunc(path)
 	}
-	return nil, nil
+	// The unstubbed default is an absent file, like Stat. The old nil, nil
+	// answer read as a present, empty file, so a test that forgot its stub
+	// exercised a path a real filesystem only takes for a 0-byte file; a test
+	// that needs a file to exist must now say so with ReadFileFunc.
+	return nil, fmt.Errorf("%w: Mock.ReadFileFunc is not set for %s", fs.ErrNotExist, path)
 }
 
 func (m *Mock) WriteFile(path string, data []byte, perm fs.FileMode) error {

@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Toast } from '../../../components/Toast';
 import { useIDEStore } from '../../../stores/ideStore';
 
 // Reset store between tests
 beforeEach(() => {
-  useIDEStore.setState({ toast: null });
+  useIDEStore.setState({ toast: null, heldToasts: [] });
 });
 
 describe('Toast', () => {
@@ -36,5 +36,32 @@ describe('Toast', () => {
     });
     render(<Toast />);
     expect(screen.getByRole('button', { name: /dismiss/i })).toBeInTheDocument();
+  });
+
+  it('auto-dismisses an ordinary toast but keeps a sticky one until dismissed', () => {
+    jest.useFakeTimers();
+    try {
+      useIDEStore.setState({ toast: { message: 'Transient', type: 'error' } });
+      const { rerender } = render(<Toast />);
+      act(() => {
+        jest.advanceTimersByTime(4000);
+      });
+      expect(useIDEStore.getState().toast).toBeNull();
+
+      // A sticky toast carries a message the user must act on (#290's
+      // refused save): no timer, only the Dismiss button clears it.
+      act(() => {
+        useIDEStore.setState({ toast: { message: 'Act on me', type: 'error', sticky: true } });
+      });
+      rerender(<Toast />);
+      act(() => {
+        jest.advanceTimersByTime(60_000);
+      });
+      expect(useIDEStore.getState().toast?.message).toBe('Act on me');
+      fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+      expect(useIDEStore.getState().toast).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

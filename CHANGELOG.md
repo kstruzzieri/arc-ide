@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ollama requests now allocate the same context window used for Golem's
   input budget. The optional budget probe applies Firn's protected-file policy
   and resolves reasoning settings from the selected model when overriding it.
+- A workspace state file that fails to decode (a hand-edited type mismatch, a
+  truncated file, or one written by a newer Firn) is no longer overwritten by
+  a default session on the next save. Saving for that workspace is paused for
+  the session and the file is left as it is; the first refused save shows a
+  toast that stays until dismissed and names the workspace, the file, the
+  reason and the remedy: fix or remove the file, then restart Firn, or open
+  the workspace with the newer Firn that wrote it. An empty state file reads
+  as absent. (#290)
 
 ## [0.12.0] - 2026-09-06
 

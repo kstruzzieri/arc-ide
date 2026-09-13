@@ -259,6 +259,9 @@ func TestWriteFile_NoBackupWhenDisabled(t *testing.T) {
 	var backupCreated bool
 
 	mockFS := &Mock{
+		// The file has content, so a regressed guard would write a backup
+		// and trip the assertion below instead of skipping on a read error.
+		ReadFileFunc: func(path string) ([]byte, error) { return []byte("old content"), nil },
 		WriteFileFunc: func(path string, data []byte, perm fs.FileMode) error {
 			if path == "/test/file.txt.bak" {
 				backupCreated = true
@@ -289,6 +292,9 @@ func TestWriteFile_NoBackupForNewFile(t *testing.T) {
 	var backupCreated bool
 
 	mockFS := &Mock{
+		// A read that succeeds keeps a regressed guard observable: the only
+		// thing that must stop the backup here is Stat saying the file is new.
+		ReadFileFunc: func(path string) ([]byte, error) { return []byte("old content"), nil },
 		WriteFileFunc: func(path string, data []byte, perm fs.FileMode) error {
 			if path == "/test/file.txt.bak" {
 				backupCreated = true

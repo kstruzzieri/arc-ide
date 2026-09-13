@@ -6,6 +6,7 @@ beforeEach(() => {
     openFiles: [],
     activeFileId: null,
     toast: null,
+    heldToasts: [],
     isLeftPanelCollapsed: false,
     isRightPanelCollapsed: false,
     isBottomPanelCollapsed: false,
@@ -302,6 +303,76 @@ describe('ideStore - toast', () => {
     showToast('Save failed', 'error');
     clearToast();
 
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
+  it('holds a displaced sticky toast and restores it when the covering toast clears', () => {
+    // A sticky toast carries something the user must act on (#290's refused
+    // save); a passing toast may cover it but must not lose it.
+    const { showToast, clearToast } = useIDEStore.getState();
+    showToast('Act on me', 'error', true);
+    showToast('Passing', 'info');
+    expect(useIDEStore.getState().toast).toEqual({ message: 'Passing', type: 'info' });
+
+    clearToast();
+    expect(useIDEStore.getState().toast).toEqual({
+      message: 'Act on me',
+      type: 'error',
+      sticky: true,
+    });
+
+    clearToast();
+    expect(useIDEStore.getState().toast).toBeNull();
+    expect(useIDEStore.getState().heldToasts).toEqual([]);
+  });
+
+  it('stacks displaced sticky toasts and does not hold a repeat of the same message', () => {
+    const { showToast, clearToast } = useIDEStore.getState();
+    showToast('First workspace', 'error', true);
+    showToast('Second workspace', 'error', true);
+    showToast('Second workspace', 'error', true);
+    expect(useIDEStore.getState().heldToasts).toEqual([
+      { message: 'First workspace', type: 'error', sticky: true },
+    ]);
+
+    clearToast();
+    expect(useIDEStore.getState().toast?.message).toBe('First workspace');
+    clearToast();
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
+  it('re-showing a held sticky toast promotes it instead of duplicating it', () => {
+    const { showToast, clearToast } = useIDEStore.getState();
+    showToast('Act on me', 'error', true);
+    showToast('Passing', 'info');
+    showToast('Act on me', 'error', true);
+    expect(useIDEStore.getState().heldToasts).toEqual([]);
+    clearToast();
+    expect(useIDEStore.getState().toast).toBeNull();
+  });
+
+  it('retires a toast by message from the slot or the held stack', () => {
+    const { showToast, retireToast } = useIDEStore.getState();
+    showToast('Held', 'error', true);
+    showToast('Shown', 'error', true);
+    showToast('Passing', 'info');
+    expect(useIDEStore.getState().heldToasts.map((t) => t.message)).toEqual(['Held', 'Shown']);
+
+    // Held only: leaves the displayed toast alone.
+    retireToast('Held');
+    expect(useIDEStore.getState().toast?.message).toBe('Passing');
+    expect(useIDEStore.getState().heldToasts.map((t) => t.message)).toEqual(['Shown']);
+
+    // Displayed: gives way to the most recent held toast.
+    retireToast('Passing');
+    expect(useIDEStore.getState().toast?.message).toBe('Shown');
+    expect(useIDEStore.getState().heldToasts).toEqual([]);
+
+    // Unknown message: no-op.
+    retireToast('Never shown');
+    expect(useIDEStore.getState().toast?.message).toBe('Shown');
+
+    retireToast('Shown');
     expect(useIDEStore.getState().toast).toBeNull();
   });
 });
