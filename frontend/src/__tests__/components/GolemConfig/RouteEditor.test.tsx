@@ -907,6 +907,44 @@ describe('RouteEditor', () => {
     expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('agent'), false);
   });
 
+  it('re-seeds from its own coalesced staging when a pick returns to that model', async () => {
+    // chat staged an override on its model that narrows the exposure and sets
+    // Think. Reopened, the user picks another model, then the original again:
+    // the checklist and Think come back from the staged change — the group's
+    // current values — not from the model's raw declared exposure, which
+    // would silently widen the override and drop its Think.
+    const current = model({
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+    });
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: current.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'thinking'],
+      thinkMode: 'toggle',
+      confirmUnknown: false,
+    };
+    renderRouting({ models: [current, other], draft: draftWith(override) });
+    await openRoute('chat');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    expect(screen.getByLabelText('tool_call')).not.toBeChecked();
+
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('');
+    expect(screen.getByLabelText('tool_call')).toBeChecked();
+
+    await pickModel('gpt-5-mini');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('toggle');
+    expect(screen.getByLabelText('tool_call')).not.toBeChecked();
+    expect(screen.getByLabelText('thinking')).toBeChecked();
+  });
+
   it('refuses a join whose Think differs from what a sibling already sets on the model', async () => {
     const { onStage } = renderRouting({
       routes: [
