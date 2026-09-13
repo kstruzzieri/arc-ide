@@ -5,6 +5,7 @@
 package appstate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,13 +102,27 @@ func (s *Store) Load() (State, error) {
 		s.writeBlocked = fmt.Errorf("reading app state: %w", err)
 		return Default(), s.writeBlocked
 	}
-	var sf StateFile
-	if err := json.Unmarshal(data, &sf); err != nil {
+	// Zero bytes hold no preference to preserve: read as absent rather than
+	// latching writes off for the session (same rule as the workspace store).
+	if len(bytes.TrimSpace(data)) == 0 {
+		return Default(), nil
+	}
+	// The version envelope first, as probeExistingVersion reads it: a newer
+	// Firn's schema is reported as newer, not as corrupt.
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
 		return Default(), s.writeBlocked
 	}
-	if err := checkVersion(sf.Version); err != nil {
+	if err := checkVersion(envelope.Version); err != nil {
 		s.writeBlocked = err
+		return Default(), s.writeBlocked
+	}
+	var sf StateFile
+	if err := json.Unmarshal(data, &sf); err != nil {
+		s.writeBlocked = fmt.Errorf("parsing app state: %w", err)
 		return Default(), s.writeBlocked
 	}
 	if sf.State.GolemWindow.Mode != ModeUndocked {
@@ -156,8 +171,10 @@ func (s *Store) Save(state State) error {
 
 // probeExistingVersion reads only the version envelope of an existing file
 // ahead of a never-loaded Store's first write, latching writeBlocked with the
-// same wrapped errors Load would produce for an unreadable, unparseable, or
-// future-version file. A missing file latches nothing: Save may proceed.
+// same wrapped errors Load would produce for an unreadable file, an
+// unparseable envelope, or a future version. A body that no longer decodes
+// is caught by Load alone, which main always runs first. A missing or empty
+// file latches nothing: Save may proceed.
 func (s *Store) probeExistingVersion() {
 	data, err := s.fs.ReadFile(s.path)
 	if err != nil {
@@ -165,6 +182,9 @@ func (s *Store) probeExistingVersion() {
 			return
 		}
 		s.writeBlocked = fmt.Errorf("reading app state: %w", err)
+		return
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
 		return
 	}
 	var envelope struct {

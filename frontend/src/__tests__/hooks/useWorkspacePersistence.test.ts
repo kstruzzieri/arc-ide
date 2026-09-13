@@ -67,11 +67,175 @@ beforeEach(() => {
     isLoadingTree: false,
     treeError: null,
     toast: null,
+    heldToasts: [],
     isRestoringWorkspace: false,
   });
 });
 
 describe('useWorkspacePersistence', () => {
+  describe('refused saves (#290)', () => {
+    // After a failed load the backend refuses every save for that workspace.
+    // The refusal names the consequence, the file, the reason and the remedy,
+    // so the hook shows it in the backend's words: once per workspace, sticky
+    // until dismissed, retired when saving recovers or the workspace restores.
+    const refusal =
+      'workspace saving disabled for this session to preserve the existing state file (fix or remove it, then restart Firn): parsing workspace state file /home/u/.firn/workspaces/abc.json: json: cannot unmarshal string into Go struct field Layout.state.layout.golemCollapsed of type bool';
+    const shown = `Workspace session not saved (/workspace/w): ${refusal}`;
+    const diskFull =
+      'writing workspace state file: open /home/u/.firn/workspaces/abc.json.tmp: no space left on device';
+    // Workspace path -> the reason its saves are refused right now.
+    const refusing = new Map<string, string>();
+    let originalSave: ((state: unknown) => Promise<void>) | undefined;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      refusing.clear();
+      originalSave = mockSaveWorkspaceState.getMockImplementation();
+      mockSaveWorkspaceState.mockImplementation((state: unknown) => {
+        const path = (state as { workspacePath: string }).workspacePath;
+        const reason = refusing.get(path);
+        if (reason !== undefined) return Promise.reject(new Error(reason));
+        lastSavedWorkspaceState = state;
+        return Promise.resolve();
+      });
+    });
+
+    afterEach(() => {
+      mockSaveWorkspaceState.mockImplementation(originalSave);
+      jest.useRealTimers();
+    });
+
+    const mountAt = async (path: string) => {
+      useIDEStore.setState({
+        workspace: { name: path.slice(path.lastIndexOf('/') + 1), path },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith(path));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+    };
+
+    // Change the tree so the debounced save fires for the current workspace.
+    const saveOnce = async (name: string) => {
+      const before = mockSaveWorkspaceState.mock.calls.length;
+      act(() => {
+        useIDEStore.getState().setDirectoryTree([
+          filesystem.FileEntry.createFrom({
+            name,
+            path: `${useIDEStore.getState().workspace?.path}/${name}`,
+            isDir: true,
+            size: 0,
+            modTime: new Date().toISOString(),
+          }),
+        ]);
+      });
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      await waitFor(() => expect(mockSaveWorkspaceState.mock.calls.length).toBeGreaterThan(before));
+      await act(async () => {
+        await Promise.resolve();
+      });
+    };
+
+    it('shows the refusal once, sticky, retires it when saving recovers, and re-arms after', async () => {
+      refusing.set('/workspace/w', refusal);
+      await mountAt('/workspace/w');
+
+      await saveOnce('a');
+      expect(useIDEStore.getState().toast).toEqual({ message: shown, type: 'error', sticky: true });
+
+      // A second refusal neither repeats nor stacks the message.
+      await saveOnce('b');
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+      expect(useIDEStore.getState().heldToasts).toEqual([]);
+
+      // Covered by a passing toast, then saving recovers: the stale sticky
+      // toast is retired from the held stack without touching the cover.
+      act(() => useIDEStore.getState().showToast('Passing', 'info'));
+      expect(useIDEStore.getState().heldToasts.map((t) => t.message)).toEqual([shown]);
+      refusing.delete('/workspace/w');
+      await saveOnce('c');
+      expect(useIDEStore.getState().toast?.message).toBe('Passing');
+      expect(useIDEStore.getState().heldToasts).toEqual([]);
+      act(() => useIDEStore.getState().clearToast());
+      expect(useIDEStore.getState().toast).toBeNull();
+
+      // The next refusal is news again.
+      refusing.set('/workspace/w', refusal);
+      await saveOnce('d');
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+
+      // A different reason for the same workspace replaces the report: the
+      // latest refusal is the one to act on, and the earlier toast goes.
+      refusing.set('/workspace/w', diskFull);
+      await saveOnce('e');
+      expect(useIDEStore.getState().toast?.message).toBe(
+        `Workspace session not saved (/workspace/w): ${diskFull}`
+      );
+      expect(useIDEStore.getState().heldToasts).toEqual([]);
+
+      // Dismissed by the user: a further refusal for the same reason stays quiet.
+      act(() => useIDEStore.getState().clearToast());
+      await saveOnce('f');
+      expect(useIDEStore.getState().toast).toBeNull();
+    });
+
+    it('re-arms the report when the workspace restores again after a switch away and back', async () => {
+      // Repair-and-return: the user fixes the file without restarting and
+      // switches workspaces and back. The restore now succeeds, the UI looks
+      // healthy, but the backend still refuses every save for the session;
+      // that refusal must be shown again, not silenced by the earlier one.
+      refusing.set('/workspace/w', refusal);
+      await mountAt('/workspace/w');
+      await saveOnce('a');
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+
+      act(() => {
+        useIDEStore.setState({
+          workspace: { name: 'other', path: '/workspace/other' },
+          directoryTree: [],
+          isLoadingTree: false,
+        });
+      });
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledWith('/workspace/other'));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      // The switch-away flush of /workspace/w was refused and stayed quiet;
+      // the earlier toast is still the user's to dismiss.
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+
+      act(() => {
+        useIDEStore.setState({
+          workspace: { name: 'w', path: '/workspace/w' },
+          directoryTree: [],
+          isLoadingTree: false,
+        });
+      });
+      await waitFor(() => expect(mockLoadWorkspaceState).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+      // The restore keeps the toast: the latch still holds, so the warning
+      // is still true. It only re-arms the report.
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+
+      // Dismissed, then refused again after the restore: reported again.
+      act(() => useIDEStore.getState().clearToast());
+      await saveOnce('b');
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+
+      // Saving that works afterwards still retires the toast: the restore
+      // kept the entry, so nothing stale is left behind.
+      refusing.delete('/workspace/w');
+      await saveOnce('c');
+      expect(useIDEStore.getState().toast).toBeNull();
+
+      // And the next refusal is news again.
+      refusing.set('/workspace/w', refusal);
+      await saveOnce('d');
+      expect(useIDEStore.getState().toast?.message).toBe(shown);
+    });
+  });
+
   it('recovers when a rename re-runs the restore effect mid-restore (no permanent save freeze)', async () => {
     // The restore effect depends on workspace name; a name-only change aborts
     // the in-flight restore, whose finally deliberately leaves the restoring

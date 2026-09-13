@@ -1593,8 +1593,10 @@ func (a *App) SetLSPWorkspaceRoot(workspacePath string) {
 	a.lspManager.SetWorkspaceRoot(workspacePath)
 
 	// Seed any persisted interpreter override so it applies before the first
-	// file opens. Best-effort: a load error or absent state just means no
-	// override to seed.
+	// file opens. Absent state or a load error means no override to seed; a
+	// load error also latches saving off for this workspace for the session
+	// (see workspace.Store.Load), which is the right call: a file this
+	// session could not read must not be overwritten.
 	if st, err := a.workspaceStore.Load(workspacePath); err == nil && st != nil && st.LSP.InterpreterOverride != "" {
 		a.lspManager.SeedInterpreterOverride(workspacePath, st.LSP.InterpreterOverride)
 	}

@@ -83,6 +83,19 @@ func TestMockRenameNoHookIsNoop(t *testing.T) {
 	}
 }
 
+// An unset ReadFileFunc is an absent file. The old nil, nil answer read as a
+// present, empty file, so a test that forgot its stub took a path a real
+// filesystem only takes for a 0-byte file.
+func TestMockReadFileWithoutAStubReportsNotExist(t *testing.T) {
+	data, err := (&Mock{}).ReadFile("/anywhere")
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("ReadFile error = %v, want fs.ErrNotExist", err)
+	}
+	if data != nil {
+		t.Fatalf("ReadFile returned %q alongside an error", data)
+	}
+}
+
 // An unset StatFunc must not report success with a nil FileInfo: fs.Stat's
 // contract is that a nil error means the info is usable, and filesystem.Lstat
 // falls back to Stat, so callers dereference whatever comes back.

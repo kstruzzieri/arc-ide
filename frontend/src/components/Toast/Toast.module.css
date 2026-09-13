@@ -27,6 +27,11 @@
 
 .message {
   flex: 1;
+  /* A message may carry a workspace path or a file path with no break
+     opportunity; let it wrap inside the 400px toast instead of pushing
+     Dismiss off screen. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .close {
