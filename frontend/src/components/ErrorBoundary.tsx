@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import styles from './ErrorBoundary.module.css';
 
 interface Props {
@@ -53,21 +53,13 @@ export class ErrorBoundary extends Component<Props, State> {
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px' }}>
             {this.state.error?.message ?? 'An unexpected error occurred'}
           </p>
-          <ReloadButton />
+          <button type="button" className={styles.reload} onClick={() => window.location.reload()}>
+            Reload Application
+          </button>
         </div>
       );
     }
 
     return this.props.children;
   }
-}
-
-// Internal component, not exported - disable fast refresh warning
-// eslint-disable-next-line react-refresh/only-export-components
-function ReloadButton() {
-  return (
-    <button type="button" className={styles.reload} onClick={() => window.location.reload()}>
-      Reload Application
-    </button>
-  );
 }
