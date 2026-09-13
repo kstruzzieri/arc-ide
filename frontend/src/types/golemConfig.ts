@@ -451,6 +451,10 @@ function readRouteChange(value: Record<string, unknown>): Change | null {
   const capabilityFacts = readRequestCapabilityFacts(value.capabilityFacts);
   const exposedCaps = isCapabilityList(value.exposedCaps);
   if (modelFacts === null || capabilityFacts === null || exposedCaps === null) return null;
+  // An empty exposure is a break, not a clear: the backend would hand upstream
+  // a nil override and the model's capabilities would derive from its type
+  // again — never the empty set the checklist showed (§4.4).
+  if (exposedCaps.length === 0) return null;
   if (!isSubsetOf(exposedCaps, capabilityFacts.knownCaps)) return null;
 
   // Confirmation arrays are omitted when empty; an explicit [] is a break.
@@ -1350,26 +1354,27 @@ export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boole
   (model.dimensions ?? 0) === (facts.dimensions ?? 0);
 
 /**
- * Whether a staged route change onto `provider`/`model` is an OVERRIDE — the
- * same full facts its use case's role already names. That is the one change
- * the backend runs through `SetRoleOverrides`, selector-wide; and since
+ * Whether a staged route change onto `selector` is an OVERRIDE — the same
+ * full facts its use case's role already names. That is the one change the
+ * backend runs through `SetRoleOverrides`, selector-wide; and since
  * `projectDraft` coalesces a selector group onto its latest change, an
  * override anywhere in the group carries the group's Think to every role on
- * the selector — a join beside it reaches them too.
+ * the selector — a join beside it reaches them too. Reads only `modelFacts`,
+ * which coalescing never rewrites, so raw and projected changes give the same
+ * answer.
  */
 export const overridesSelector = (
   base: DraftBaseProjection,
   changes: readonly Change[],
-  provider: string,
-  model: string
+  selector: { readonly provider: string; readonly model: string }
 ): boolean => {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((current) => [current.role, current]));
   return changes.some((change) => {
     if (
       change.kind !== 'route' ||
-      change.modelFacts.provider !== provider ||
-      change.modelFacts.model !== model
+      change.modelFacts.provider !== selector.provider ||
+      change.modelFacts.model !== selector.model
     )
       return false;
     const role = roleOf.get(change.useCase);

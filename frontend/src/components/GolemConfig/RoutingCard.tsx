@@ -281,8 +281,10 @@ export function RoutingCard({
    * already has — the full facts, as the backend classifies it). Capabilities
    * are one override per selector, so any change onto the selector leaves this
    * row exposing them; think is written selector-wide only by an override
-   * (SetRoleOverrides) — a role joining the selector keeps its neighbours'
-   * think alone. A sibling the projection marks only through its ROLE — the
+   * (SetRoleOverrides) — a role joining the selector leaves a neighbour with
+   * no staged change of its own alone (a staged neighbour takes the group's
+   * coalesced Think, on its own row). A sibling the projection marks only
+   * through its ROLE — the
    * source role a retarget forks away from, a fallback chain — keeps every
    * applied value: §5.2b, siblings never change silently.
    */
@@ -305,7 +307,10 @@ export function RoutingCard({
     if (group.length === 0) return undefined;
     return {
       change: group[0],
-      override: overridesSelector(base, group, applied.provider, applied.modelName),
+      override: overridesSelector(base, group, {
+        provider: applied.provider,
+        model: applied.modelName,
+      }),
     };
   };
 
@@ -402,12 +407,10 @@ export function RoutingCard({
                         governing?.override === true
                           ? governing.change.thinkMode
                           : applied.thinkMode,
-                      // The editor refuses an empty exposure [W5-1] (go-llm would
-                      // clear the override to the type's defaults, not to nothing);
-                      // should a draft carry one anyway, the row keeps its applied
-                      // exposure rather than paint a set nobody chose.
+                      // Never empty: the editor and both request parsers refuse an
+                      // empty exposure [W5-1].
                       caps:
-                        governing !== undefined && governing.change.exposedCaps.length > 0
+                        governing !== undefined
                           ? governing.change.exposedCaps
                           : applied.exposedCapabilities,
                     };

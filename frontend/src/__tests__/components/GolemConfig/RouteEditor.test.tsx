@@ -703,6 +703,176 @@ describe('RouteEditor', () => {
     ).toEqual(['auto', 'auto']);
   });
 
+  it('does not count its own earlier staging as the override a reopen replaces', async () => {
+    // chat staged an OVERRIDE of its model (same full facts) that sets Think.
+    // Reopened, the editor picks the same provider/model under DIFFERENT facts —
+    // a retarget, which Done stages in place of the override (`stageChange`
+    // replaces the identity). No override is left on the selector then, so
+    // Think stays on this route: the notice must not read the replaced change.
+    const shared: Pick<
+      ModelProjection,
+      'effectiveCapabilities' | 'capabilityFacts' | 'exposedCapabilities'
+    > = {
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+    };
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'agent', role: 'agent-role' },
+    ];
+    const models = [
+      model({ ...shared, contextWindow: 32768 }),
+      model({ ...shared, role: 'agent-role', parameters: '7B', routedUseCases: ['agent'] }),
+    ];
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense', contextWindow: 32768 },
+      capabilityFacts: shared.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    renderRouting({ routes, models, draft: draftWith(override) });
+    await openRoute('chat');
+    // Two cards share the name; the 7B facts line tells the agent's apart.
+    const card = within(screen.getByRole('listbox', { name: /Models/ }))
+      .getAllByRole('option')
+      .find((option) => within(option).queryByText(/7B/) !== null);
+    if (card === undefined) throw new Error('no 7B card');
+    await userEvent.click(card);
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities are a property of the model, not the route. Changing them here also changes them for agent; Think applies to this route only.'
+    );
+  });
+
+  it('says Think reaches every other staged route on the selector, override or not', async () => {
+    // planning is already staged onto gpt-5 with Think always; summarize is
+    // applied there. The reducer coalesces every staged route on a selector
+    // onto the LATEST change, so a chat join makes its Think planning's Think
+    // too — while summarize, applied and unstaged, keeps its own without an
+    // override. The notice names exactly that split.
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'planning', role: 'planning-role' },
+      { useCase: 'summarize', role: 'other-role' },
+    ];
+    const models = [
+      model(),
+      model({ role: 'planning-role', modelName: 'gpt-4', routedUseCases: ['planning'] }),
+      { ...other, routedUseCases: ['summarize'] },
+    ];
+    const join: RouteChange = {
+      kind: 'route',
+      useCase: 'planning',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: other.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ routes, models, draft: draftWith(join) });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities are a property of the model, not the route. Changing them here also changes them for planning and summarize; Think applies to this route and planning.'
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    const projected = projectDraft({ routes, models }, draftWith(join, staged));
+    expect(
+      projected.changes.map((change) => (change.kind === 'route' ? change.thinkMode : change.kind))
+    ).toEqual(['auto', 'auto']);
+  });
+
+  it('opens a join on the Think and exposure its selector already carries in the draft', async () => {
+    // agent's staged override sets Think always on gpt-5. A chat join coalesces
+    // onto whatever Done stages here, so the editor opens on always — a Done
+    // that leaves Think alone keeps the override's value instead of wiping it
+    // to the applied ''.
+    const agentModel = model({
+      role: 'agent-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'generate', 'stream', 'tool_call', 'thinking'],
+      routedUseCases: ['agent'],
+    });
+    // The override narrowed the exposure (no generate): the join must open on
+    // THAT set, not on the applied five.
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: agentModel.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'agent', role: 'agent-role' },
+    ];
+    const { onStage } = renderRouting({
+      routes,
+      models: [model(), agentModel],
+      draft: draftWith(override),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('always');
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    expect(staged.thinkMode).toBe('always');
+    expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+  });
+
+  it('opens an applied route on the Think a staged join already gives its selector', async () => {
+    // chat staged a join onto gpt-5 — agent's applied model — with Think auto.
+    // Opening agent starts from auto: an untouched Done would otherwise stage
+    // agent's applied '' as the group's authority and wipe the join's Think.
+    const agentModel = model({
+      role: 'agent-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      routedUseCases: ['agent'],
+    });
+    const join: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: agentModel.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'auto',
+      confirmUnknown: false,
+    };
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), agentModel],
+      draft: draftWith(join),
+    });
+    await openRoute('agent');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+  });
+
   it('refuses a join whose Think differs from what a sibling already sets on the model', async () => {
     const { onStage } = renderRouting({
       routes: [
@@ -998,6 +1168,11 @@ describe('RouteEditor', () => {
     });
     await openRoute('summarize');
     await userEvent.click(screen.getByLabelText('chat'));
+    // Disclosed as soon as the last cap goes, like every other blocking clause.
+    expect(screen.getByText(/Tick at least one capability/).closest('div')).toHaveAttribute(
+      'data-tone',
+      'blocking'
+    );
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     expect(onStage).not.toHaveBeenCalled();
@@ -1006,8 +1181,34 @@ describe('RouteEditor', () => {
     );
 
     await userEvent.click(screen.getByLabelText('chat'));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tick at least one capability/)).not.toBeInTheDocument();
     await stage();
     expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat']);
+  });
+
+  it('refuses a hand-declared model with nothing ticked on a floorless route', async () => {
+    // A floorless route seeds no caps into a fresh declaration (§4.4), so the
+    // checklist opens empty — and go-llm would derive the type's defaults for
+    // that join exactly as for an override. Said before Done, refused on Done.
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'summarize', role: 'summarize-role' }],
+      models: [model({ role: 'summarize-role', routedUseCases: ['summarize'] })],
+    });
+    await openRoute('summarize');
+    await declareModel('fresh-model');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    expect(
+      screen
+        .getByText(
+          "Tick at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
+        )
+        .closest('div')
+    ).toHaveAttribute('data-tone', 'blocking');
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Tick at least one capability/);
   });
 
   it('offers Unassign for an optional route and never for the agent', async () => {

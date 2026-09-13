@@ -183,7 +183,8 @@ interface Seed {
 function seedFrom(
   staged: Change | undefined,
   current: ModelProjection | null,
-  models: readonly ModelProjection[]
+  models: readonly ModelProjection[],
+  authority: RouteChange | undefined
 ): Seed {
   // [W4-7] The exposure seeds EXACTLY from what is staged or applied. A floor
   // cap the model lacks is never added here: go-llm takes an asserted cap as
@@ -209,12 +210,15 @@ function seedFrom(
     };
   }
   if (current !== null) {
+    // [W5-5] Another route already staged onto this selector: coalescing will
+    // hand the group whatever Done stages here, so open on the group's own
+    // exposure and Think — a Done that touches neither keeps them.
     return {
       provider: current.provider,
       defined: current,
       manual: null,
-      exposed: canonicalCaps(current.exposedCapabilities),
-      think: current.thinkMode,
+      exposed: canonicalCaps(authority?.exposedCaps ?? current.exposedCapabilities),
+      think: authority?.thinkMode ?? current.thinkMode,
       ackUnknown: false,
       ackDrops: false,
     };
@@ -249,8 +253,37 @@ export function RouteEditor({
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
   const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
+  /**
+   * The draft minus this route's own staging: Done replaces that identity
+   * (`stageChange`), so nothing below may read it as a sibling.
+   */
+  const others = draft.changes.filter(
+    (change) => !(change.kind === 'route' && change.useCase === useCase)
+  );
+  /**
+   * [W5-5] The latest route ANOTHER use case staged onto a model's selector —
+   * the change `projectDraft` will coalesce this one onto (its latest member
+   * is the authority, and Done makes this route the latest).
+   */
+  const authorityOn = (model: ModelProjection | null): RouteChange | undefined =>
+    model === null
+      ? undefined
+      : [...others]
+          .reverse()
+          .find(
+            (change): change is RouteChange =>
+              change.kind === 'route' &&
+              change.modelFacts.provider === model.provider &&
+              change.modelFacts.model === model.modelName
+          );
   const seed = useMemo(
-    () => seedFrom(preselect === undefined ? staged : undefined, preselect ?? current, models),
+    () =>
+      seedFrom(
+        preselect === undefined ? staged : undefined,
+        preselect ?? current,
+        models,
+        authorityOn(preselect ?? current)
+      ),
     // Derived once, at mount: the row remounts when the document moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -297,9 +330,13 @@ export function RouteEditor({
    * paths (staged, applied, freshly chosen) on one notion of "offered", so
    * retargeting onto a model whose selector another use case narrowed cannot
    * silently re-widen that sibling's persisted contract through
-   * `SetRoleOverrides`. Nothing is added to it (see `seedFrom`).
+   * `SetRoleOverrides`. A route another use case already STAGED onto the
+   * selector comes first [W5-5]: coalescing makes its exposure this one's.
+   * Nothing is added to it (see `seedFrom`).
    */
-  const offeredCaps = defined?.exposedCapabilities ?? capabilityFacts?.caps ?? [];
+  const authority = authorityOn(defined);
+  const offeredCaps =
+    authority?.exposedCaps ?? defined?.exposedCapabilities ?? capabilityFacts?.caps ?? [];
 
   // Choosing a different model re-seeds the checklist from ITS exposure. Keyed
   // on the declaration, not the half-typed name, so a keystroke never discards
@@ -313,7 +350,7 @@ export function RouteEditor({
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
     setExposed(canonicalCaps(offeredCaps));
-    setThink(manual === null ? (defined?.thinkMode ?? '') : '');
+    setThink(manual === null ? (authority?.thinkMode ?? defined?.thinkMode ?? '') : '');
     setAckDrops(false);
     setAckUnknown(false);
   }
@@ -359,21 +396,31 @@ export function RouteEditor({
    */
   const isOverride = current !== null && facts !== null && sameModelFacts(current, facts);
   /**
-   * [W5-2] Whether Think reaches the selector. An override writes it there
-   * itself; a join does too once the draft already holds an override on the
-   * selector — the reducer coalesces the group onto its latest change and the
-   * backend runs the group's override selector-wide. `isOverride` alone still
+   * [W5-2][W5-3][W5-4] Where Think lands. The reducer coalesces a selector
+   * group onto its latest change, so Think always reaches every OTHER staged
+   * route on the selector (`peers`); it reaches the applied siblings too only
+   * when the group holds an override — this change, or one already staged —
+   * because only `SetRoleOverrides` writes selector-wide. This route's own
+   * earlier staging is not a sibling (`others`): Done replaces it, and
+   * `isOverride` already speaks for the candidate. `isOverride` alone still
    * decides what a retarget drops.
    */
-  const thinkReaches =
-    isOverride ||
-    (candidate !== null &&
-      overridesSelector(
-        base,
-        draft.changes,
-        candidate.modelFacts.provider,
-        candidate.modelFacts.model
-      ));
+  const peers = new Set(
+    candidate === null
+      ? []
+      : others.flatMap((change) =>
+          change.kind === 'route' &&
+          change.modelFacts.provider === candidate.modelFacts.provider &&
+          change.modelFacts.model === candidate.modelFacts.model
+            ? [change.useCase]
+            : []
+        )
+  );
+  const thinkEverywhere =
+    isOverride || (candidate !== null && overridesSelector(base, others, candidate.modelFacts));
+  const thinkReach = thinkEverywhere
+    ? alsoGoverns
+    : alsoGoverns.filter((other) => peers.has(other));
 
   /**
    * What a real retarget would drop. An override drops nothing, and a
@@ -404,6 +451,9 @@ export function RouteEditor({
    * still refuses — named by the routes it still serves, or as
    * `role <name>` when none is left to name (an unrouted role never leaves).
    * The edited role counts only when shared (this route is leaving it).
+   * A sibling's own staged override lands in the overrides phase, after every
+   * join, so its APPLIED Think is what this join meets — even while the row
+   * already paints the staged one.
    * Ceiling: a sibling routed by exactly one use case that an unrouted role
    * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
    * the pre-check may mark it gone and the backend refuses late.
@@ -489,7 +539,9 @@ export function RouteEditor({
   const snapshot = snapshotOf({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
-  const [committed] = useState(() => snapshotOf(seedFrom(staged, current, models)));
+  const [committed] = useState(() =>
+    snapshotOf(seedFrom(staged, current, models, authorityOn(current)))
+  );
   const unstaged = snapshot !== committed;
 
   useEffect(() => {
@@ -524,16 +576,18 @@ export function RouteEditor({
       setRefusal('Choose a model, or enter one manually.');
       return;
     }
-    // [W5-1] go-llm reads an empty override as "clear it" — the model type's
-    // defaults come back — and a join with none lands the declared set;
-    // neither is the empty set the checklist shows (§4.4).
-    if (exposed.length === 0) {
-      setRefusal(EMPTY_EXPOSURE);
-      return;
-    }
     // The clause the backend would refuse with, before the round trip.
     if (short.length > 0) {
       setRefusal(`${INELIGIBLE} ${shortfallLine(short)}.`);
+      return;
+    }
+    // [W5-1] go-llm reads an empty capability list as "clear it" and derives
+    // the model type's defaults — for an override (SetRoleOverrides, nil) and
+    // a join alike (roleOptions → applyRoleOverridesFromOpts: len == 0
+    // clears); never the empty set the checklist shows (§4.4). After the
+    // floor clause, which names what a floored route is missing.
+    if (exposed.length === 0) {
+      setRefusal(EMPTY_EXPOSURE);
       return;
     }
     if (thinkConflicts.length > 0) {
@@ -745,11 +799,13 @@ export function RouteEditor({
 
       {/* This edit reaches past the row being edited. [W4-8] Only an override
           writes Think selector-wide; a join carries its Think on its own role —
-          unless the draft already holds an override on the selector [W5-2]. */}
+          but the reducer coalesces every staged route on the selector onto this
+          one's Think [W5-4], and an override already staged there carries it to
+          the applied siblings too [W5-2]. */}
       {alsoGoverns.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {thinkReaches ? (
+            {thinkReach.length === alsoGoverns.length ? (
               <>
                 Capabilities and Think are properties of <strong>the model</strong>, not the route.
                 Changing them here also changes them for {boldList(alsoGoverns)}.
@@ -758,7 +814,7 @@ export function RouteEditor({
               <>
                 Capabilities are a property of <strong>the model</strong>, not the route. Changing
                 them here also changes them for {boldList(alsoGoverns)}; Think applies to this route
-                only.
+                {thinkReach.length === 0 ? ' only' : <> and {boldList(thinkReach)}</>}.
               </>
             )}
           </p>
@@ -835,6 +891,14 @@ export function RouteEditor({
             a model that does, or tick {short.length === 1 ? 'it' : 'them'} here to declare that it
             can.
           </p>
+        </div>
+      )}
+
+      {/* [W5-1] Nothing ticked is not "nothing exposed": go-llm derives the
+          model type's defaults for an empty list. Said here, before Done refuses. */}
+      {facts !== null && exposed.length === 0 && (
+        <div className={styles.disclosure} data-tone="blocking">
+          <p className={styles.disclosureText}>{EMPTY_EXPOSURE}</p>
         </div>
       )}
 

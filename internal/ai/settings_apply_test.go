@@ -2758,11 +2758,16 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 }`
 	h := newApplyHarness(t, target)
 	before := h.targetBytes(t)
+	// An override asserting the shared selector without embed, below
+	// embedding's floor. Upstream's SetRoleOverrides gate refuses it during the
+	// mutation, naming the first matching ROLE; the use-case-subject refusal
+	// (checkPreparedDocument) is reached only when that gate passes — which an
+	// empty exposure did, by clearing to the type defaults, before
+	// validateRouteChange refused the empty list (see the apply corpus).
 	change := confirmUnknown(
-		routeChange("summarize", "ollama", "shared-model", "chat", "stream", "embed"),
+		routeChange("summarize", "ollama", "shared-model", "chat", "stream"),
 		"summarize",
 	)
-	change.ExposedCaps = []string{}
 
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
@@ -2770,9 +2775,10 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 	}
 	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
 		res.Diagnostics[0].Code != codeEligibilityIneligible ||
-		res.Diagnostics[0].SubjectKind != "use_case" ||
-		res.Diagnostics[0].SubjectName != "embedding" {
-		t.Errorf("ApplySettings(selector override) = %+v, want embedding %s diagnostic",
+		res.Diagnostics[0].SubjectKind != "role" ||
+		res.Diagnostics[0].SubjectName != "embed-m" ||
+		!res.Diagnostics[0].Blocking {
+		t.Errorf("ApplySettings(selector override) = %+v, want blocking embed-m %s diagnostic",
 			res, codeEligibilityIneligible)
 	}
 	if got := h.targetBytes(t); !bytes.Equal(got, before) {
