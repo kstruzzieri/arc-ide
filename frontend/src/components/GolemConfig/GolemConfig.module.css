@@ -529,7 +529,7 @@ select.input {
 .primary {
   border-color: var(--accent);
   background-color: var(--accent);
-  color: var(--surface-base);
+  color: var(--text-on-accent);
   font-weight: 600;
 }
 

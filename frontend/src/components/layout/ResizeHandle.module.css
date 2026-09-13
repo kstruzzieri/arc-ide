@@ -94,7 +94,7 @@
 
 .collapseBtn:hover {
   background: var(--accent);
-  color: var(--text-primary);
+  color: var(--text-on-accent);
 }
 
 .collapseBtn svg {
