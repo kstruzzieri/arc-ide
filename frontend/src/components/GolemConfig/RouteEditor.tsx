@@ -261,21 +261,23 @@ export function RouteEditor({
     (change) => !(change.kind === 'route' && change.useCase === useCase)
   );
   /**
-   * [W5-5] The latest route ANOTHER use case staged onto a model's selector —
-   * the change `projectDraft` will coalesce this one onto (its latest member
-   * is the authority, and Done makes this route the latest).
+   * [W5-5] What the selector's group holds in this draft — the values
+   * `projectDraft` will coalesce this route onto (its latest member is the
+   * authority, and Done makes this route the latest). This route's own
+   * staging comes first when it sits on the selector: RoutingCard hands it
+   * over already coalesced, so it IS the group's current values, where a
+   * peer's raw staging may predate them. Otherwise the latest peer.
    */
-  const authorityOn = (model: ModelProjection | null): RouteChange | undefined =>
-    model === null
-      ? undefined
-      : [...others]
-          .reverse()
-          .find(
-            (change): change is RouteChange =>
-              change.kind === 'route' &&
-              change.modelFacts.provider === model.provider &&
-              change.modelFacts.model === model.modelName
-          );
+  const authorityOn = (model: ModelProjection | null): RouteChange | undefined => {
+    if (model === null) return undefined;
+    const onSelector = (change: Change): change is RouteChange =>
+      change.kind === 'route' &&
+      change.modelFacts.provider === model.provider &&
+      change.modelFacts.model === model.modelName;
+    return staged !== undefined && onSelector(staged)
+      ? staged
+      : [...others].reverse().find(onSelector);
+  };
   const seed = useMemo(
     () =>
       seedFrom(
@@ -350,6 +352,9 @@ export function RouteEditor({
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
     setExposed(canonicalCaps(offeredCaps));
+    // A hand-declared name is never matched against a staged selector: this
+    // key is the declaration's caps, not the half-typed name (ceiling; a
+    // declaration that spells a peer's staged model still opens on '').
     setThink(manual === null ? (authority?.thinkMode ?? defined?.thinkMode ?? '') : '');
     setAckDrops(false);
     setAckUnknown(false);
@@ -814,7 +819,14 @@ export function RouteEditor({
               <>
                 Capabilities are a property of <strong>the model</strong>, not the route. Changing
                 them here also changes them for {boldList(alsoGoverns)}; Think applies to this route
-                {thinkReach.length === 0 ? ' only' : <> and {boldList(thinkReach)}</>}.
+                {thinkReach.length === 0 ? (
+                  ' only'
+                ) : thinkReach.length === 1 ? (
+                  <> and {boldList(thinkReach)}</>
+                ) : (
+                  <>, {boldList(thinkReach)}</>
+                )}
+                .
               </>
             )}
           </p>

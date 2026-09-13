@@ -759,37 +759,68 @@ describe('RouteEditor', () => {
     const routes = [
       { useCase: 'chat', role: 'chat-role' },
       { useCase: 'planning', role: 'planning-role' },
+      { useCase: 'analysis', role: 'analysis-role' },
       { useCase: 'summarize', role: 'other-role' },
     ];
     const models = [
       model(),
       model({ role: 'planning-role', modelName: 'gpt-4', routedUseCases: ['planning'] }),
+      model({ role: 'analysis-role', modelName: 'gpt-4', routedUseCases: ['analysis'] }),
       { ...other, routedUseCases: ['summarize'] },
     ];
-    const join: RouteChange = {
+    const join = (useCase: string): RouteChange => ({
       kind: 'route',
-      useCase: 'planning',
+      useCase,
       modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
       capabilityFacts: other.capabilityFacts,
       exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
       thinkMode: 'always',
       confirmUnknown: false,
-    };
-    const { onStage } = renderRouting({ routes, models, draft: draftWith(join) });
+    });
+    const { onStage } = renderRouting({
+      routes,
+      models,
+      draft: draftWith(join('planning'), join('analysis')),
+    });
     await openRoute('chat');
     await pickModel('gpt-5');
+    // Two peers: the clause lists them after this route, one conjunction.
     expect(screen.getByText(/not the route/)).toHaveTextContent(
-      'Capabilities are a property of the model, not the route. Changing them here also changes them for planning and summarize; Think applies to this route and planning.'
+      'Capabilities are a property of the model, not the route. Changing them here also changes them for analysis, planning and summarize; Think applies to this route, analysis and planning.'
     );
 
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
     await userEvent.click(screen.getByLabelText('Apply anyway'));
     await stage();
     const staged = onStage.mock.calls[0][0][0];
-    const projected = projectDraft({ routes, models }, draftWith(join, staged));
+    const projected = projectDraft(
+      { routes, models },
+      draftWith(join('planning'), join('analysis'), staged)
+    );
     expect(
       projected.changes.map((change) => (change.kind === 'route' ? change.thinkMode : change.kind))
-    ).toEqual(['auto', 'auto']);
+    ).toEqual(['auto', 'auto', 'auto']);
+  });
+
+  it('names the floor before the empty set when both clauses stand', async () => {
+    // A floored route on a model that never met it: unticking the last cap
+    // leaves both refusals standing, and Done answers with the one naming what
+    // chat is missing — the backend's own clause — not the generic one.
+    const { onStage } = renderRouting({
+      models: [
+        model({
+          effectiveCapabilities: ['generate'],
+          capabilityFacts: { caps: ['generate'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ['generate'],
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await userEvent.click(screen.getByLabelText('generate'));
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/chat needs chat/);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/Tick at least one/);
   });
 
   it('opens a join on the Think and exposure its selector already carries in the draft', async () => {
@@ -861,7 +892,7 @@ describe('RouteEditor', () => {
       thinkMode: 'auto',
       confirmUnknown: false,
     };
-    renderRouting({
+    const { onUnstagedChange } = renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
         { useCase: 'agent', role: 'agent-role' },
@@ -871,6 +902,9 @@ describe('RouteEditor', () => {
     });
     await openRoute('agent');
     expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    // The committed baseline opens on the same values: nothing is unstaged
+    // yet, so the Apply gate is not held by merely opening the editor.
+    expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('agent'), false);
   });
 
   it('refuses a join whose Think differs from what a sibling already sets on the model', async () => {

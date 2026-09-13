@@ -2786,6 +2786,35 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 	}
 }
 
+// TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase pins the completed-
+// document loop: a Firn floor the request never names but the finished
+// document no longer meets is reported on THAT use case. The apply path
+// reaches this loop only when upstream's own gate passed (see the selector
+// override test above, where it does not).
+func TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase(t *testing.T) {
+	doc, err := config.ParseDocument([]byte(`{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "embed-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream"]}
+  },
+  "defaults": {"agent": "agent-m", "embedding": "embed-m"}
+}`), config.Origin{Source: config.OriginProfile}, config.DocumentOptions{})
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	res := checkPreparedDocument(doc, SettingsApplyRequest{})
+	if res == nil || res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "embedding" {
+		t.Fatalf("checkPreparedDocument = %+v, want embedding %s diagnostic",
+			res, codeEligibilityIneligible)
+	}
+}
+
 // TestApplySettingsConsentMatrix: only a CHANGED, ungranted, remote agent
 // destination takes a challenge. Everything else — unchanged, local, or
 // already granted — publishes straight through, and the challenge itself
