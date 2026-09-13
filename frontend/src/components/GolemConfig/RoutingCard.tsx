@@ -1,7 +1,7 @@
 /**
  * Model routing section card (#263 spec §4.1/§4.2/§4.3, mockup v10).
  *
- * One strip per use case, joined to the model its role resolves to, and a
+ * One row per use case, joined to the model its role resolves to, and a
  * subgroup for models the file defines but nothing routes.
  *
  * The row list is the union of Firn's KNOWN use cases and the ones this file
@@ -12,12 +12,13 @@
  * route change paints its own model, and a staged unassign paints none. Without
  * that a new assignment would read as "No model" until the write landed.
  *
- * Strips are list items, matching the dock readout's `ul`/`li` rows, so each row
- * has a boundary in the accessibility tree — and so the editor's `fieldset`,
- * which a `role="row"` would forbid, has a legal home.
+ * Rows are `role="row"` inside a `role="table"` (#308): the header row names the
+ * columns once for assistive technology at every width. An open row and its
+ * editor share one `role="rowgroup"`, which is where the editor's `fieldset` —
+ * illegal directly inside a row — has a legal home.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   compareString,
   type CapabilityName,
@@ -30,15 +31,22 @@ import {
 import {
   USE_CASE_FLOORS,
   changeStableID,
+  floorShortfalls,
+  governedUseCasesOf,
   meetsUseCaseFloor,
+  overridesSelector,
+  probeRouteChange,
+  shortfallLine,
   type Change,
   type Draft,
+  type RouteChange,
   type RowMarkers,
 } from '../../types/golemConfig';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
-import { Cell } from './Cell';
+import { AssignList, type AssignOption } from './AssignList';
+import { Cell, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
 import { StatusText, type StatusTone } from './StatusText';
@@ -108,6 +116,12 @@ export interface RoutingCardProps {
   rows: ReadonlyMap<string, RowMarkers>;
   /** Role-identity row markers from `projectDraft`. */
   roleRows: ReadonlyMap<string, RowMarkers>;
+  /**
+   * Staged use case → every use case its selector governs (`projectDraft`).
+   * A shared-selector change retargets siblings; the row says so before the
+   * editor is opened.
+   */
+  selectorUseCases: ReadonlyMap<string, readonly string[]>;
   diagnostics: readonly SettingsDiagnostic[];
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
@@ -128,6 +142,7 @@ export function RoutingCard({
   changes,
   rows,
   roleRows,
+  selectorUseCases,
   diagnostics,
   editable,
   focusRequest = null,
@@ -137,40 +152,103 @@ export function RoutingCard({
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   /** A fresh object per request, so a repeated chip click focuses again. */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
+  /**
+   * #284: the staging announcement must outlive the editor that produced it,
+   * so the live region is the card's, mounted for the card's whole life.
+   */
+  const [announcement, setAnnouncement] = useState('');
+  /**
+   * The row a jump just landed on, for ~1.4s (ruling 7), held as the change
+   * identity `route:<useCase>` / `role:<role>`. [X11] Both namespaces flash, and a
+   * use case and a model role may legally share a name, so the namespace rides
+   * along rather than the bare name. [K4] So does the request's nonce: a SECOND
+   * jump to the same row inside the flash window is otherwise an identical
+   * `setFlash`, which React bails out of — the attribute never changes and the row
+   * the user asked for twice flashes once. [N3] The two live in separate fields
+   * rather than one `<key>#<nonce>` string: `#` is a legal identifier character.
+   */
+  const [flash, setFlash] = useState<{ key: string; nonce: number } | null>(null);
+  const flashNonce = (key: string): number | undefined =>
+    flash?.key === key ? flash.nonce : undefined;
+  /** [W4-3] The defined-model row whose Assign list is open — one at a time — by role. */
+  const [assigning, setAssigning] = useState<string | null>(null);
+  /**
+   * [W4-3] Use case → the defined model its editor opens on, from the Assign
+   * list. Read once, when the editor mounts; cleared when that editor closes.
+   */
+  const [preselect, setPreselect] = useState<ReadonlyMap<string, ModelProjection>>(new Map());
 
   // More than one row may be expanded at once: collapsing an editor outside
   // its explicit actions would silently discard unstaged fields (§4.6a).
   const openEditor = (useCase: string, elementId: string) => {
     setOpen((current) => (current.has(useCase) ? current : new Set(current).add(useCase)));
     setPendingFocus({ elementId });
+    setAnnouncement('');
   };
 
-  const close = (useCase: string) =>
+  /**
+   * [C22] `elementId` is the control focus returns to — the row's Edit button,
+   * so Cancel lands back where the editor was opened from.
+   */
+  const close = (useCase: string, elementId?: string) => {
     setOpen((current) => {
       if (!current.has(useCase)) return current;
       const next = new Set(current);
       next.delete(useCase);
       return next;
     });
+    setPreselect((current) => {
+      if (!current.has(useCase)) return current;
+      const next = new Map(current);
+      next.delete(useCase);
+      return next;
+    });
+    if (elementId !== undefined) setPendingFocus({ elementId });
+  };
+
+  // Named `announceStaged`, not `staged`: the row map below already binds
+  // `staged` to the row's Change (`stagedFor(useCase)`), and that shadow
+  // would silently turn the handler call into a call on a Change object.
+  const announceStaged = (useCase: string, editorId: string, message: string) => {
+    setAnnouncement(message);
+    close(useCase);
+    setPendingFocus({ elementId: `${editorId}-edit` });
+  };
 
   // Two effects, because the editor does not exist until the open state has
   // committed: the first expands the row, the second focuses what that commit
   // mounted. A `role-remove` chip has no editor at all, so it lands on the
   // defined-model row itself.
   useEffect(() => {
-    if (focusRequest === null) return;
+    // [A1] The shared boundary: a request can never open editable controls on a
+    // locked, consenting, busy, Limited/Invalid or read-only surface.
+    if (focusRequest === null || !editable) return;
     const separator = focusRequest.changeId.indexOf(':');
     const namespace = focusRequest.changeId.slice(0, separator);
     const name = focusRequest.changeId.slice(separator + 1);
     if (namespace === 'role') {
+      // [X11] A `role-remove` chip has no editor, so the defined-model row itself is
+      // the target — and it flashes like any other landed jump.
       setPendingFocus({ elementId: definedRowId(name) });
+      setFlash({ key: `role:${name}`, nonce: focusRequest.nonce });
+      const roleTimer = window.setTimeout(() => setFlash(null), 1400);
+      return () => window.clearTimeout(roleTimer);
+    }
+    if (namespace !== 'route') {
+      setFlash(null); // the jump landed in the other card: no stale flash here
       return;
     }
-    if (namespace !== 'route') return;
     const index = routeUseCases(routes).indexOf(name);
     if (index < 0) return;
-    setOpen((current) => (current.has(name) ? current : new Set(current).add(name)));
-    setPendingFocus({ elementId: `golem-route-editor-${index}` });
+    const editorId = `golem-route-editor-${index}`;
+    openEditor(name, `${editorId}-filter`); // the Model field, not the fieldset
+    // [C26] Never interpolate an identifier into a selector (quotes are legal in
+    // use-case names); the row carries an index-derived id instead.
+    // `scrollIntoView` is optional-called because jsdom does not implement it.
+    document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
+    setFlash({ key: `route:${name}`, nonce: focusRequest.nonce });
+    const timer = window.setTimeout(() => setFlash(null), 1400);
+    return () => window.clearTimeout(timer);
     // Routes are stable for the life of one card mount (the workspace remounts
     // it when the document moves), so the request alone drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -191,10 +269,85 @@ export function RoutingCard({
     providers
   );
   const sourceReplaced = draft.source.kind !== 'applied';
-  const base = { routes, models };
+  // One object per document: the editor caches its per-card verdicts on it.
+  const base = useMemo(() => ({ routes, models }), [routes, models]);
 
   const stagedFor = (useCase: string): Change | undefined =>
     changes.find((change) => changeStableID(change) === `route:${useCase}`);
+
+  /**
+   * [W4-1][#315] The staged route change whose selector `applied` shares, and
+   * whether its group is an OVERRIDE (a change onto the model its use case
+   * already has — the full facts, as the backend classifies it). Capabilities
+   * are one override per selector, so any change onto the selector leaves this
+   * row exposing them; think is written selector-wide only by an override
+   * (SetRoleOverrides) — a role joining the selector leaves a neighbour with
+   * no staged change of its own alone (a staged neighbour takes the group's
+   * coalesced Think, on its own row). A sibling the projection marks only
+   * through its ROLE — the
+   * source role a retarget forks away from, a fallback chain — keeps every
+   * applied value: §5.2b, siblings never change silently.
+   */
+  const governingChange = (
+    useCase: string,
+    applied: ModelProjection | null
+  ): { change: RouteChange; override: boolean } | undefined => {
+    if (applied === null) return undefined;
+    const group: RouteChange[] = [];
+    for (const [stagedUseCase, affected] of selectorUseCases) {
+      if (!affected.includes(useCase)) continue;
+      const change = stagedFor(stagedUseCase);
+      if (
+        change?.kind === 'route' &&
+        change.modelFacts.provider === applied.provider &&
+        change.modelFacts.model === applied.modelName
+      )
+        group.push(change);
+    }
+    if (group.length === 0) return undefined;
+    return {
+      change: group[0],
+      override: overridesSelector(base, group, {
+        provider: applied.provider,
+        model: applied.modelName,
+      }),
+    };
+  };
+
+  const assignId = (index: number): string => `golem-defined-assign-${index}`;
+
+  /**
+   * [W4-3] Every use case, with why this model cannot take it — the verdict the
+   * picker gives a card, from the same helpers. An open editor is listed
+   * disabled rather than re-seeded: re-seeding would drop its unstaged fields.
+   */
+  const assignOptions = (model: ModelProjection): AssignOption[] =>
+    routeUseCases(routes).map((useCase) => {
+      if (open.has(useCase)) return { useCase, reason: 'editor open' };
+      const short = floorShortfalls(
+        model.exposedCapabilities,
+        governedUseCasesOf(base, draft, probeRouteChange(useCase, model))
+      );
+      return { useCase, reason: shortfallLine(short) };
+    });
+
+  /** Choosing a use case opens ITS editor on this model — the Edit path, seeded. */
+  const assignTo = (model: ModelProjection, useCase: string) => {
+    const editorId = `golem-route-editor-${routeUseCases(routes).indexOf(useCase)}`;
+    setPreselect((current) => new Map(current).set(useCase, model));
+    setAssigning(null);
+    openEditor(useCase, editorId);
+    document.getElementById(`${editorId}-row`)?.scrollIntoView?.({ block: 'center' });
+  };
+
+  /** Close this row's list if it is the open one, without touching another row's. */
+  const dropAssign = (role: string) => setAssigning((open) => (open === role ? null : open));
+
+  /** Escape or a second press: the list unmounts and focus returns to the trigger it opened from. */
+  const closeAssign = (index: number) => {
+    setAssigning(null);
+    setPendingFocus({ elementId: `${assignId(index)}-trigger` });
+  };
 
   const rowDiagnostics = (useCase: string) =>
     diagnostics.filter(
@@ -217,20 +370,26 @@ export function RoutingCard({
             Add a provider, then assign a model to each use case — nothing is routed yet.
           </p>
         )}
-        {/* Decorative: every cell below names its own column. */}
-        <div className={`${styles.columns} ${styles.routeGrid}`} aria-hidden="true">
-          <span>Use case</span>
-          <span>Provider</span>
-          <span>Model</span>
-          <span>Think</span>
-          <span>Status</span>
-          <span />
-        </div>
-        <ul className={styles.rows} aria-label="Model routing">
+        <div
+          className={`${styles.table} ${styles.routeTable}`}
+          role="table"
+          aria-label="Model routing"
+        >
+          <div className={styles.headRow} role="row">
+            <span role="columnheader">Use case</span>
+            <span role="columnheader">Provider</span>
+            <span role="columnheader">Model</span>
+            <span role="columnheader">Think</span>
+            <span role="columnheader">Status</span>
+            <span role="columnheader">
+              <span className={styles.srOnly}>Actions</span>
+            </span>
+          </div>
           {routeUseCases(routes).map((useCase, index) => {
             const role = byUseCase.get(useCase) ?? null;
             const applied = role === null ? null : (byRole.get(role) ?? null);
             const staged = stagedFor(useCase);
+            const governing = staged === undefined ? governingChange(useCase, applied) : undefined;
             const view: RouteView | null =
               staged?.kind === 'route'
                 ? {
@@ -244,8 +403,16 @@ export function RoutingCard({
                   : {
                       provider: applied.provider,
                       model: applied.modelName,
-                      think: applied.thinkMode,
-                      caps: applied.exposedCapabilities,
+                      think:
+                        governing?.override === true
+                          ? governing.change.thinkMode
+                          : applied.thinkMode,
+                      // Never empty: the editor and both request parsers refuse an
+                      // empty exposure [W5-1].
+                      caps:
+                        governing !== undefined
+                          ? governing.change.exposedCaps
+                          : applied.exposedCapabilities,
                     };
             const markers = rows.get(useCase);
             const status = routeStatus(view, useCase, markers, sourceReplaced);
@@ -255,7 +422,7 @@ export function RoutingCard({
             /**
              * The routes this row's APPLIED model also serves — the same
              * derivation RouteEditor's `sharedRole` makes from the same
-             * `current` object, so the strip marker can never disagree with
+             * `current` object, so the row marker can never disagree with
              * the notice inside the open editor. While a route change is
              * staged the row's headline paints the STAGED model, and this
              * coupling belongs to the model being replaced — describing the
@@ -266,109 +433,199 @@ export function RoutingCard({
               staged?.kind === 'route'
                 ? []
                 : (applied?.routedUseCases ?? []).filter((other) => other !== useCase);
+            // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
+            // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
+            // row marker — the shipped definition of "this row has a staged change" — so
+            // think-only, exposure-only and assign-into-empty changes stripe too. [C5] Only
+            // `modified`: `keyStaged` is set on PROVIDER rows alone, so the disjunct this
+            // line used to carry could never be true here.
+            const changed = markers?.modified === true;
+            const wasModel =
+              staged?.kind === 'route' &&
+              applied !== null &&
+              staged.modelFacts.model !== applied.modelName
+                ? applied.modelName
+                : null;
+            const wasProvider =
+              staged?.kind === 'route' &&
+              applied !== null &&
+              staged.modelFacts.provider !== applied.provider
+                ? applied.provider
+                : null;
+            /** The think mode about to land on this row: its own staged change's, or — only for an override group — the sibling's. */
+            const incomingThink =
+              staged?.kind === 'route'
+                ? staged.thinkMode
+                : governing?.override === true
+                  ? governing.change.thinkMode
+                  : undefined;
+            const wasThink =
+              incomingThink !== undefined && applied !== null && incomingThink !== applied.thinkMode
+                ? applied.thinkMode === ''
+                  ? '—'
+                  : applied.thinkMode
+                : null;
+            const wasAssigned =
+              staged?.kind === 'route-unassign' && applied !== null ? applied.modelName : null;
+            const alsoAffects = (selectorUseCases.get(useCase) ?? []).filter(
+              (other) => other !== useCase
+            );
 
-            return (
-              <li key={useCase} data-testid={`route-row-${useCase}`} className={styles.row}>
-                <div
-                  className={`${styles.strip} ${styles.routeGrid}`}
-                  data-expanded={expanded || undefined}
-                >
-                  <Cell label="Use case" className={styles.useCase}>
-                    {useCase}
-                  </Cell>
-                  <Cell label="Provider" className={styles.meta}>
-                    {view ? view.provider : <span className={styles.absent}>—</span>}
-                  </Cell>
-                  <Cell label="Model" className={styles.value}>
-                    {/* The role a broken route still names is the only lead a
-                        reader has for repairing it externally, so it is
-                        meaningful copy rather than an inert placeholder. */}
-                    {view ? (
-                      <>
-                        {view.model}
-                        {/* The coupling, surfaced BEFORE the editor opens: a
-                            neutral fact, the sibling names one hover away.
-                            Hidden while the row is expanded — the editor's
-                            info notice tells the same fact in full. */}
-                        {!expanded && shared.length > 0 && (
-                          <span className={styles.sharedMarker} title={shared.join(', ')}>
-                            {`shared with ${shared.length} other${shared.length === 1 ? '' : 's'}`}
-                          </span>
-                        )}
-                      </>
-                    ) : role !== null && staged?.kind !== 'route-unassign' ? (
-                      `role ${role} has no model`
-                    ) : (
-                      <span className={styles.absent}>—</span>
-                    )}
-                  </Cell>
-                  <Cell label="Think" className={`${styles.meta} ${styles.thinkCell}`}>
-                    {view && view.think !== '' ? (
-                      view.think
-                    ) : (
-                      <span className={styles.absent}>—</span>
-                    )}
-                  </Cell>
-                  <Cell label="Status">
-                    {expanded ? (
-                      <StatusText tone="dim">editing…</StatusText>
-                    ) : (
-                      <StatusText tone={status.tone}>{status.label}</StatusText>
-                    )}
-                  </Cell>
-                  <span className={styles.rowActions}>
-                    {editable && (
-                      <button
-                        type="button"
-                        className={styles.button}
-                        aria-expanded={expanded}
-                        aria-controls={editorId}
-                        onClick={() => openEditor(useCase, editorId)}
-                      >
-                        {role === null ? 'Assign' : 'Edit'}
-                        <span className={styles.srOnly}>{` route ${useCase}`}</span>
-                      </button>
-                    )}
-                  </span>
-                </div>
+            const row = (
+              <div
+                key={`row:${useCase}`}
+                id={`${editorId}-row`}
+                role="row"
+                data-testid={`route-row-${useCase}`}
+                className={styles.row}
+                data-expanded={expanded || undefined}
+                data-changed={changed || undefined}
+                data-flash={flashNonce(`route:${useCase}`)}
+              >
+                <Cell className={styles.useCase}>
+                  {useCase}
+                  {expanded && <span className={styles.editingTag}>editing</span>}
+                </Cell>
+                <Cell className={styles.providerCell}>
+                  {view ? view.provider : <span className={styles.absent}>—</span>}
+                  {wasProvider !== null && <Was value={wasProvider} />}
+                </Cell>
+                <Cell className={styles.modelCell}>
+                  {/* The role a broken route still names is the only lead a
+                      reader has for repairing it externally, so it is
+                      meaningful copy rather than an inert placeholder. */}
+                  {view ? (
+                    <>
+                      {view.model}
+                      {/* The coupling, surfaced BEFORE the editor opens: a
+                          neutral fact, the sibling names one hover away.
+                          Hidden while the row is expanded — the editor's
+                          info notice tells the same fact in full. */}
+                      {!expanded && shared.length > 0 && (
+                        <span className={styles.sharedMarker} title={shared.join(', ')}>
+                          {`shared with ${shared.length} other${shared.length === 1 ? '' : 's'}`}
+                        </span>
+                      )}
+                    </>
+                  ) : role !== null && staged?.kind !== 'route-unassign' ? (
+                    `role ${role} has no model`
+                  ) : (
+                    <span className={styles.absent}>—</span>
+                  )}
+                  {(wasModel ?? wasAssigned) !== null && <Was value={(wasModel ?? wasAssigned)!} />}
+                  {/* Shared-selector changes retarget siblings: the fact the
+                      editor's disclosure already tells, surfaced on the row. */}
+                  {changed && alsoAffects.length > 0 && (
+                    <small
+                      className={styles.usedBy}
+                    >{`also affects ${alsoAffects.join(', ')}`}</small>
+                  )}
+                </Cell>
+                <Cell label="Think" className={styles.metaCell}>
+                  {view && view.think !== '' ? (
+                    view.think
+                  ) : (
+                    <span className={styles.absent}>—</span>
+                  )}
+                  {wasThink !== null && <Was value={wasThink} />}
+                </Cell>
+                {/* Ruling 6: an open row carries the EDITING tag beside its use
+                    case, so the status column reports nothing while it edits. */}
+                <Cell className={styles.statusCell}>
+                  {!expanded && <StatusText tone={status.tone}>{status.label}</StatusText>}
+                </Cell>
+                <Cell className={styles.actionsCell}>
+                  {editable && (
+                    <button
+                      type="button"
+                      id={`${editorId}-edit`}
+                      className={`${styles.button} ${styles.small}`}
+                      aria-expanded={expanded}
+                      aria-controls={editorId}
+                      onClick={() => openEditor(useCase, editorId)}
+                    >
+                      {role === null ? 'Assign' : 'Edit'}
+                      <span className={styles.srOnly}>{` route ${useCase}`}</span>
+                    </button>
+                  )}
+                </Cell>
+              </div>
+            );
 
+            const detail = (
+              <>
                 {notices.map((diagnostic, position) => (
-                  <p
+                  <div
                     key={`${diagnostic.code}-${position}`}
-                    className={styles.rowDiagnostic}
-                    data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
+                    role="row"
+                    className={styles.detailRow}
                   >
-                    {
-                      formatSettingsDiagnostic(
-                        diagnostic.code,
-                        diagnostic.subjectKind,
-                        diagnostic.subjectName
-                      ).text
-                    }
-                  </p>
+                    <p
+                      role="cell"
+                      aria-colspan={6}
+                      className={styles.rowDiagnostic}
+                      data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
+                    >
+                      {
+                        formatSettingsDiagnostic(
+                          diagnostic.code,
+                          diagnostic.subjectKind,
+                          diagnostic.subjectName
+                        ).text
+                      }
+                    </p>
+                  </div>
                 ))}
-
                 {expanded && (
-                  <RouteEditor
-                    id={editorId}
-                    useCase={useCase}
-                    role={role}
-                    current={applied}
-                    providers={providers}
-                    models={models}
-                    base={base}
-                    draft={draft}
-                    staged={staged}
-                    rowKey={routeRowKey(useCase)}
-                    onStage={onStage}
-                    onClose={() => close(useCase)}
-                    onUnstagedChange={onUnstagedChange}
-                  />
+                  <div role="row" className={styles.detailRow}>
+                    {/* [C21] Visual spanning is not accessible spanning: name the span. */}
+                    <div role="cell" aria-colspan={6} className={styles.editorCell}>
+                      <RouteEditor
+                        id={editorId}
+                        useCase={useCase}
+                        role={role}
+                        current={applied}
+                        providers={providers}
+                        models={models}
+                        base={base}
+                        draft={draft}
+                        staged={staged}
+                        preselect={preselect.get(useCase)}
+                        rowKey={routeRowKey(useCase)}
+                        onStage={onStage}
+                        onClose={() => close(useCase, `${editorId}-edit`)}
+                        onUnstagedChange={onUnstagedChange}
+                        onStaged={(message) => announceStaged(useCase, editorId, message)}
+                      />
+                    </div>
+                  </div>
                 )}
-              </li>
+              </>
+            );
+
+            // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
+            // key differs from the bare row's: with the same key React would reuse the row's
+            // DOM node AS the group and slide a new row inside it. [X1] The discriminator is a
+            // PREFIX, not a suffix: `a` and `a:group` are both legal use-case names, so a
+            // suffix would let one row's group key collide with another row's key.
+            return expanded || notices.length > 0 ? (
+              <div
+                key={`group:${useCase}`}
+                role="rowgroup"
+                className={expanded ? styles.editGroup : styles.noticeGroup}
+              >
+                {row}
+                {detail}
+              </div>
+            ) : (
+              row
             );
           })}
-        </ul>
+        </div>
+
+        <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+          {announcement}
+        </span>
 
         {unrouted.length > 0 && (
           <>
@@ -378,52 +635,89 @@ export function RoutingCard({
             <p className={styles.empty}>
               Defined in the file but not routed to any use case — directly or through a fallback.
             </p>
-            <div className={`${styles.columns} ${styles.definedGrid}`} aria-hidden="true">
-              <span>Role</span>
-              <span>Provider</span>
-              <span>Model</span>
-              <span />
-            </div>
-            <ul className={styles.rows} aria-labelledby="golem-config-defined-models">
-              {unrouted.map((model) => {
+            <div
+              className={`${styles.table} ${styles.definedTable}`}
+              role="table"
+              aria-labelledby="golem-config-defined-models"
+            >
+              <div className={styles.headRow} role="row">
+                <span role="columnheader">Role</span>
+                <span role="columnheader">Provider</span>
+                <span role="columnheader">Model</span>
+                <span role="columnheader">
+                  <span className={styles.srOnly}>Actions</span>
+                </span>
+              </div>
+              {unrouted.map((model, index) => {
                 const markers = roleRows.get(model.role);
-                return (
-                  <li
-                    key={model.role}
+                const listId = assignId(index);
+                // [C3] A row staged for removal offers nothing to route to.
+                const canAssign = editable && markers?.modified !== true;
+                const listOpen = canAssign && assigning === model.role;
+                const row = (
+                  <div
+                    key={`row:${model.role}`}
+                    role="row"
                     id={definedRowId(model.role)}
                     tabIndex={-1}
                     data-testid={`defined-model-row-${model.role}`}
-                    className={`${styles.strip} ${styles.definedGrid}`}
+                    className={styles.row}
+                    data-expanded={listOpen || undefined}
+                    // [X11] A staged `role-remove` stripes its row like every other
+                    // staged change, and a landed `role:` jump flashes it.
+                    data-changed={markers?.modified === true || undefined}
+                    data-flash={flashNonce(`role:${model.role}`)}
                   >
+                    {/* [W4-3] A role and a use case may share a name (`agent`): the record
+                        form says which this is, the way TYPE / THINK label their cells. */}
                     <Cell label="Role" className={styles.identifier}>
                       {model.role}
                     </Cell>
-                    <Cell label="Provider" className={styles.meta}>
-                      {model.provider}
-                    </Cell>
-                    <Cell label="Model" className={styles.value}>
-                      {model.modelName}
-                    </Cell>
-                    <span className={styles.rowActions}>
+                    <Cell className={styles.providerCell}>{model.provider}</Cell>
+                    <Cell className={styles.modelCell}>{model.modelName}</Cell>
+                    <Cell className={styles.actionsCell}>
                       {markers?.needsReview === true && (
                         <StatusText tone="warn">Needs review</StatusText>
                       )}
                       {markers?.needsReview !== true && markers?.modified === true && (
                         <StatusText tone="warn">Modified</StatusText>
                       )}
+                      {/* An inline disclosure (W4-3), so no aria-haspopup: expanded +
+                          controls describe it. It routes the MODEL — the backend never
+                          binds the defined role itself — so the name says which model. */}
+                      {canAssign && (
+                        <button
+                          type="button"
+                          id={`${listId}-trigger`}
+                          className={`${styles.button} ${styles.small}`}
+                          aria-expanded={listOpen}
+                          aria-controls={listOpen ? listId : undefined}
+                          onClick={() => (listOpen ? closeAssign(index) : setAssigning(model.role))}
+                        >
+                          Assign…
+                          <span className={styles.srOnly}>
+                            {` model ${model.modelName}, role ${model.role}`}
+                          </span>
+                        </button>
+                      )}
                       {/* §5.2b: removal is guarded backend-side and offered only
                           for a role the projection reports as unreferenced —
                           fallback targets included. Once staged, the same
                           control takes it back: re-pressing Remove would only
                           re-stage the identity it already holds, which is no
-                          undo at all. */}
+                          undo at all. Either press closes this row's Assign
+                          list for good: left merely hidden, it would remount
+                          and take focus when the removal is unstaged. */}
                       {editable &&
                         model.removable &&
                         (markers?.modified === true ? (
                           <button
                             type="button"
-                            className={`${styles.button} ${styles.quiet}`}
-                            onClick={() => onStage([], [`role:${model.role}`])}
+                            className={`${styles.button} ${styles.small} ${styles.quiet}`}
+                            onClick={() => {
+                              dropAssign(model.role);
+                              onStage([], [`role:${model.role}`]);
+                            }}
                           >
                             Unstage removal
                             <span className={styles.srOnly}>{` of model role ${model.role}`}</span>
@@ -431,18 +725,41 @@ export function RoutingCard({
                         ) : (
                           <button
                             type="button"
-                            className={`${styles.button} ${styles.quiet}`}
-                            onClick={() => onStage([{ kind: 'role-remove', role: model.role }], [])}
+                            className={`${styles.button} ${styles.small} ${styles.quiet}`}
+                            onClick={() => {
+                              dropAssign(model.role);
+                              onStage([{ kind: 'role-remove', role: model.role }], []);
+                            }}
                           >
                             Remove
                             <span className={styles.srOnly}>{` model role ${model.role}`}</span>
                           </button>
                         ))}
-                    </span>
-                  </li>
+                    </Cell>
+                  </div>
+                );
+                // [C6] The group's key differs from the row's: the same rule as the route rows.
+                return listOpen ? (
+                  <div key={`group:${model.role}`} role="rowgroup" className={styles.editGroup}>
+                    {row}
+                    <div role="row" className={styles.detailRow}>
+                      {/* [C21] Name the span: four columns in this table. */}
+                      <div role="cell" aria-colspan={4} className={styles.editorCell}>
+                        <AssignList
+                          id={listId}
+                          modelName={model.modelName}
+                          options={assignOptions(model)}
+                          onChoose={(useCase) => assignTo(model, useCase)}
+                          onClose={() => closeAssign(index)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  row
                 );
               })}
-            </ul>
+            </div>
           </>
         )}
       </div>

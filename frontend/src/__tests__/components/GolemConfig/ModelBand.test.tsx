@@ -8,6 +8,7 @@ import {
   type ModelBandProps,
 } from '../../../components/GolemConfig/ModelBand';
 import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../../../types/golem';
+import { floorShortfalls } from '../../../types/golemConfig';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
   role: 'chat-role',
@@ -49,6 +50,8 @@ function renderBand(over: Partial<ModelBandProps> = {}) {
     id: 'route-editor-chat',
     useCase: 'chat',
     floor: ['chat', 'stream'] as readonly CapabilityName[],
+    required: ['chat', 'stream'] as readonly CapabilityName[],
+    shortfalls: (candidate) => floorShortfalls(candidate.exposedCapabilities, ['chat']),
     models: [model(), agentModel, embedModel],
     provider: 'hosted',
     providers: [
@@ -242,7 +245,7 @@ describe('ModelBand floor filter', () => {
 
   it('reveals the hidden models with a reason chip per failing capability', async () => {
     renderBand();
-    const line = screen.getByRole('button', { name: /does not meet chat · stream/ });
+    const line = screen.getByRole('button', { name: /is not eligible/ });
     expect(line).toHaveTextContent('1 model');
 
     await userEvent.click(line);
@@ -250,12 +253,52 @@ describe('ModelBand floor filter', () => {
     expect(blocked).toHaveAttribute('aria-disabled', 'true');
     expect(within(blocked).getByText('✕ chat')).toBeVisible();
     expect(within(blocked).getByText('✕ stream')).toBeVisible();
-    expect(within(blocked).getByText('not eligible for chat')).toBeVisible();
+    expect(within(blocked).getByText('chat needs chat; chat needs stream')).toBeVisible();
 
     // One hidden model: the toggle agrees in number — "it", not "them".
     await userEvent.click(screen.getByRole('button', { name: /hide it/ }));
     expect(cards().some((card) => within(card).queryByText('nomic-embed') !== null)).toBe(false);
     expect(screen.getByRole('button', { name: /show it/ })).toBeInTheDocument();
+  });
+
+  it('hides a card that serves the edited use case but fails a sibling floor, naming the sibling', async () => {
+    // The caller's verdict says every card governs agent too: each must carry
+    // tool_call, while the headline still names only the use case being routed.
+    renderBand({
+      floor: ['chat', 'stream', 'tool_call'],
+      required: ['chat', 'stream', 'tool_call'],
+      shortfalls: (candidate) => floorShortfalls(candidate.exposedCapabilities, ['chat', 'agent']),
+    });
+    expect(screen.getByText('Model — every card below can serve chat')).toBeVisible();
+    expect(screen.getByText('filter: chat · stream · tool_call')).toBeVisible();
+    expect(cards().map((card) => within(card).getByText(/gpt|nomic/).textContent)).toEqual([
+      'gpt-5',
+    ]);
+
+    await userEvent.click(screen.getByRole('button', { name: /2 models are not eligible/ }));
+    const blocked = cardNamed('gpt-5-mini');
+    expect(blocked).toHaveAttribute('aria-disabled', 'true');
+    expect(within(blocked).getByText('agent needs tool_call')).toBeVisible();
+    expect(within(blocked).getByText('✕ tool_call')).toBeVisible();
+  });
+
+  it('asks the verdict per card, so a selector sibling can block one card only', async () => {
+    // The verdict is the caller's: here gpt-5-mini's own selector serves agent.
+    renderBand({
+      shortfalls: (candidate) =>
+        candidate.modelName === 'gpt-5-mini'
+          ? [{ cap: 'tool_call', useCases: ['agent'] }]
+          : floorShortfalls(candidate.exposedCapabilities, ['chat']),
+    });
+    expect(screen.getByText('Model — every card below can serve chat')).toBeVisible();
+    expect(cards().map((card) => within(card).getByText(/gpt|nomic/).textContent)).toEqual([
+      'gpt-5',
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: /show them/ }));
+    expect(within(cardNamed('gpt-5-mini')).getByText('agent needs tool_call')).toBeVisible();
+    expect(
+      within(cardNamed('nomic-embed')).getByText('chat needs chat; chat needs stream')
+    ).toBeVisible();
   });
 
   it('narrows the grid as the filter is typed', async () => {
@@ -345,6 +388,31 @@ describe('ModelBand declare path', () => {
     });
     await userEvent.click(screen.getByRole('button', { name: 'Back to the model list' }));
     expect(onManual).toHaveBeenCalledWith(null);
+  });
+
+  it('tags the required caps of the current candidate in the declare form, locking only what is declared', async () => {
+    // The candidate's selector serves agent: tool_call is required, but a
+    // declaration is what the user asserts — an undeclared cap stays unchecked
+    // and enabled under its `required` tag; a declared one locks. The band
+    // still filters on chat's floor.
+    const { onManual } = renderBand({
+      required: ['chat', 'stream', 'tool_call'],
+      manual: { model: 'gpt-5', type: '', caps: ['chat', 'stream'] },
+    });
+    const declared = screen.getByRole('group', { name: 'Capabilities this model supports' });
+    expect(within(declared).getByLabelText('tool_call required')).not.toBeChecked();
+    expect(within(declared).getByLabelText('tool_call required')).toBeEnabled();
+    expect(within(declared).getByLabelText('chat required')).toBeChecked();
+    expect(within(declared).getByLabelText('chat required')).toBeDisabled();
+    expect(screen.getByText('filter: chat · stream')).toBeVisible();
+    // A fresh declaration still starts from the band floor alone.
+    await userEvent.type(screen.getByLabelText('Filter models'), 'llama-4');
+    await userEvent.click(screen.getByRole('option', { name: /Declare "llama-4"/ }));
+    expect(onManual).toHaveBeenLastCalledWith({
+      model: 'llama-4',
+      type: '',
+      caps: ['chat', 'stream'],
+    });
   });
 });
 

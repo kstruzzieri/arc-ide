@@ -1,0 +1,12 @@
+{
+  "verdict": "accept",
+  "document": "profile_list_result",
+  "value": {
+    "status": "diagnostics",
+    "diagnostics": [
+      {
+        "code": "io"
+      }
+    ]
+  }
+}

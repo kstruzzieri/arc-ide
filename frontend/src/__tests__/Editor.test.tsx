@@ -583,4 +583,45 @@ describe('Golem configuration tab (#263 Slice B)', () => {
     expect(screen.getByRole('tab', { name: /b\.ts/i })).toHaveAttribute('aria-selected', 'true');
     expect(configTab()).toHaveAttribute('aria-selected', 'false');
   });
+
+  // §Task 10 / #309: a narrow tab strip (`.tabBar { overflow-x: auto }`) can
+  // scroll the active tab out of sight; jsdom has no scrollIntoView, hence the
+  // optional call and the stub below.
+  it('scrolls the Golem Configuration tab into view when it becomes active (#309)', () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      useIDEStore.setState({ openFiles: [openFile('f1', 'a.ts')], activeFileId: 'f1' });
+      render(<Editor />);
+
+      act(() => {
+        focusConfigTab();
+      });
+
+      expect(configTab()).toHaveAttribute('aria-selected', 'true');
+      expect(scroll).toHaveBeenCalledWith({ inline: 'nearest', block: 'nearest' });
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it('reveals the tab again when the already-active tab is clicked (#309)', () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      render(<Editor />);
+      act(() => {
+        focusConfigTab();
+      });
+      scroll.mockClear();
+
+      fireEvent.click(configTab());
+
+      expect(scroll).toHaveBeenCalledWith({ inline: 'nearest', block: 'nearest' });
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
 });

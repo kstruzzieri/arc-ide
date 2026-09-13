@@ -143,6 +143,13 @@ func main() {
 				UseToolbar:         false,
 			},
 			Appearance: application.NSAppearanceNameDarkAqua,
+			// WKWebView defaults to "Tab moves between text fields only" unless
+			// macOS Full Keyboard Access is on, so buttons, links and every
+			// other non-text control were unreachable by keyboard. Firn is an
+			// IDE: Tab visits all controls, as it does in a browser.
+			WebviewPreferences: application.MacWebviewPreferences{
+				TabFocusesLinks: application.Enabled,
+			},
 		},
 	})
 	app.mainWindow = win

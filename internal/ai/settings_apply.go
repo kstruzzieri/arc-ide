@@ -1042,6 +1042,12 @@ func validateRouteChange(change Change) error {
 	if change.ModelFacts == nil || change.CapabilityFacts == nil || change.ExposedCaps == nil {
 		return errApplyMissingField
 	}
+	// An empty exposure is a break, not a clear: overrideCapabilities would
+	// hand upstream a nil override and the model's capabilities would derive
+	// from its type again — never the empty set the client showed.
+	if len(change.ExposedCaps) == 0 {
+		return errApplyInvalidField
+	}
 	facts := *change.ModelFacts
 	if !validRequestIdentifier(facts.Provider) || !validRequestIdentifier(facts.Model) ||
 		!modelFactTypes[facts.Type] {
@@ -1826,7 +1832,8 @@ func floorRequirements() map[string]provider.Capability {
 
 // overrideCapabilities maps the exposed-capability contract onto upstream's
 // override semantics: a non-empty list is the explicit selector-wide override,
-// an empty one clears it so capabilities derive from the model type again.
+// an empty one clears it so capabilities derive from the model type again —
+// which validateRouteChange refuses, so no request reaches that branch.
 func overrideCapabilities(values []string) []string {
 	if len(values) == 0 {
 		return nil

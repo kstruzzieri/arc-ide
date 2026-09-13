@@ -31,6 +31,7 @@ jest.mock('../../../wails/bindings', () => ({
   CancelGolemSettingsApply: jest.fn(),
   ConfirmGolemDestinationGrants: jest.fn(),
   PrepareGolemDestinationGrants: jest.fn(),
+  ListGolemProfiles: jest.fn(),
   LoadGolemProfile: jest.fn(),
 }));
 import {
@@ -39,6 +40,7 @@ import {
   ConfirmGolemDestinationGrants,
   ConfirmGolemSettingsApply,
   CreateGolemSettings,
+  ListGolemProfiles,
   LoadGolemProfile,
   PrepareGolemDestinationGrants,
   ReloadGolemSettings,
@@ -125,6 +127,19 @@ const loadedProfile = {
   },
 };
 
+/**
+ * §4.8: the picker's START FROM group lists whatever the live list projection
+ * carries, so it has no curated rows at all without a list result — this is
+ * what makes `startCuratedViaMenu` below reach `curated/local`.
+ */
+const profileListResult = () => ({
+  status: 'loaded',
+  profiles: [
+    { id: 'curated/local', description: 'Vetted local lineup', curated: true },
+    { id: 'user/mine', curated: false },
+  ],
+});
+
 const destination = (over: Record<string, unknown> = {}) => ({
   provider: 'hosted',
   model: 'gpt-5-mini',
@@ -176,6 +191,39 @@ async function declareModel(name: string) {
 
 const clickApply = async () => await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
+/** #312: the picker replaced the native select. [C3] Query the trigger by ROLE — while the
+ *  list is open the listbox answers to the label "Source" too. This file drives interactions
+ *  through the static `userEvent` export (not a `.setup()` session), so the helper does too. */
+const sourceTrigger = () => screen.getByRole('button', { name: 'Source' });
+
+/**
+ * §4.8 bootstraps through the Source picker's own START FROM group now — the
+ * Configuration menu's `Start from curated` / `Start blank` items are gone
+ * (#312 reduced that menu to the one Save write action, `SaveProfileButton`).
+ * Every former Start interaction routes through these instead; the picker
+ * closes behind the choice, so each helper is a complete open-choose cycle.
+ */
+const startBlankViaMenu = async () => {
+  await userEvent.click(sourceTrigger());
+  await userEvent.click(await screen.findByRole('option', { name: /Blank draft/ }));
+};
+const startCuratedViaMenu = async () => {
+  await userEvent.click(sourceTrigger());
+  await userEvent.click(await screen.findByRole('option', { name: /Curated local/ }));
+};
+/** Choose an option by name, optionally inside a group; closes the list afterwards even when
+ *  the option was disabled (a disabled click leaves the list open). */
+const pickSource = async (name: string | RegExp, group?: string) => {
+  await userEvent.click(sourceTrigger());
+  const list = await screen.findByRole('listbox', { name: 'Source' });
+  const scope =
+    group === undefined ? within(list) : within(within(list).getByRole('group', { name: group }));
+  await userEvent.click(scope.getByRole('option', { name }));
+  if (screen.queryByRole('listbox', { name: 'Source' }) !== null)
+    await userEvent.keyboard('{Escape}');
+};
+const sourceValue = () => sourceTrigger().getAttribute('data-value');
+
 /** Stages one provider-key-set on `hosted`, the change every key assertion uses. */
 async function stageKey(): Promise<void> {
   await openProvider();
@@ -220,6 +268,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   reload();
+  (ListGolemProfiles as jest.Mock).mockResolvedValue(profileListResult());
   (CancelGolemSettingsApply as jest.Mock).mockResolvedValue({ status: 'cancelled' });
 });
 
@@ -247,10 +296,33 @@ describe('Apply bar', () => {
     expect(within(masthead).getByText('Modified')).toBeInTheDocument();
 
     const bar = screen.getByTestId('golem-config-draft');
-    expect(within(bar).getByText('1 change waiting for Apply')).toBeInTheDocument();
-    expect(within(bar).getByRole('button', { name: 'hosted → new API key' })).toBeEnabled();
+    expect(within(bar).getByText('1 staged change')).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'hosted · API key' })).toBeEnabled();
     expect(within(bar).getByRole('button', { name: 'Apply' })).toBeEnabled();
     expect(within(bar).getByRole('button', { name: 'Discard' })).toBeEnabled();
+  });
+
+  it('tells a cleared key apart from a set one on the chip', async () => {
+    // [F7] Both key changes once read `name · API key`, so the bar could not say which
+    // of two opposite intents Apply would send.
+    await mountWorkspace();
+    await openProvider();
+    await userEvent.click(screen.getByLabelText('Clear the stored API key'));
+    await stage();
+    await cancelEditor();
+
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByRole('button', { name: 'hosted · API key cleared' })).toBeEnabled();
+    expect(within(bar).queryByRole('button', { name: 'hosted · API key' })).toBeNull();
+  });
+
+  it('says a model role was removed, not just "removed"', async () => {
+    // [C6] A provider and a model role may carry the SAME name, and both chips read
+    // `<name> · removed` — two different removals, one indistinguishable label.
+    await mountWorkspace();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove model role other-role' }));
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByRole('button', { name: 'other-role · model removed' })).toBeEnabled();
   });
 
   it('opens and focuses the editor its chip names', async () => {
@@ -258,7 +330,7 @@ describe('Apply bar', () => {
     await stageKey();
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'hosted → new API key' }));
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
     expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Edit provider hosted' })).toHaveFocus();
   });
@@ -272,7 +344,7 @@ describe('Apply bar', () => {
     });
     await mountWorkspace();
     await stageKey();
-    await userEvent.click(screen.getByRole('button', { name: 'hosted → new API key' }));
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
     expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
 
     await clickApply();
@@ -338,7 +410,7 @@ describe('terminal apply results', () => {
     const order = (el: Element | null) =>
       [...page.children].findIndex((child) => child === el || child.contains(el as Node));
 
-    const routing = screen.getByRole('list', { name: 'Model routing' });
+    const routing = screen.getByRole('table', { name: 'Model routing' });
     expect(order(notice)).toBeGreaterThan(order(routing));
     expect(order(screen.getByRole('button', { name: 'Retry' }))).toBeGreaterThan(order(routing));
     // And the bar it belongs to is last.
@@ -494,7 +566,10 @@ describe('terminal apply results', () => {
     await clickApply();
 
     const row = await screen.findByTestId('provider-row-hosted');
-    expect(within(row).getByText('This provider is still used by a model.')).toBeVisible();
+    // [C6] The row-owned diagnostic is a sibling `detailRow` in the row's rowgroup.
+    expect(
+      within(row.parentElement!).getByText('This provider is still used by a model.')
+    ).toBeVisible();
     expect(
       screen.getByText('Destination approval may have been saved; configuration was not applied.')
     ).toBeVisible();
@@ -658,7 +733,7 @@ describe('nonterminal apply results', () => {
     await screen.findByRole('button', { name: 'Retry' });
 
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'hosted → new API key' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted · API key' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Edit provider hosted' })).not.toBeInTheDocument();
     // The ways out stay open.
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
@@ -702,8 +777,8 @@ describe('nonterminal apply results', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    // #284: Done on success closes the route editor itself now.
     await stage();
-    await cancelEditor();
     await clickApply();
 
     expect(await screen.findByText(/slots/)).toBeVisible();
@@ -798,7 +873,7 @@ describe('nonterminal apply results', () => {
     await screen.findByRole('button', { name: 'Confirm destination' });
 
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'hosted → new API key' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted · API key' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Edit provider hosted' })).not.toBeInTheDocument();
     // The panel's own actions, and the cancel-then-transition paths, stay live.
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeEnabled();
@@ -880,7 +955,7 @@ const prepareReturns = (result: unknown) =>
   (PrepareGolemDestinationGrants as jest.Mock).mockResolvedValue(result);
 
 const approve = async () =>
-  await userEvent.click(screen.getByRole('button', { name: 'Approve missing destinations' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Check destinations…' }));
 
 describe('grant-only destination approval', () => {
   it('preserves unstaged provider fields until they are staged before approval', async () => {
@@ -890,7 +965,7 @@ describe('grant-only destination approval', () => {
     await userEvent.type(screen.getByLabelText('Endpoint'), '-edited');
     await userEvent.type(screen.getByLabelText('New API key'), KEY);
 
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeDisabled();
     await userEvent.click(action);
     expect(PrepareGolemDestinationGrants).not.toHaveBeenCalled();
@@ -908,10 +983,23 @@ describe('grant-only destination approval', () => {
     await approve();
 
     const consent = await screen.findByRole('alert');
-    // Pluralized copy, the grant-only lead (no write is pending), and the word
-    // "remote" — the user is approving egress, not a local write.
-    expect(within(consent).getByText(/Approve these 2 remote destinations\./)).toBeVisible();
-    expect(within(consent).getByText(/Nothing is written to your configuration/)).toBeVisible();
+    // The grant-only explainer (no write is pending) and the destination-check
+    // rationale — not the old "Approve these N remote destinations" lead.
+    // [X13] Visible, not merely present: this explainer replaced one that was asserted
+    // visible, and the whole point of the panel is that the reader can SEE what they
+    // are approving.
+    expect(
+      within(consent).getByText(
+        /Remote destinations your agent route can reach that have no approval yet/
+      )
+    ).toBeVisible();
+    // [C13] The ticking countdown is aria-hidden; the alert announces the expiry once, statically.
+    expect(within(consent).getByText(/expires in \d+:\d{2}/)).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    );
+    expect(within(consent).getByText(/^Expires at /)).toBeVisible();
+    expect(within(consent).getAllByText('remote')).toHaveLength(2);
     // One line per destination: endpoint, provider, and the model only when the
     // entry names one.
     expect(within(consent).getByText('https://api.example.com/v1')).toBeVisible();
@@ -921,12 +1009,14 @@ describe('grant-only destination approval', () => {
     expect(within(consent).getByText('Reached by agent')).toBeVisible();
     expect(within(consent).getByText('Reached by agent (recommendation)')).toBeVisible();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Approve 2 destinations' }));
     await waitFor(() =>
       expect(ConfirmGolemDestinationGrants).toHaveBeenCalledWith('grant-token-1')
     );
     expect(await screen.findByText(/Destinations approved/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
     // Nothing about the configuration was written, and Call 1 ran exactly once.
     expect(ApplyGolemSettings).not.toHaveBeenCalled();
     expect(ConfirmGolemSettingsApply).not.toHaveBeenCalled();
@@ -951,12 +1041,12 @@ describe('grant-only destination approval', () => {
     staged();
 
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
     expect(await screen.findByText(/Destinations approved/)).toBeVisible();
     staged();
 
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
     expect(await screen.findByText(/approval request was cancelled/)).toBeVisible();
     staged();
@@ -968,7 +1058,7 @@ describe('grant-only destination approval', () => {
       challenge: grantChallenge({ expiresAt: Date.now() - 1 }),
     });
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
     expect(await screen.findByText(/approval request expired/)).toBeVisible();
     expect(ConfirmGolemDestinationGrants).toHaveBeenCalledTimes(1); // never the lapsed token
     staged();
@@ -995,7 +1085,7 @@ describe('grant-only destination approval', () => {
     await mountWorkspace();
     await stageKey();
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel approval' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
     expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1');
@@ -1021,12 +1111,12 @@ describe('grant-only destination approval', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     await userEvent.click(screen.getByLabelText('Remove them and continue'));
+    // #284: Done on success closes the route editor itself now.
     await stage();
-    await cancelEditor();
     await clickApply();
 
     expect(await screen.findByText(/slots/)).toBeVisible();
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeDisabled();
 
     // A disabled control fires nothing: Prepare never runs, and the
@@ -1041,13 +1131,15 @@ describe('grant-only destination approval', () => {
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'conflict' });
     await mountWorkspace();
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
 
     expect(
       await screen.findByText(/configuration changed while this approval was open/)
     ).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
-    const action = screen.getByRole('button', { name: 'Approve missing destinations' });
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
     expect(action).toBeEnabled();
 
     // And it prepares afresh rather than reusing the spent challenge.
@@ -1073,8 +1165,10 @@ describe('grant-only destination approval', () => {
     await approve();
 
     expect(await screen.findByText(copy)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).toBeEnabled();
     if (status === 'config_invalid') {
       expect(screen.queryByText(/Nothing to approve/)).not.toBeInTheDocument();
     }
@@ -1086,7 +1180,9 @@ describe('grant-only destination approval', () => {
     await approve();
 
     expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve 2 destinations' })
+    ).not.toBeInTheDocument();
   });
 
   it.each(['rejected', 'malformed'])(
@@ -1102,13 +1198,15 @@ describe('grant-only destination approval', () => {
       await mountWorkspace();
       await stageKey();
       await approve();
-      await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
 
       await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledWith('grant-token-1'));
       expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId('golem-grant-notice')).toBeVisible();
-      expect(screen.queryByRole('button', { name: 'Confirm destination' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Approve missing destinations' })).toBeEnabled();
+      expect(
+        screen.queryByRole('button', { name: 'Approve 2 destinations' })
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Check destinations…' })).toBeEnabled();
 
       applyReturns({ status: 'applied', projection: readyProjection });
       await clickApply();
@@ -1116,6 +1214,48 @@ describe('grant-only destination approval', () => {
       expect(lastApply().keys).toEqual({ hosted: KEY });
     }
   );
+
+  it('does not replay a chip click when a grant round trip remounts the cards', async () => {
+    // [K5] The grant landing flips the surface lock, which remounts both cards — and a
+    // fresh card replays whatever focusRequest still stands, reopening an editor the
+    // user had left behind a whole round trip ago.
+    prepareReturns({ status: 'granted' });
+    await mountWorkspace();
+    await stageKey();
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
+    expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
+    await cancelEditor();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+
+    await approve();
+    expect(await screen.findByTestId('golem-grant-notice')).toBeVisible();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+  });
+
+  it('does not replay a chip click when an Apply lands a drop disclosure', async () => {
+    // [N4] The twin of the grant path above, on the settings path the clear was MISSING
+    // from. `drop_confirmation_required` RETAINS the keys, so its settle skips
+    // `resetCards` — and the landing releases `sending`, which remounts both cards with
+    // editing available again. A `focusRequest` left standing reopened the editor the
+    // user had closed a round trip ago. The clear now happens once, in `beginOperation`,
+    // for every lock cycle.
+    applyReturns({
+      status: 'drop_confirmation_required',
+      drops: [{ changeId: 'route:chat', fields: ['slots', 'think_tags'] }],
+    });
+    await mountWorkspace();
+    await stageKey();
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · API key' }));
+    expect(screen.getByLabelText('Endpoint')).toBeInTheDocument();
+    await cancelEditor();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+
+    await clickApply();
+    expect(await screen.findByText(/slots/)).toBeVisible();
+    // Editing is available again beside the disclosure — and nothing reopened on its own.
+    expect(screen.getByRole('button', { name: 'Edit provider hosted' })).toBeEnabled();
+    expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
+  });
 
   // The grant-only notice never reaches `settle` on its own, so a later
   // settings apply must clear it explicitly — otherwise "Destinations
@@ -1126,7 +1266,7 @@ describe('grant-only destination approval', () => {
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
     await mountWorkspace();
     await approve();
-    await userEvent.click(await screen.findByRole('button', { name: 'Confirm destination' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
     expect(await screen.findByTestId('golem-grant-notice')).toHaveTextContent(
       'Destinations approved. Your configuration was not changed.'
     );
@@ -1259,7 +1399,7 @@ describe('unsaved-work transitions', () => {
     await stageEndpoint();
     await clickApply();
     await screen.findByRole('button', { name: 'Reload & review draft' });
-    await userEvent.click(screen.getByRole('button', { name: 'hosted → updated' }));
+    await userEvent.click(screen.getByRole('button', { name: 'hosted · endpoint' }));
     expect(screen.getByLabelText('Endpoint')).toBeEnabled();
     (ReloadGolemSettings as jest.Mock).mockImplementationOnce(
       () =>
@@ -1271,7 +1411,7 @@ describe('unsaved-work transitions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
 
     await waitFor(() => expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'hosted → updated' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'hosted · endpoint' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
 
     settleReload({
@@ -1279,7 +1419,7 @@ describe('unsaved-work transitions', () => {
       projection: { ...readyProjection, revision: movedRevision },
     });
     await screen.findByText(`rev ${movedRevision.slice(0, 12)}`);
-    expect(screen.getByRole('button', { name: 'hosted → updated' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'hosted · endpoint' })).toBeEnabled();
   });
 
   it('acknowledges a clean shutdown without mounting a dialog', async () => {
@@ -1305,6 +1445,31 @@ describe('unsaved-work transitions', () => {
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard & quit' })
     );
     await expect(second).resolves.toBe(true);
+  });
+
+  // [W2] WKWebView with Full Keyboard Access off skips buttons on Tab, so the
+  // dialog owns its own keys: every move key hands focus to the other button,
+  // which makes Tab, Shift+Tab and the arrows wrap between exactly two choices.
+  it('moves focus between its two buttons on Tab and the arrows', async () => {
+    await mountWorkspace();
+    await stageKey();
+    const pending = confirmConfigClose('quit');
+    const dialog = await screen.findByRole('alertdialog');
+    const keep = within(dialog).getByRole('button', { name: 'Keep editing' });
+    const discard = within(dialog).getByRole('button', { name: 'Discard & quit' });
+    expect(keep).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(discard).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'ArrowRight' });
+    expect(keep).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(discard).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'ArrowUp' });
+    expect(keep).toHaveFocus();
+
+    await userEvent.click(keep);
+    await expect(pending).resolves.toBe(false);
   });
 
   it('cancels a pending challenge before it lets the app close', async () => {
@@ -1335,7 +1500,7 @@ describe('unsaved-work transitions', () => {
     await mountWorkspace();
     expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument();
     await approve();
-    await screen.findByRole('button', { name: 'Confirm destination' });
+    await screen.findByRole('button', { name: 'Approve 2 destinations' });
     expect(hasUnsavedConfigWork()).toBe(true);
 
     const pending = confirmConfigClose('close');
@@ -1383,28 +1548,47 @@ describe('unsaved-work transitions', () => {
 // Bootstrap (state = missing)
 // ---------------------------------------------------------------------------
 
-describe('bootstrap CTAs', () => {
+describe('bootstrap through the Source picker', () => {
   beforeEach(() => {
     reload(missingProjection);
     (LoadGolemProfile as jest.Mock).mockResolvedValue(loadedProfile);
   });
 
-  it('offers exactly the two fixed starting points and no profile picker', async () => {
+  // The `no profile picker` clause this test used to carry is gone on purpose:
+  // Slice C ships the masthead source select, so asserting its absence would
+  // now be a lie. Task 8 (ruling 4) then replaced the two empty cards with a
+  // dedicated bootstrap empty state, so the Start actions this test drives
+  // now live there instead of the picker's own START FROM group. What the
+  // test still pins is the §4.8 rule that holds regardless of surface — Save
+  // refuses without a Ready applied configuration, while a Start action
+  // bootstraps one. (The select's own Missing-state shape is pinned by
+  // GolemConfigProfiles.test.tsx.)
+  it('offers both starting points and refuses Save while Missing', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await screen.findByRole('button', { name: 'Start from curated/local' });
     const masthead = screen.getByTestId('golem-config-masthead');
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    expect(within(empty).getByRole('button', { name: 'Start blank' })).toBeEnabled();
+    expect(within(empty).getByRole('button', { name: 'Start from curated local' })).toBeEnabled();
 
-    expect(
-      within(masthead).getByRole('button', { name: 'Start from curated/local' })
-    ).toBeEnabled();
-    expect(within(masthead).getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    expect(screen.queryByRole('combobox', { name: /profile/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/nothing is written until you Apply/)).toBeVisible();
+    const save = within(masthead).getByRole('button', { name: 'Save as profile…' });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Nothing to save until a configuration is applied.');
+
+    await userEvent.click(within(empty).getByRole('button', { name: 'Start from curated local' }));
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
+    expect(await screen.findByRole('table', { name: 'Providers' })).toBeInTheDocument();
+
+    expect(within(masthead).getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+    expect(within(masthead).getByRole('button', { name: 'Save as profile…' })).toHaveAttribute(
+      'title',
+      'Nothing to save until a configuration is applied.'
+    );
   });
 
   it('loads the curated profile as the draft source and paints its rows as pending', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
     await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledWith('curated/local'));
 
     expect(await screen.findByTestId('provider-row-hosted')).toBeInTheDocument();
@@ -1421,10 +1605,14 @@ describe('bootstrap CTAs', () => {
         })
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
 
-    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    // The picker closed behind the choice, and the pending load locks the
+    // whole surface — so nothing can be reopened at all, which subsumes the
+    // two former CTAs' own disabled attributes.
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+    expect(sourceTrigger()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
 
     settleProfile(loadedProfile);
@@ -1440,9 +1628,14 @@ describe('bootstrap CTAs', () => {
         })
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    const profile = await screen.findByRole('button', { name: 'Start from curated/local' });
-    const blank = screen.getByRole('button', { name: 'Start blank' });
+    await screen.findByText(/nothing is written until you Apply/);
+    await userEvent.click(sourceTrigger());
+    const profile = await screen.findByRole('option', { name: /Curated local/ });
+    const blank = screen.getByRole('option', { name: /Blank draft/ });
 
+    // Both handlers run against the SAME render — the picker's own close and
+    // the source lock both land only on the next one — so this is exactly the
+    // double-dispatch the two fixed CTAs could produce.
     act(() => {
       fireEvent.click(profile);
       fireEvent.click(blank);
@@ -1461,7 +1654,12 @@ describe('bootstrap CTAs', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps source switches reachable during consent and locks them during cancellation', async () => {
+  // §4.8 freezes the Save-as-profile BUTTON while a consent challenge holds
+  // the visible request — Save has no business reaching a request it never
+  // wrote. The picker keeps the narrower source lock, because a source switch
+  // is a §4.6a cancel-then-transition path, so that is where "reachable
+  // during consent" is now proved.
+  it('keeps a source switch reachable during consent and locks it during cancellation', async () => {
     let settleCancel!: (value: unknown) => void;
     (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
       status: 'consent_required',
@@ -1474,14 +1672,18 @@ describe('bootstrap CTAs', () => {
         })
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeEnabled();
-    await userEvent.click(screen.getByRole('button', { name: 'Start blank' }));
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
+    expect(sourceTrigger()).toBeEnabled();
+
+    // This bootstrap never reaches Ready, so the applied entry reads "No
+    // applied configuration" rather than "Applied" — match either.
+    await pickSource(/applied/i);
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1489,18 +1691,25 @@ describe('bootstrap CTAs', () => {
     );
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
 
-    expect(screen.getByRole('button', { name: 'Start from curated/local' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Start blank' })).toBeDisabled();
+    expect(sourceTrigger()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
 
     settleCancel({ status: 'cancelled' });
-    expect(
-      await screen.findByRole('button', { name: 'source → blank configuration' })
-    ).toBeVisible();
+    await waitFor(() => expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument());
+    expect(sourceValue()).toBe('applied');
   });
 
+  // The one test in this describe that starts from a LOADED document. The
+  // switch that cancels the consent has to come through the picker (Save is
+  // frozen while a challenge stands), and the picker only lists profiles
+  // when the document is Ready — while Missing it shows the applied-absent
+  // state alone (§4.8). The profile source itself is still adopted through
+  // the picker's START FROM group, so the bootstrap path is the one under
+  // test either way.
   it('clears cancelled consent before a replacement profile load can fail', async () => {
+    reload(readyProjection);
     let rejectProfile!: (reason: unknown) => void;
     (LoadGolemProfile as jest.Mock)
       .mockResolvedValueOnce(loadedProfile)
@@ -1511,18 +1720,15 @@ describe('bootstrap CTAs', () => {
           })
       )
       .mockResolvedValueOnce(loadedProfile);
-    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({
-      status: 'consent_required',
-      challenge: challenge(),
-    });
-    render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    applyReturns({ status: 'consent_required', challenge: challenge() });
+    await mountWorkspace();
+    await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
     await stageKey();
     await clickApply();
     await screen.findByRole('button', { name: 'Confirm destination' });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await pickSource(/mine/, 'Yours');
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1543,13 +1749,22 @@ describe('bootstrap CTAs', () => {
     expect(screen.queryByRole('button', { name: 'Cancel approval' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    // §4.8: the failed load above restored the PRIOR source — still
+    // curated/local — with its clean preview. A profile source is inherently
+    // unsaved (draftChangeCount counts a non-applied source as one change), so
+    // the guard intercepts this next switch too, and the third load resolves
+    // onto curated/local again.
+    await pickSource(/mine/, 'Yours');
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Discard & switch',
+      })
+    );
     await screen.findByRole('button', { name: 'source → curated/local' });
-    (CreateGolemSettings as jest.Mock).mockResolvedValueOnce({ status: 'busy' });
+    applyReturns({ status: 'busy' });
     await clickApply();
     await screen.findByRole('button', { name: 'Retry' });
-    expect((CreateGolemSettings as jest.Mock).mock.calls.at(-1)?.[0].keys).toEqual({});
+    expect(lastApply().keys).toEqual({});
   });
 
   // The curated bootstrap end to end. The loaded, scrubbed profile document IS
@@ -1561,10 +1776,11 @@ describe('bootstrap CTAs', () => {
       projection: { ...readyProjection, revision: movedRevision },
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start from curated/local' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startCuratedViaMenu();
     await screen.findByRole('button', { name: 'source → curated/local' });
 
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
     const applyButton = screen.getByRole('button', { name: 'Apply' });
     expect(applyButton).toBeEnabled();
     expect(screen.queryByText(/Stage at least one change/)).not.toBeInTheDocument();
@@ -1593,7 +1809,8 @@ describe('bootstrap CTAs', () => {
   // the whole handle: reopen it, correct it, or take it back.
   it('reopens a staged provider-add on its staged values and re-stages a correction', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
@@ -1621,26 +1838,29 @@ describe('bootstrap CTAs', () => {
 
     // Still ONE change on the provider identity, carrying the correction, and
     // exactly one strip — no fork into a second provider.
-    expect(screen.getByText('2 changes waiting for Apply')).toBeInTheDocument();
+    expect(screen.getByText('2 staged changes')).toBeInTheDocument();
     expect(
       within(screen.getByTestId('provider-row-local')).getByText('http://127.0.0.1:9292/v1')
     ).toBeInTheDocument();
     expect(
-      within(screen.getByRole('list', { name: 'Providers' })).getAllByRole('listitem')
+      within(screen.getByRole('table', { name: 'Providers' }))
+        .getAllByRole('row')
+        .slice(1)
     ).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: /→ new provider$/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /· new provider$/ })).toHaveLength(1);
   });
 
   it('unstages a provider-add from its own strip', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
     await userEvent.type(screen.getByLabelText('New API key'), KEY);
     await stage();
-    expect(screen.getByRole('button', { name: 'local → new API key' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'local · API key' })).toBeInTheDocument();
 
     await userEvent.click(
       within(screen.getByTestId('provider-row-local')).getByRole('button', {
@@ -1651,16 +1871,17 @@ describe('bootstrap CTAs', () => {
     // The provider AND the key operation it carried are both gone — no full
     // Discard required.
     expect(screen.queryByTestId('provider-row-local')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'local → new provider' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'local → new API key' })).not.toBeInTheDocument();
-    expect(screen.getByText('1 change waiting for Apply')).toBeInTheDocument(); // the source
+    expect(screen.queryByRole('button', { name: 'local · new provider' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'local · API key' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument(); // the source
   });
 
   // Same one-shot rule as a draft reset, different trigger: a source switch
   // remounts the cards too, so a standing chip request must not ride along.
   it('does not replay a chip click across a bootstrap source switch', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
     await userEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
     await userEvent.type(screen.getByLabelText('Provider name'), 'local');
     await userEvent.type(screen.getByLabelText('Endpoint'), 'http://127.0.0.1:11434/v1');
@@ -1668,10 +1889,10 @@ describe('bootstrap CTAs', () => {
     await stage();
 
     // The chip lands on that strip, which reopens on the STAGED values.
-    await userEvent.click(screen.getByRole('button', { name: 'local → new provider' }));
+    await userEvent.click(screen.getByRole('button', { name: 'local · new provider' }));
     expect(screen.getByRole('group', { name: 'Staged provider local' })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start from curated/local' }));
+    await startCuratedViaMenu();
     await userEvent.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: 'Discard & switch',
@@ -1686,7 +1907,8 @@ describe('bootstrap CTAs', () => {
   it('creates from a blank builder once the bootstrap inputs are complete', async () => {
     (CreateGolemSettings as jest.Mock).mockResolvedValue({ status: 'busy' });
     render(<GolemConfigWorkspace onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Start blank' }));
+    await screen.findByText(/nothing is written until you Apply/);
+    await startBlankViaMenu();
     expect(
       await screen.findByRole('button', { name: 'source → blank configuration' })
     ).toBeVisible();
@@ -1703,8 +1925,8 @@ describe('bootstrap CTAs', () => {
     // No model exists on a brand-new provider: the declare card is the path.
     await declareModel('qwen3');
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    // #284: Done on success closes the route editor itself now.
     await stage();
-    await cancelEditor();
 
     await clickApply();
     await waitFor(() => expect(CreateGolemSettings).toHaveBeenCalledTimes(1));
@@ -1712,5 +1934,164 @@ describe('bootstrap CTAs', () => {
     expect(request.targetRevision).toBeUndefined();
     expect(request.source).toEqual({ kind: 'blank' });
     expect(ApplyGolemSettings).not.toHaveBeenCalled();
+  });
+
+  // [A6] regression: `reviewConflict()`'s 'target' branch reloads unconditionally
+  // (no unsaved guard — it calls `load(true)` directly) and keeps every retained
+  // change for review, so it is the one organic way to land the bootstrap empty
+  // state on top of a still-dirty draft whose source was never touched (`applied`
+  // the whole time). Clicking a bootstrap button there must still run the §4.6a
+  // dirty-draft guard, and answering "Keep editing" must leave focus exactly
+  // where it was — the guard refused the start, so `bootstrapFrom` must not
+  // move focus to the Source trigger.
+  it('does not move focus off a bootstrap button when the dirty-draft guard is Kept', async () => {
+    reload(readyProjection);
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+    await mountWorkspace();
+    await stageEndpoint();
+    await clickApply();
+    await screen.findByRole('button', { name: 'Reload & review draft' });
+
+    reload(missingProjection);
+    await userEvent.click(screen.getByRole('button', { name: 'Reload & review draft' }));
+    const empty = await screen.findByRole('region', { name: 'No applied configuration' });
+    const startBlankButton = within(empty).getByRole('button', { name: 'Start blank' });
+
+    await userEvent.click(startBlankButton);
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Keep editing' })
+    );
+
+    expect(startBlankButton).toHaveFocus();
+    expect(screen.getByRole('region', { name: 'No applied configuration' })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 4c: a card the picker offers can no longer be refused by a sibling floor.
+// ---------------------------------------------------------------------------
+
+describe('route picker floors (wave 4c)', () => {
+  const agentModel = model({
+    role: 'agent-role',
+    modelName: 'gpt-5',
+    effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+    capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ['chat', 'stream', 'tool_call'],
+    routedUseCases: ['agent'],
+    hasThinkTags: false,
+  });
+  // agent falls back to reason-role, so the backend lists it among deepseek's routed use cases.
+  const deep = model({
+    role: 'reason-role',
+    modelName: 'deepseek',
+    routedUseCases: ['agent', 'reasoning'],
+    hasThinkTags: false,
+  });
+  // The projection parser requires routes sorted by use case and models by role
+  // (types/golem.ts parseSettingsProjection): an unsorted fixture never mounts.
+  const projection = {
+    ...readyProjection,
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'reasoning', role: 'reason-role' },
+    ],
+    models: [agentModel, model(), deep],
+  };
+  const grid = () => within(screen.getByRole('listbox', { name: /Models/ }));
+  const cardNamed = (name: string) => {
+    const card = grid()
+      .getAllByRole('option')
+      .find((option) => within(option).queryByText(name) !== null);
+    if (card === undefined) throw new Error(`no card named ${name}`);
+    return card;
+  };
+
+  it('cannot pick a model a sibling floor refuses, and says which sibling', async () => {
+    reload(projection);
+    await mountWorkspace();
+    await openRoute('reasoning');
+
+    // Keeping deepseek is an override of reason-role's selector, which agent
+    // reaches through its fallback: agent's floor governs it, and the applied
+    // model is short of it. gpt-5-mini is a fork of reasoning alone onto
+    // chat-role's selector — agent stays on reason-role — so it is eligible.
+    expect(screen.getByText('Model — every card below can serve reasoning')).toBeInTheDocument();
+    expect(
+      grid()
+        .getAllByRole('option')
+        .map((card) => within(card).getByText(/gpt|deepseek/).textContent)
+    ).toEqual(['gpt-5', 'gpt-5-mini']);
+    expect(screen.getByText(/does not declare/)).toHaveTextContent(
+      'deepseek does not declare tool_call: agent needs tool_call.'
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
+    expect(within(cardNamed('deepseek')).getByText('agent needs tool_call')).toBeInTheDocument();
+    await pickModel('gpt-5');
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    // A blocked card is shown for its reason, never chosen: the readout keeps the choice.
+    await userEvent.click(cardNamed('deepseek'));
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 4b (firn-ide#315): the sibling row shows the change before Apply, and
+// Apply still sends ONE change.
+// ---------------------------------------------------------------------------
+
+describe('selector-wide siblings (firn-ide#315)', () => {
+  it('paints a think change on the sibling row before Apply, and sends one change', async () => {
+    const thinking = (over: Partial<ModelProjection>) =>
+      model({
+        effectiveCapabilities: ['chat', 'stream', 'thinking'],
+        capabilityFacts: { caps: ['chat', 'stream', 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ['chat', 'stream', 'thinking'],
+        thinkMode: 'auto',
+        hasThinkTags: false,
+        ...over,
+      });
+    reload({
+      ...readyProjection,
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        thinking({ routedUseCases: ['chat'] }),
+        thinking({ role: 'summarize-role', routedUseCases: ['summarize'] }),
+      ],
+    });
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+
+    await openRoute('chat');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    // summarize has no floor on record: the selector-wide change needs the acknowledgement.
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+
+    const sibling = screen.getByTestId('route-row-summarize');
+    expect(sibling).toHaveAttribute('data-changed', 'true');
+    expect(within(sibling).getByText('always')).toBeInTheDocument();
+    expect(within(sibling).getByText(/^was$/i).parentElement).toHaveTextContent('wasauto');
+    expect(
+      within(screen.getByTestId('route-row-chat')).getByText('also affects summarize')
+    ).toBeInTheDocument();
+    // One change, one chip: the sibling is reached by the selector, not staged twice.
+    const bar = screen.getByTestId('golem-config-draft');
+    expect(within(bar).getByText('1 staged change')).toBeInTheDocument();
+
+    await clickApply();
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
+    expect(lastApply().changes).toEqual([
+      expect.objectContaining({ kind: 'route', useCase: 'chat', thinkMode: 'always' }),
+    ]);
   });
 });

@@ -5,7 +5,7 @@
 
 import styles from './GolemConfig.module.css';
 
-export type StatusTone = 'ok' | 'warn' | 'bad' | 'dim';
+export type StatusTone = 'ok' | 'warn' | 'bad' | 'dim' | 'limited';
 
 export function StatusText({ tone, children }: { tone: StatusTone; children: string }) {
   return (

@@ -1,0 +1,7 @@
+{
+  "verdict": "reject",
+  "document": "profile_save_request",
+  "value": {
+    "id": "user/mine"
+  }
+}

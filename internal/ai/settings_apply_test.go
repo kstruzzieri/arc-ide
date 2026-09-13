@@ -245,20 +245,95 @@ func validateGolemProfileLoadResult(r GolemProfileLoadResult) error {
 		if r.ProfileID != "" || r.SourceRevision != "" || r.Projection != nil {
 			return fmt.Errorf("diagnostics result carries loaded members")
 		}
-		if len(r.Diagnostics) == 0 || len(r.Diagnostics) > maxProjectionEntries {
-			return fmt.Errorf("profile diagnostics = %d", len(r.Diagnostics))
+		return validateProfileDiagnosticList(r.Diagnostics)
+	}
+	return fmt.Errorf("profile load status %q", r.Status)
+}
+
+func validateProfileDiagnosticList(ds []ProfileDiagnostic) error {
+	if len(ds) == 0 || len(ds) > maxProjectionEntries {
+		return fmt.Errorf("profile diagnostics = %d", len(ds))
+	}
+	for i, d := range ds {
+		if !profileDiagnosticCodes[d.Code] {
+			return fmt.Errorf("profile diagnostic[%d] code %q", i, d.Code)
 		}
-		for i, d := range r.Diagnostics {
-			if !profileDiagnosticCodes[d.Code] {
-				return fmt.Errorf("profile diagnostic[%d] code %q", i, d.Code)
+		if d.ProfileID != "" && !validProfileID(d.ProfileID) {
+			return fmt.Errorf("profile diagnostic[%d] id %q", i, d.ProfileID)
+		}
+	}
+	return nil
+}
+
+// validateGolemProfileListResult enforces the §5.6 list union: bounded,
+// ascending-unique ids, curated flag agreeing with the namespace, bounded
+// non-empty descriptions, and §5.6-shaped revisions.
+func validateGolemProfileListResult(r GolemProfileListResult) error {
+	switch r.Status {
+	case "loaded", "limited":
+		if r.Diagnostics != nil {
+			return fmt.Errorf("%s result carries diagnostics", r.Status)
+		}
+		if r.Profiles == nil || len(r.Profiles) > maxProjectionEntries {
+			return fmt.Errorf("profiles = %d entries", len(r.Profiles))
+		}
+		for i, p := range r.Profiles {
+			if !validProfileID(p.ID) {
+				return fmt.Errorf("profiles[%d].id %q", i, p.ID)
 			}
-			if d.ProfileID != "" && !validProfileID(d.ProfileID) {
-				return fmt.Errorf("profile diagnostic[%d] id %q", i, d.ProfileID)
+			if p.Curated != strings.HasPrefix(p.ID, "curated/") {
+				return fmt.Errorf("profiles[%d] curated flag disagrees with namespace", i)
+			}
+			if len(p.Description) > maxProjectionEndpointLen {
+				return fmt.Errorf("profiles[%d] description over bound", i)
+			}
+			if p.Revision != "" && !validRevision(p.Revision) {
+				return fmt.Errorf("profiles[%d].revision %q", i, p.Revision)
+			}
+			if i > 0 && r.Profiles[i-1].ID >= p.ID {
+				return fmt.Errorf("profiles out of order at %d", i)
 			}
 		}
 		return nil
+	case "diagnostics":
+		if r.Profiles != nil {
+			return fmt.Errorf("diagnostics result carries profiles")
+		}
+		return validateProfileDiagnosticList(r.Diagnostics)
 	}
-	return fmt.Errorf("profile load status %q", r.Status)
+	return fmt.Errorf("list status %q", r.Status)
+}
+
+var profileSaveConflicts = map[string]bool{"active_revision": true, "profile_target": true}
+
+func validateGolemProfileSaveResult(r GolemProfileSaveResult) error {
+	switch r.Status {
+	case "saved":
+		if r.Conflict != "" || r.Diagnostics != nil {
+			return fmt.Errorf("saved result carries refusal members")
+		}
+		if r.Profile == nil || !validUserProfileID(r.Profile.ID) || !validRevision(r.Profile.Revision) {
+			return fmt.Errorf("saved profile %+v", r.Profile)
+		}
+		if r.Warning != "" && r.Warning != "durability_uncertain" {
+			return fmt.Errorf("warning %q", r.Warning)
+		}
+		return nil
+	case "conflict":
+		if r.Profile != nil || r.Warning != "" || r.Diagnostics != nil {
+			return fmt.Errorf("conflict result carries saved members")
+		}
+		if !profileSaveConflicts[r.Conflict] {
+			return fmt.Errorf("conflict %q", r.Conflict)
+		}
+		return nil
+	case "diagnostics":
+		if r.Profile != nil || r.Warning != "" || r.Conflict != "" {
+			return fmt.Errorf("diagnostics result carries saved members")
+		}
+		return validateProfileDiagnosticList(r.Diagnostics)
+	}
+	return fmt.Errorf("save status %q", r.Status)
 }
 
 func contains(values []string, want string) bool {
@@ -327,28 +402,122 @@ func profileLoadStructuralCheck(raw json.RawMessage) error {
 			return err
 		}
 	}
-	if diagnostics, ok := root["diagnostics"]; ok {
-		entries, err := contractArrayField(root, "diagnostics", "profileLoad")
-		if err != nil {
+	if _, ok := root["diagnostics"]; ok {
+		if err := profileDiagnosticsStructuralCheck(root, "profileLoad"); err != nil {
 			return err
-		}
-		_ = diagnostics
-		for i, entry := range entries {
-			where := fmt.Sprintf("profileLoad.diagnostics[%d]", i)
-			fields, err := contractObject(entry, where)
-			if err != nil {
-				return err
-			}
-			if _, err := contractStringField(fields, "code", where); err != nil {
-				return err
-			}
-			if err := nonEmptyOptionalString(fields, "profileId", where); err != nil {
-				return err
-			}
 		}
 	}
 	if _, ok := root["projection"]; ok {
 		return draftStructuralCheck(root["projection"])
+	}
+	return nil
+}
+
+// profileDiagnosticsStructuralCheck is the raw-shape half of profile
+// diagnostics validation, shared by the load, list, and save walkers: `code`
+// is a present string and `profileId`, when present, is a non-empty string —
+// typed decoding reads null and "" as the same absent value.
+func profileDiagnosticsStructuralCheck(root map[string]json.RawMessage, where string) error {
+	entries, err := contractArrayField(root, "diagnostics", where)
+	if err != nil {
+		return err
+	}
+	for i, entry := range entries {
+		at := fmt.Sprintf("%s.diagnostics[%d]", where, i)
+		fields, err := contractObject(entry, at)
+		if err != nil {
+			return err
+		}
+		if _, err := contractStringField(fields, "code", at); err != nil {
+			return err
+		}
+		if err := nonEmptyOptionalString(fields, "profileId", at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// profileListStructuralCheck guards what typed decoding erases: a required
+// boolean's raw presence, present-but-null/empty optional strings, and
+// diagnostic member shapes.
+func profileListStructuralCheck(raw json.RawMessage) error {
+	root, err := contractObject(raw, "profileList")
+	if err != nil {
+		return err
+	}
+	if _, err := contractStringField(root, "status", "profileList"); err != nil {
+		return err
+	}
+	if _, ok := root["diagnostics"]; ok {
+		if err := profileDiagnosticsStructuralCheck(root, "profileList"); err != nil {
+			return err
+		}
+	}
+	if _, ok := root["profiles"]; !ok {
+		return nil
+	}
+	entries, err := contractArrayField(root, "profiles", "profileList")
+	if err != nil {
+		return err
+	}
+	for i, entry := range entries {
+		where := fmt.Sprintf("profileList.profiles[%d]", i)
+		fields, err := contractObject(entry, where)
+		if err != nil {
+			return err
+		}
+		if _, err := contractStringField(fields, "id", where); err != nil {
+			return err
+		}
+		if err := contractBoolField(fields, "curated", where); err != nil {
+			return err
+		}
+		for _, key := range []string{"description", "revision"} {
+			if err := nonEmptyOptionalString(fields, key, where); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func profileSaveResultStructuralCheck(raw json.RawMessage) error {
+	root, err := contractObject(raw, "profileSave")
+	if err != nil {
+		return err
+	}
+	if _, err := contractStringField(root, "status", "profileSave"); err != nil {
+		return err
+	}
+	for _, key := range []string{"warning", "conflict"} {
+		if err := nonEmptyOptionalString(root, key, "profileSave"); err != nil {
+			return err
+		}
+	}
+	// A present `profile` member must be an object with non-empty id/revision
+	// strings on the RAW bytes: `profile: null` on a conflict result decodes to
+	// the same nil pointer as absence, and null/empty member values decode to
+	// the same "" the validators treat as fine for the conflict variants.
+	if member, ok := root["profile"]; ok {
+		fields, err := contractObject(member, "profileSave.profile")
+		if err != nil {
+			return err
+		}
+		for _, key := range []string{"id", "revision"} {
+			value, err := contractStringField(fields, key, "profileSave.profile")
+			if err != nil {
+				return err
+			}
+			if value == "" {
+				return fmt.Errorf("profileSave.profile.%s is empty", key)
+			}
+		}
+	}
+	if _, ok := root["diagnostics"]; ok {
+		if err := profileDiagnosticsStructuralCheck(root, "profileSave"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -424,6 +593,36 @@ func checkApplyFixture(f applyFixture) error {
 			return err
 		}
 		return validateGolemProfileLoadResult(result)
+	case "profile_list_result":
+		if err := profileListStructuralCheck(f.Value); err != nil {
+			return err
+		}
+		var result GolemProfileListResult
+		if err := strictDecodeFixture(f.Value, &result); err != nil {
+			return err
+		}
+		return validateGolemProfileListResult(result)
+	case "profile_save_request":
+		// Plain json.Unmarshal on purpose: that is the Wails decode path, so
+		// this proves strictness lives on the production type's UnmarshalJSON
+		// (§4.8 — never only in test decoders).
+		var req SaveGolemProfileAsRequest
+		if err := json.Unmarshal(f.Value, &req); err != nil {
+			return err
+		}
+		if refusal := validateSaveGolemProfileAsRequest(req); refusal != nil {
+			return fmt.Errorf("save request refused: %s", refusal.Diagnostics[0].Code)
+		}
+		return nil
+	case "profile_save_result":
+		if err := profileSaveResultStructuralCheck(f.Value); err != nil {
+			return err
+		}
+		var result GolemProfileSaveResult
+		if err := strictDecodeFixture(f.Value, &result); err != nil {
+			return err
+		}
+		return validateGolemProfileSaveResult(result)
 	}
 	return fmt.Errorf("document %q", f.Document)
 }
@@ -475,6 +674,9 @@ func TestApplyCorpusCoversEveryVariant(t *testing.T) {
 	documents := map[string]int{}
 	kinds := map[string]int{}
 	statuses := map[string]int{}
+	listStatuses := map[string]int{}
+	saveStatuses := map[string]int{}
+	saveConflicts := map[string]int{}
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		if err != nil {
@@ -489,14 +691,23 @@ func TestApplyCorpusCoversEveryVariant(t *testing.T) {
 			continue
 		}
 		var probe struct {
-			Status  string `json:"status"`
-			Changes []struct {
+			Status   string `json:"status"`
+			Conflict string `json:"conflict"`
+			Changes  []struct {
 				Kind string `json:"kind"`
 			} `json:"changes"`
 		}
 		if err := json.Unmarshal(fixture.Value, &probe); err == nil {
-			if probe.Status != "" && fixture.Document == "apply_result" {
+			switch {
+			case fixture.Document == "apply_result" && probe.Status != "":
 				statuses[probe.Status]++
+			case fixture.Document == "profile_list_result" && probe.Status != "":
+				listStatuses[probe.Status]++
+			case fixture.Document == "profile_save_result" && probe.Status != "":
+				saveStatuses[probe.Status]++
+				if probe.Conflict != "" {
+					saveConflicts[probe.Conflict]++
+				}
 			}
 			for _, change := range probe.Changes {
 				kinds[change.Kind]++
@@ -505,7 +716,8 @@ func TestApplyCorpusCoversEveryVariant(t *testing.T) {
 	}
 	for _, document := range []string{
 		"apply_request", "confirm_request", "apply_result", "cancel_result",
-		"profile_load_result",
+		"profile_load_result", "profile_list_result", "profile_save_request",
+		"profile_save_result",
 	} {
 		if documents[document] == 0 {
 			t.Fatalf("corpus has no %s fixture", document)
@@ -523,6 +735,92 @@ func TestApplyCorpusCoversEveryVariant(t *testing.T) {
 		if statuses[status] == 0 {
 			t.Fatalf("corpus accepts no %q result", status)
 		}
+	}
+	for _, status := range []string{"loaded", "limited", "diagnostics"} {
+		if listStatuses[status] == 0 {
+			t.Fatalf("corpus accepts no %q profile list result", status)
+		}
+	}
+	for _, status := range []string{"saved", "conflict", "diagnostics"} {
+		if saveStatuses[status] == 0 {
+			t.Fatalf("corpus accepts no %q profile save result", status)
+		}
+	}
+	for _, kind := range []string{"active_revision", "profile_target"} {
+		if saveConflicts[kind] == 0 {
+			t.Fatalf("corpus accepts no %q save conflict", kind)
+		}
+	}
+}
+
+// TestGolemProfileResultsRoundTripTheContract closes the gap
+// TestSettingsApplyContractCorpus leaves open: that test only ever DECODES
+// corpus bytes into the production types, so it can never catch a producer
+// whose own MARSHALED output the same contract would reject. This test goes
+// the other direction — it builds every REACHABLE GolemProfileListResult and
+// GolemProfileSaveResult (the shapes the real producer can emit, never an
+// unreachable empty loaded/limited list — see the Profiles field comment on
+// GolemProfileListResult in profiles.go), marshals each with json.Marshal
+// (the same encoding/json the Wails runtime uses), and runs the resulting
+// bytes back through the exact three-layer contract path a fixture takes:
+// the structural check, then a strict decode, then the result validator.
+func TestGolemProfileResultsRoundTripTheContract(t *testing.T) {
+	curated := ProfileInfo{
+		ID: "curated/local", Description: "Vetted local llama-swap lineup",
+		Curated: true, Revision: testSettingsRevision,
+	}
+	user := ProfileInfo{ID: "user/mine", Curated: false}
+
+	listCases := map[string]GolemProfileListResult{
+		"loaded":      {Status: "loaded", Profiles: []ProfileInfo{curated, user}},
+		"limited":     {Status: "limited", Profiles: []ProfileInfo{curated, user}},
+		"diagnostics": {Status: "diagnostics", Diagnostics: []ProfileDiagnostic{{Code: "io"}}},
+	}
+	for name, result := range listCases {
+		t.Run("list/"+name, func(t *testing.T) {
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := profileListStructuralCheck(raw); err != nil {
+				t.Fatalf("structural check rejected published output: %v (%s)", err, raw)
+			}
+			var decoded GolemProfileListResult
+			if err := strictDecodeFixture(raw, &decoded); err != nil {
+				t.Fatalf("strict decode rejected published output: %v (%s)", err, raw)
+			}
+			if err := validateGolemProfileListResult(decoded); err != nil {
+				t.Fatalf("validator rejected published output: %v (%s)", err, raw)
+			}
+		})
+	}
+
+	saveCases := map[string]GolemProfileSaveResult{
+		"saved": {Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: testSettingsRevision}},
+		"saved-with-warning": {
+			Status: "saved", Profile: &SavedProfile{ID: "user/mine", Revision: testSettingsRevision},
+			Warning: "durability_uncertain",
+		},
+		"conflict":    {Status: "conflict", Conflict: "active_revision"},
+		"diagnostics": {Status: "diagnostics", Diagnostics: []ProfileDiagnostic{{Code: "profile_limit"}}},
+	}
+	for name, result := range saveCases {
+		t.Run("save/"+name, func(t *testing.T) {
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if err := profileSaveResultStructuralCheck(raw); err != nil {
+				t.Fatalf("structural check rejected published output: %v (%s)", err, raw)
+			}
+			var decoded GolemProfileSaveResult
+			if err := strictDecodeFixture(raw, &decoded); err != nil {
+				t.Fatalf("strict decode rejected published output: %v (%s)", err, raw)
+			}
+			if err := validateGolemProfileSaveResult(decoded); err != nil {
+				t.Fatalf("validator rejected published output: %v (%s)", err, raw)
+			}
+		})
 	}
 }
 
@@ -2460,11 +2758,16 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 }`
 	h := newApplyHarness(t, target)
 	before := h.targetBytes(t)
+	// An override asserting the shared selector without embed, below
+	// embedding's floor. Upstream's SetRoleOverrides gate refuses it during the
+	// mutation, naming the first matching ROLE; the use-case-subject refusal
+	// (checkPreparedDocument) is reached only when that gate passes — which an
+	// empty exposure did, by clearing to the type defaults, before
+	// validateRouteChange refused the empty list (see the apply corpus).
 	change := confirmUnknown(
-		routeChange("summarize", "ollama", "shared-model", "chat", "stream", "embed"),
+		routeChange("summarize", "ollama", "shared-model", "chat", "stream"),
 		"summarize",
 	)
-	change.ExposedCaps = []string{}
 
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
@@ -2472,13 +2775,43 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 	}
 	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
 		res.Diagnostics[0].Code != codeEligibilityIneligible ||
-		res.Diagnostics[0].SubjectKind != "use_case" ||
-		res.Diagnostics[0].SubjectName != "embedding" {
-		t.Errorf("ApplySettings(selector override) = %+v, want embedding %s diagnostic",
+		res.Diagnostics[0].SubjectKind != "role" ||
+		res.Diagnostics[0].SubjectName != "embed-m" ||
+		!res.Diagnostics[0].Blocking {
+		t.Errorf("ApplySettings(selector override) = %+v, want blocking embed-m %s diagnostic",
 			res, codeEligibilityIneligible)
 	}
 	if got := h.targetBytes(t); !bytes.Equal(got, before) {
 		t.Errorf("ApplySettings(selector override) target bytes changed, want unchanged")
+	}
+}
+
+// TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase pins the completed-
+// document loop: a Firn floor the request never names but the finished
+// document no longer meets is reported on THAT use case. The apply path
+// reaches this loop only when upstream's own gate passed (see the selector
+// override test above, where it does not).
+func TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase(t *testing.T) {
+	doc, err := config.ParseDocument([]byte(`{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "embed-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream"]}
+  },
+  "defaults": {"agent": "agent-m", "embedding": "embed-m"}
+}`), config.Origin{Source: config.OriginProfile}, config.DocumentOptions{})
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	res := checkPreparedDocument(doc, SettingsApplyRequest{})
+	if res == nil || res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "embedding" {
+		t.Fatalf("checkPreparedDocument = %+v, want embedding %s diagnostic",
+			res, codeEligibilityIneligible)
 	}
 }
 

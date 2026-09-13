@@ -5,14 +5,17 @@ import { GolemContractError, parseSettingsProjection } from '../../types/golem';
 import {
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
   type ApplyMode,
 } from '../../types/golemConfig';
 
-// The Golem INBOUND path no longer goes through `createFrom`: the nine
-// object-returning Golem calls are read raw in src/wails/bindings.ts so the
+// The Golem INBOUND path no longer goes through `createFrom`: every
+// object-returning Golem call is read raw in src/wails/bindings.ts so the
 // validators see the untouched wire payload, and
 // src/__tests__/wails/golemRawCalls.test.ts is the guard for that routing.
 //
@@ -60,6 +63,15 @@ const fixtureMode = (fixture: ApplyFixture): ApplyMode => {
   return fixture.mode;
 };
 
+// Every apply-corpus document now has a generated v3 class, so this file walks
+// the whole accept set with no exclusion list: profile_list_result joined once
+// Task 3 generated ai.GolemProfileListResult, and profile_save_request /
+// profile_save_result once Task 4 generated ai.SaveGolemProfileAsRequest and
+// ai.GolemProfileSaveResult. Nothing filters the fixture list any more, so the
+// `default: throw` in both switches below is what keeps the file fail-closed:
+// a document kind this file does not recognize breaks the suite loudly instead
+// of being silently skipped.
+
 const parseDocument = (fixture: ApplyFixture, value: unknown): unknown => {
   switch (fixture.document) {
     case 'apply_request':
@@ -72,6 +84,12 @@ const parseDocument = (fixture: ApplyFixture, value: unknown): unknown => {
       return parseCancelSettingsApplyResult(value);
     case 'profile_load_result':
       return parseGolemProfileLoadResult(value);
+    case 'profile_list_result':
+      return parseGolemProfileListResult(value);
+    case 'profile_save_request':
+      return parseSaveGolemProfileAsRequest(value);
+    case 'profile_save_result':
+      return parseGolemProfileSaveResult(value);
     default:
       throw new Error(`unknown document ${fixture.document}`);
   }
@@ -90,6 +108,12 @@ const instantiate = (fixture: ApplyFixture): unknown => {
       return ai.CancelSettingsApplyResult.createFrom(source);
     case 'profile_load_result':
       return ai.GolemProfileLoadResult.createFrom(source);
+    case 'profile_list_result':
+      return ai.GolemProfileListResult.createFrom(source);
+    case 'profile_save_request':
+      return ai.SaveGolemProfileAsRequest.createFrom(source);
+    case 'profile_save_result':
+      return ai.GolemProfileSaveResult.createFrom(source);
     default:
       throw new Error(`unknown document ${fixture.document}`);
   }
@@ -134,6 +158,25 @@ describe('v3 generated class instances at the Golem boundary', () => {
       const instance = instantiate(fixture);
 
       expect(parseDocument(fixture, instance)).toStrictEqual(fromWire);
+    });
+
+    // The fail-closed floor, now that nothing is filtered out: every distinct
+    // document kind the accept corpus carries is one this file's switches
+    // recognize, so no kind can quietly stop being walked.
+    it('walks every document kind the accept corpus carries', () => {
+      const documents = new Set(
+        files.map((file) => readFixture<ApplyFixture>(applyCorpus, file).document)
+      );
+      expect([...documents].sort()).toEqual([
+        'apply_request',
+        'apply_result',
+        'cancel_result',
+        'confirm_request',
+        'profile_list_result',
+        'profile_load_result',
+        'profile_save_request',
+        'profile_save_result',
+      ]);
     });
   });
 

@@ -25,16 +25,18 @@
  * settings calls read one process-wide snapshot.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ApplyGolemSettings,
   CancelGolemSettingsApply,
   ConfirmGolemDestinationGrants,
   ConfirmGolemSettingsApply,
   CreateGolemSettings,
+  ListGolemProfiles,
   LoadGolemProfile,
   PrepareGolemDestinationGrants,
   ReloadGolemSettings,
+  SaveGolemProfileAs,
 } from '../../wails/bindings';
 import type { ai } from '../../wails/bindings';
 import {
@@ -50,13 +52,19 @@ import {
   changeStableID,
   cleanDraft,
   draftChangeCount,
+  effectiveRoutes,
   isDraftDirty,
   meetsUseCaseFloor,
   parseCancelSettingsApplyResult,
   parseDestinationGrantsResult,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyResult,
   projectDraft,
+  providerUsage,
+  readActiveProfile,
   recordApplyProvenance,
   retainsKeys,
   setTargetRevision,
@@ -71,14 +79,31 @@ import {
   type ConsentPromptIntent,
   type DestinationGrantsStatus,
   type DraftEvent,
+  type GolemProfileSaveResult,
   type ProfileDraftProjection,
   type SettingsApplyRequest,
   type SettingsApplyResult,
 } from '../../types/golemConfig';
 import { formatProfileDiagnostic, formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { ApplyBar, type EditorFocusRequest } from './ApplyBar';
+import { SaveProfileButton, type AcquireRevisionOutcome } from './SaveProfileButton';
 import { registerConfigCloseHandler, type ConfigCloseIntent } from './configCloseGuard';
 import styles from './GolemConfig.module.css';
+import {
+  APPLIED_SOURCE_VALUE,
+  BLANK_SOURCE_VALUE,
+  TRANSPORT_UNAVAILABLE_COPY,
+  buildProfileSelectModel,
+  sourceSelectValue,
+  startFromProfileId,
+  type ProfileListState,
+} from './profileSelect';
+import {
+  SourcePicker,
+  SOURCE_DESCRIPTION_ID,
+  SOURCE_LOADING_ID,
+  SOURCE_PICKER_ID,
+} from './SourcePicker';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard, routingOwnsDiagnostic } from './RoutingCard';
 import { StatusText, type StatusTone } from './StatusText';
@@ -92,7 +117,7 @@ const STATE_LABEL: Record<SettingsProjection['state'], string> = {
 
 const STATE_TONE: Record<SettingsProjection['state'], StatusTone> = {
   ready: 'ok',
-  limited: 'warn',
+  limited: 'limited',
   invalid: 'bad',
   missing: 'dim',
 };
@@ -121,9 +146,6 @@ const EDITING_UNAVAILABLE: Partial<Record<SettingsProjection['state'], string>> 
 /** The CAS token is 64 hex characters; the head identifies a revision at a
  * glance and the full value stays available on hover. */
 const REVISION_HEAD = 12;
-
-/** Slice B invokes the profile loader for this one fixed bootstrap CTA (§5.3). */
-const CURATED_PROFILE = 'curated/local';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -171,7 +193,12 @@ const BOOTSTRAP_GATE =
  * only about approval — and none of them mentions the draft, because none of
  * them touches it.
  */
-const APPROVE_ACTION = 'Approve missing destinations';
+const APPROVE_ACTION = 'Check destinations…';
+/** Ruling 5: D13 forbids a mount-time probe, so the click is a QUERY — the verb and the tooltip say so. */
+const APPROVE_TITLE =
+  'Lists remote destinations your agent route can reach that are not yet approved. Approving writes only the consent store; your configuration is unchanged.';
+const GRANT_PROMPT_EXPLAINER =
+  'Remote destinations your agent route can reach that have no approval yet. Approving records consent only; your configuration is not changed.';
 const GRANT_NONE =
   'Nothing to approve. Every remote destination the agent route reaches is already approved.';
 /** Never "nothing to approve": a configuration that would not load answered
@@ -221,6 +248,13 @@ const DISCARD_BODY_CHALLENGED = `${DISCARD_BODY} The pending destination approva
  * is protecting is the open approval, so the dialog says exactly that instead
  * of claiming staged changes and a key are being dropped.
  */
+/**
+ * A draft whose ONLY change is the replacement source (§3.3 counts that as one
+ * change, so the guard fires) has nothing staged and no key: claiming staged
+ * changes and an API key are dropped would be a lie. It says what actually goes.
+ */
+const SOURCE_ONLY_BODY =
+  'This draft only replaces the source; switching drops that replacement. Nothing has been written, and the file on disk does not change.';
 const CANCEL_GRANT_TITLE = 'Cancel the pending approval?';
 const CANCEL_GRANT_BODY = 'The destination approval is cancelled. Nothing staged is dropped.';
 const CANCEL_GRANT_CONFIRM = 'Cancel approval';
@@ -329,6 +363,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [outcome, setOutcome] = useState<WriteOutcome>(NO_OUTCOME);
   /** The grant-only action's own line. It never speaks about the draft. */
   const [grantNotice, setGrantNotice] = useState('');
+  /**
+   * True while a profile Save (or its collider acquisition) is in flight.
+   * Deliberately separate from `sending`: a Save runs OUTSIDE the
+   * `beginOperation` gate — it never touches the draft — so it disables the
+   * other profile actions (§4.8) without freezing the settings write path.
+   */
+  const [saving, setSaving] = useState(false);
   /** True while an Apply/Confirm/Cancel owns the surface (§3.3). */
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -337,9 +378,27 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** The exact request Confirm and Retry resend: Call 1 retained none of it. */
   const pendingRequestRef = useRef<SettingsApplyRequest | null>(null);
-  /** The settings RPC an app-close handshake must wait out (§4.6a). */
+  /** The writes an app-close handshake must wait out (§4.6a, §5.5). */
   const writeRef = useRef<Promise<void>>(Promise.resolve());
   const answerRef = useRef<((ok: boolean) => void) | null>(null);
+
+  /**
+   * §5.5 close-wait registration that COMPOSES. The shipped writeRef is a
+   * single slot, and Save runs OUTSIDE the beginOperation gate, so it can
+   * overlap a settings RPC — a plain assignment would let the later RPC's
+   * completion release the close handshake while Save is still in flight.
+   * Every registration folds into the ref instead, so `await writeRef.current`
+   * awaits every outstanding write registered SO FAR — a write registered
+   * DURING that await is not in the awaited promise, which is why the close
+   * handler drains in a loop (below) instead of awaiting once.
+   */
+  const registerWrite = (run: Promise<unknown>): void => {
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    );
+    writeRef.current = Promise.all([writeRef.current, settled]).then(() => undefined);
+  };
 
   const invalidateLoads = useCallback(() => {
     generation.current += 1;
@@ -351,6 +410,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     if (sendingRef.current) return false;
     sendingRef.current = true;
     setSending(true);
+    // [K5][N4] Every operation flips `locked`, which REMOUNTS both cards — and a
+    // fresh card replays whatever `focusRequest` still stands, reopening an editor
+    // the user closed a round trip ago. The request belongs to the surface the
+    // operation just replaced, so it is spent HERE, once, for every lock cycle —
+    // an Apply that lands `consent_required` or `busy` included.
+    setFocusRequest(null);
     return true;
   };
 
@@ -393,6 +458,40 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       generation.current += 1; // invalidate any pending response on unmount
     };
   }, [load]);
+
+  const [profileList, setProfileList] = useState<ProfileListState>({ kind: 'unloaded' });
+  const listGeneration = useRef(0);
+
+  /**
+   * §4.8: a list refresh never changes the selected source — it only repaints
+   * the options. Failures are bounded and leave the masthead fully usable
+   * (the retained-option rule keeps the current source visible regardless).
+   */
+  const refreshProfileList = useCallback(async (): Promise<void> => {
+    const gen = ++listGeneration.current;
+    try {
+      const result = parseGolemProfileListResult(await ListGolemProfiles());
+      if (gen !== listGeneration.current) return;
+      if (result.status === 'diagnostics') {
+        setProfileList({
+          kind: 'unavailable',
+          message: formatProfileDiagnostic(result.diagnostics[0]),
+        });
+        return;
+      }
+      setProfileList({ kind: result.status, profiles: result.profiles });
+    } catch {
+      if (gen !== listGeneration.current) return;
+      setProfileList({ kind: 'unavailable', message: TRANSPORT_UNAVAILABLE_COPY });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProfileList();
+    return () => {
+      listGeneration.current += 1;
+    };
+  }, [refreshProfileList]);
 
   // The tab mounts when it is opened and focused, so this lands the caret on the
   // surface the user just asked for rather than leaving it on the palette.
@@ -543,7 +642,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         endOperation();
       }
     })();
-    writeRef.current = run.then(() => undefined);
+    registerWrite(run);
     return run;
   };
 
@@ -561,9 +660,19 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       outcomeRef.current.intent === 'grant-only' &&
       !isDraftDirty(draft) &&
       unstagedEditors.size === 0;
+    const sourceOnly =
+      challenge === null &&
+      draft.changes.length === 0 &&
+      unstagedEditors.size === 0 &&
+      draft.source.kind !== 'applied';
+    const discardBody = sourceOnly
+      ? SOURCE_ONLY_BODY
+      : challenge === null
+        ? DISCARD_BODY
+        : DISCARD_BODY_CHALLENGED;
     const dialog = grantOnlyCancel
       ? { title: CANCEL_GRANT_TITLE, body: CANCEL_GRANT_BODY, confirmLabel: CANCEL_GRANT_CONFIRM }
-      : { title, body: challenge === null ? DISCARD_BODY : DISCARD_BODY_CHALLENGED, confirmLabel };
+      : { title, body: discardBody, confirmLabel };
     if (!(await ask(dialog))) return false;
     return cancelChallenge();
   };
@@ -576,8 +685,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     hasUnsavedWork: () => unsavedRef.current,
     confirm: async (intent: ConfigCloseIntent): Promise<boolean> => {
       // The backend has torn down nothing yet, so waiting out an in-flight
-      // settings RPC is safe and is what §4.6a requires before any decision.
-      await writeRef.current.catch(() => undefined);
+      // write is safe and is what §4.6a requires before any decision.
+      //
+      // §5.5: drain until stable. A write registered while this loop was
+      // awaiting is not in `pending`, so re-await until the set is empty AND
+      // unchanged across one settle — the same register/await/re-check idiom
+      // the backend close machine uses. Terminates: every extra iteration
+      // consumes a registration made during the previous await.
+      for (;;) {
+        const pending = writeRef.current;
+        await pending.catch(() => undefined);
+        if (writeRef.current === pending) break;
+      }
       if (!unsavedRef.current) return true; // clean: acknowledge, no dialog
       const confirmLabel = intent === 'quit' ? 'Discard & quit' : 'Discard & close';
       const ok = await clearForTransitionRef.current(
@@ -616,6 +735,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const refresh = async () => {
     if (!unsavedRef.current) {
       await load(true);
+      void refreshProfileList();
       return;
     }
     if (!(await clearForTransition('Discard your staged changes and reload?', 'Discard & reload')))
@@ -623,6 +743,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     settle({ kind: 'discard' });
     setPreview(null);
     await load(true);
+    void refreshProfileList();
   };
 
   // -------------------------------------------------------------------------
@@ -631,6 +752,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** Resolves true only when the preview actually landed. */
   const adoptProfile = async (profileId: string, keepDraft: boolean): Promise<boolean> => {
+    // §4.8: a failed selection returns to the PRIOR source, not Applied. The
+    // settle below is the authorized §4.6a discard (edits and keys stay
+    // dropped); only the source identity and its clean preview are restored.
+    const priorSource = draftRef.current.source;
+    const priorPreview = preview;
     if (!keepDraft) {
       settle({ kind: 'discard' });
       setPreview(null);
@@ -640,11 +766,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setFocusRequest(null);
     setSourceLoading(true);
     setSourceError('');
+    const restorePriorSource = (): void => {
+      if (keepDraft) return; // the conflict-reload path never discarded anything
+      setPreview(priorPreview);
+      setDraft((current) => ({ ...current, source: priorSource }));
+      resetCards();
+    };
     try {
       const result = parseGolemProfileLoadResult(await LoadGolemProfile(profileId));
       if (gen !== generation.current) return false;
       if (result.status === 'diagnostics') {
         setSourceError(formatProfileDiagnostic(result.diagnostics[0]));
+        restorePriorSource();
         return false;
       }
       const source = {
@@ -664,13 +797,14 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     } catch (err) {
       if (gen !== generation.current) return false;
       setSourceError(boundedGolemMessage(err));
+      restorePriorSource();
       return false;
     } finally {
       if (gen === generation.current) setSourceLoading(false);
     }
   };
 
-  const startFromProfile = async () => {
+  const startBlank = async (): Promise<boolean> => {
     if (
       unsavedRef.current &&
       !(await clearForTransition(
@@ -678,23 +812,105 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         'Discard & switch'
       ))
     )
-      return;
-    await adoptProfile(CURATED_PROFILE, false);
-  };
-
-  const startBlank = async () => {
-    if (
-      unsavedRef.current &&
-      !(await clearForTransition(
-        'Discard your staged changes and switch source?',
-        'Discard & switch'
-      ))
-    )
-      return;
+      return false;
     settle({ kind: 'discard' });
     setSourceError('');
     setPreview(BLANK_PREVIEW);
     setDraft((current) => ({ ...current, source: { kind: 'blank' } }));
+    return true;
+  };
+
+  /** §4.8 source switching. The Source picker's value derives from draft.source, so
+   *  a refused guard or failed load never moves it — React re-renders the prior
+   *  value and the transient choice is discarded. */
+  const selectSource = async (value: string): Promise<boolean> => {
+    const current = sourceSelectValue(draft.source);
+    if (value === current || value === BLANK_SOURCE_VALUE) return false;
+    if (
+      unsavedRef.current &&
+      !(await clearForTransition(
+        'Discard your staged changes and switch source?',
+        'Discard & switch'
+      ))
+    )
+      return false;
+    if (value === APPLIED_SOURCE_VALUE) {
+      await discard();
+      return true;
+    }
+    return adoptProfile(value, false);
+  };
+
+  /**
+   * [K3] START FROM is a COMMAND, not a selection: "start from curated local"
+   * while `curated/local` is already the source is a legitimate request to throw
+   * the staged work away and re-adopt that profile clean. `selectSource` refuses
+   * it (`value === current` short-circuits), so the command runs the same §4.6a
+   * guard and then re-adopts unconditionally.
+   */
+  const startFromProfile = async (profileId: string): Promise<boolean> => {
+    if (
+      unsavedRef.current &&
+      !(await clearForTransition(
+        'Discard your staged changes and switch source?',
+        'Discard & switch'
+      ))
+    )
+      return false;
+    return adoptProfile(profileId, false);
+  };
+
+  /**
+   * §4.8: Save never touches the staged draft, the ancestry record, or the
+   * KeyVault — no settle, no provenance write, no vault access. It registers
+   * in the §5.5 close-wait set through registerWrite, so the close handshake
+   * waits it out alongside any settings RPC. The revisions come from the
+   * CALLER (the Save button freezes the confirmed overwrite tuple — controller
+   * ruling, plan header): this function never substitutes the live projection
+   * revision into a confirmed request. The outbound request is validated by
+   * the same parser that guards inbound payloads.
+   */
+  const saveProfileAs = (
+    id: string,
+    revisions: { appliedRevision: string; expectedRevision?: string }
+  ): Promise<GolemProfileSaveResult> => {
+    const request = parseSaveGolemProfileAsRequest({
+      id,
+      appliedRevision: revisions.appliedRevision,
+      ...(revisions.expectedRevision === undefined
+        ? {}
+        : { expectedRevision: revisions.expectedRevision }),
+    });
+    setSaving(true);
+    const run = (async () => {
+      try {
+        const result = parseGolemProfileSaveResult(await SaveGolemProfileAs(request as never));
+        if (result.status === 'saved') void refreshProfileList();
+        return result;
+      } finally {
+        setSaving(false);
+      }
+    })();
+    registerWrite(run);
+    return run;
+  };
+
+  /** §4.8 acquisition: read the collider's raw revision WITHOUT staging it —
+   *  no draft, preview, or source change; adoptProfile is never called. It
+   *  holds `saving` for its duration so the acquisition leg of the save flow
+   *  disables the other profile actions like the RPC legs do. */
+  const acquireProfileRevision = async (id: string): Promise<AcquireRevisionOutcome> => {
+    setSaving(true);
+    try {
+      const result = parseGolemProfileLoadResult(await LoadGolemProfile(id));
+      return result.status === 'loaded'
+        ? { kind: 'revision', revision: result.sourceRevision }
+        : { kind: 'unloadable' };
+    } catch {
+      return { kind: 'transport' };
+    } finally {
+      setSaving(false);
+    }
   };
 
   // -------------------------------------------------------------------------
@@ -709,6 +925,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     () => projectDraft(body ?? { routes: [], models: [] }, draft),
     [body, draft]
   );
+  /**
+   * [A2] The ONE derived view of the routes as they will stand after Apply.
+   * Both cards read from it, so provider usage and route values can never
+   * disagree.
+   */
+  const usage = useMemo(() => {
+    const base = body ?? { routes: [], models: [] };
+    // [X3] `base` folds in the fallback-inclusive `routedUseCases` the backend
+    // already resolved, so a provider reached only through a fallback chain is
+    // never reported as `not routed`.
+    return providerUsage(effectiveRoutes(base, projected.changes), base, projected.changes);
+  }, [body, projected]);
 
   const receive = (result: SettingsApplyResult): void => {
     switch (result.status) {
@@ -787,7 +1015,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         endOperation();
       }
     })();
-    writeRef.current = run;
+    registerWrite(run);
   };
 
   const dispatchRequest = (request: SettingsApplyRequest): void => {
@@ -863,7 +1091,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         endOperation();
       }
     })();
-    writeRef.current = run;
+    registerWrite(run);
   };
 
   /** Call 1, fresh on every click: there is no subscription to keep it warm. */
@@ -990,6 +1218,58 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const locked =
     inFlight || sourceLoading || sending || recovery || outcome.busy || outcome.challenge !== null;
   const sourceLocked = inFlight || sourceLoading || sending || recovery || outcome.busy;
+
+  /**
+   * [C28] One source of truth for the Check-destinations button's `disabled`
+   * and `title`: the reason named here IS the reason shown, in the order the
+   * conditions are checked.
+   */
+  const checkDisabledReason: string =
+    projection === null
+      ? 'Nothing to check until a configuration is loaded.'
+      : inFlight || sourceLoading || sending
+        ? 'Wait for the current operation to finish.'
+        : recovery
+          ? 'Recover state first.'
+          : unstagedEditors.size > 0
+            ? 'Finish or cancel the open editor first.'
+            : outcome.challenge !== null
+              ? 'An approval is already open.'
+              : outcome.drops !== null || outcome.busy || outcome.conflict !== null
+                ? 'Resolve the pending Apply result first.'
+                : '';
+
+  /** The picker's ONE gate (§4.8 amended), named once: the trigger's `disabled` and
+   *  the [N6] bootstrap focus effect must agree on when it can take focus. */
+  const sourceTriggerDisabled = projection === null || sourceLocked || saving;
+
+  const listLimited = profileList.kind === 'limited';
+  // Two refusals on purpose: the STATE refusal blocks every Save (create and
+  // overwrite alike), while the LIMIT refusal blocks only creation — §5.6
+  // keeps replacement by exact id/revision available while the list is
+  // limited, and Overwrite gates on saveRefusal alone.
+  const saveRefusal =
+    projection === null || projection.state !== 'ready' || projection.revision === undefined
+      ? 'Save needs a Ready applied configuration.'
+      : '';
+  const createRefusal = listLimited ? 'Too many profiles exist to create another.' : '';
+  // [K8][N5] ONE refusal for the picker's two unselectable halves. §4.6 disables
+  // profile SELECTION off `ready` and §5.6's Invalid/Limited states disable the
+  // START FROM entries — the same two states, so two near-identical notices under
+  // one list said the same thing twice and both landed in `aria-describedby`.
+  // `missing` is excluded on purpose: it renders no profile rows at all, and its
+  // START FROM entries are exactly the bootstrap path a Missing user needs.
+  // The refusal deliberately ignores listLimited (Ruling 13): §5.6 scopes the
+  // profile-count limit to CREATION, never to the Start actions. Start blank
+  // is purely local and never reads the store, and the curated block always
+  // sorts inside the first maxProjectionEntries rows, so "Start from curated"
+  // has its rows regardless of the limit — a limited list must never leave a
+  // Missing-state user with zero bootstrap path.
+  const pickerRefusal =
+    projection !== null && (projection.state === 'invalid' || projection.state === 'limited')
+      ? 'Profiles and Start from are unavailable while the configuration is Invalid or Limited.'
+      : '';
+
   const changeCount = draftChangeCount(draft);
   // Editing needs a document that is both loaded and writable. A profile or
   // blank source supplies its own: the draft is layered on THAT preview.
@@ -1036,111 +1316,278 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           ? BOOTSTRAP_GATE
           : null;
 
+  // Hoisted out of the masthead JSX (was an inline IIFE) so the description
+  // it carries can render on its own full-width line beneath `.controls`,
+  // instead of only inside the Source picker's column — see the masthead's
+  // `.controls`/`.actions` layout below.
+  const selectModel = buildProfileSelectModel({
+    source: draft.source,
+    list: profileList,
+    provenance: readActiveProfile(),
+    appliedRevision: projection?.revision,
+    state: projection?.state ?? null,
+  });
+
+  // [C25] Two rungs: `sourceLoading`, then `sourceLocked || saving` (a pending
+  // Save can overlap a Refresh that returns Missing). This is the trigger-level
+  // gate, not the picker's — the trigger's own gate is `sourceTriggerDisabled`,
+  // which also folds in `projection === null`; the picker's START FROM rows are
+  // gated separately by `pickerRefusal`.
+  // [K12][C2] …and the ladder that NAMES which of those it is, so a greyed-out
+  // Start button is never a dead end. `disabled` derives from the reason, so the
+  // two can never disagree. [N7] Two rungs, not four: the buttons this reason
+  // serves render ONLY while `projection.state === 'missing'`, so the
+  // `projection === null` and Invalid/Limited rungs were unreachable there.
+  const startDisabledReason = sourceLoading
+    ? 'Wait for the profile to finish loading.'
+    : sourceLocked || saving
+      ? 'Wait for the current operation to finish.'
+      : '';
+  const startGateBlocked = startDisabledReason !== '';
+
+  // [C7] `flatMap` narrows `description` by control flow — the filter/map pair
+  // needed a cast to re-assert what the filter had already proven.
+  const curatedDescriptions: Array<[string, string]> =
+    profileList.kind === 'loaded' || profileList.kind === 'limited'
+      ? profileList.profiles.flatMap((row) =>
+          row.curated && row.description !== undefined && row.description !== ''
+            ? [[row.id.slice(row.id.indexOf('/') + 1), row.description] as [string, string]]
+            : []
+        )
+      : [];
+
+  /**
+   * [A6] Both bootstrap buttons unmount on success, so the handler hands focus to the
+   * control that now names the staged source — only when the start actually landed.
+   * The same two-effect shape the cards' own `focusRequest` uses (see ProvidersCard):
+   * the Source trigger's enabled, focusable state does not exist until the state
+   * change a successful start makes has committed, so the flag is state (picked up
+   * by an effect after that commit), never a synchronous read right after the await.
+   */
+  const [bootstrapFocusPending, setBootstrapFocusPending] = useState(false);
+  useEffect(() => {
+    if (!bootstrapFocusPending) return;
+    // [K1] Only when nothing holds focus. The §4.6a dialog hands focus back to
+    // whatever opened the start — an empty-state Start button that a refusal leaves
+    // on screen keeps it — and the user may have moved on during the load. The
+    // check belongs HERE, after the commit: a successful start unmounts the control
+    // it was launched from, and until that commit lands it is still the active one.
+    if (document.activeElement !== null && document.activeElement !== document.body) {
+      setBootstrapFocusPending(false);
+      return;
+    }
+    // [N6] A disabled control cannot take focus, and a start that ends while its own
+    // write is still settling leaves the trigger disabled. Hold the request across
+    // those commits — the effect re-runs when the gate clears — instead of spending
+    // it on a no-op focus() and stranding focus on <body>.
+    if (sourceTriggerDisabled) return;
+    setBootstrapFocusPending(false);
+    document.getElementById(SOURCE_PICKER_ID)?.focus();
+  }, [bootstrapFocusPending, sourceTriggerDisabled]);
+  const bootstrapFrom = async (start: () => Promise<boolean>): Promise<void> => {
+    // [K1] Not only on success: a start that FAILED (diagnostics, a transport
+    // catch, a cancellation that would not cancel) left the picker closed and focus
+    // on <body>, beside a notice nobody was sent to. What it must NOT do is steal
+    // focus something else already holds — the §4.6a dialog hands focus back to
+    // whatever opened it (the picker trigger, or an empty-state Start button that
+    // is still on screen), and the user may have moved on during the load. So it
+    // claims the trigger only when nothing holds focus (the effect above decides
+    // that, after the commit this start produced).
+    await start();
+    setBootstrapFocusPending(true);
+  };
+
   return (
     <div className={styles.root}>
       <div className={styles.page}>
         <header className={styles.masthead} data-testid="golem-config-masthead">
-          <h2 ref={headingRef} tabIndex={-1} className={styles.title}>
-            Golem Configuration
-          </h2>
-          {projection && (
-            <>
-              <StatusText tone={STATE_TONE[projection.state]}>
-                {STATE_LABEL[projection.state]}
-              </StatusText>
-              {/* §4.2: the projection state is the document's; a dirty draft
-                  overlays `Modified` beside it, in the same dot+text grammar
-                  the rows use, so one vocabulary reads at both scales. */}
-              {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
-              <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
-              {projection.revision !== undefined && (
-                <span className={styles.revision} title={projection.revision}>
-                  rev {projection.revision.slice(0, REVISION_HEAD)}
-                </span>
-              )}
-            </>
-          )}
-          <span className={styles.grow} />
-          {/* §4.1: profile management is absent, not disabled, in Slice B. The
-              fixed bootstrap CTAs are the sole exception (§4.6). */}
-          {projection?.state === 'missing' && !recovery && (
-            <>
-              <button
-                type="button"
-                className={styles.button}
-                disabled={sourceLocked}
-                onClick={() => void startFromProfile()}
-              >
-                Start from curated/local
-              </button>
-              <button
-                type="button"
-                className={styles.button}
-                disabled={sourceLocked}
-                onClick={() => void startBlank()}
-              >
-                Start blank
-              </button>
-            </>
-          )}
-          {recovery ? (
+          <div className={styles.identity}>
+            <h2 ref={headingRef} tabIndex={-1} className={styles.title}>
+              Golem Configuration
+            </h2>
+            {projection && (
+              <div className={styles.mastheadMeta}>
+                <StatusText tone={STATE_TONE[projection.state]}>
+                  {STATE_LABEL[projection.state]}
+                </StatusText>
+                {/* §4.2: a dirty draft overlays `Modified` beside the document state. */}
+                {isDraftDirty(draft) && <StatusText tone="warn">Modified</StatusText>}
+                {projection.state !== 'missing' && (
+                  <span className={styles.source}>{ORIGIN_LABEL[projection.sourceOrigin]}</span>
+                )}
+                {projection.revision !== undefined && (
+                  <span className={styles.revision} title={projection.revision}>
+                    rev {projection.revision.slice(0, REVISION_HEAD)}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Ruling 2: Close is the identity row's corner icon, not a masthead action. */}
             <button
               type="button"
-              className={styles.button}
-              disabled={inFlight || sourceLoading || sending}
-              onClick={() => void recover()}
+              className={`${styles.button} ${styles.closeIcon}`}
+              aria-label="Close configuration"
+              disabled={sending}
+              // [F4] An icon button that greys out with no explanation is a dead end;
+              // name the cause the same way every other disabled action here does.
+              title={sending ? 'Wait for the current operation to finish.' : undefined}
+              onClick={onClose}
             >
-              Recover state
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M2 2l8 8M10 2l-8 8" />
+              </svg>
             </button>
-          ) : (
-            <button
-              type="button"
-              className={styles.button}
-              disabled={inFlight || sourceLoading || sending}
-              onClick={() => void refresh()}
-            >
-              Refresh
-            </button>
-          )}
+          </div>
           {/*
-           * Permanent (spec I15): nothing probes for missing destinations on
-           * mount and no event tells this surface when the set changes, so the
-           * action is always offered and every click asks Call 1 afresh. It
-           * needs a loaded document to have something to list against.
+           * Layout is a function of container width only (§4.7 amended). The
+           * picker is a fixed 280px column and the actions anchor BESIDE it —
+           * a right-anchored cluster shifts its left edge by 200+px whenever
+           * the conditional approval button appears (measured on the mockup).
+           * Nothing here wraps by content: the 799 and 599 container queries
+           * decide the form.
            */}
-          <button
-            type="button"
-            className={styles.button}
-            disabled={
-              projection === null ||
-              inFlight ||
-              sourceLoading ||
-              sending ||
-              recovery ||
-              // Locking remounts the editors, so their fields must be staged first.
-              unstagedEditors.size > 0 ||
-              outcome.challenge !== null ||
-              // A settings-apply disclosure is still on screen: the dropped-
-              // fields panel is the ONLY copy of `outcome.drops` (restageDrops
-              // reads it), and a busy Retry keeps a request retryable. A fresh
-              // Prepare here would replace the whole outcome and destroy either
-              // one, so the action stays off until the user has resolved it.
-              outcome.drops !== null ||
-              outcome.busy ||
-              outcome.conflict !== null
-            }
-            onClick={approveDestinations}
+          <div className={styles.controls}>
+            <SourcePicker
+              model={selectModel}
+              disabled={sourceTriggerDisabled}
+              describedBy={
+                [
+                  sourceLoading ? SOURCE_LOADING_ID : '',
+                  selectModel.description !== '' ? SOURCE_DESCRIPTION_ID : '',
+                ]
+                  .filter((id) => id !== '')
+                  .join(' ') || undefined
+              }
+              refusal={pickerRefusal}
+              listNotice={
+                profileList.kind === 'unavailable'
+                  ? profileList.message
+                  : profileList.kind === 'unloaded'
+                    ? 'Loading profiles…'
+                    : ''
+              }
+              onOpen={() => void refreshProfileList()}
+              // [F3][K1] Every start routes through `bootstrapFrom`, so any start that
+              // ENDS — landed or failed — hands focus back to the Source trigger, the
+              // control that names the source either way, once the commit that re-enables
+              // it has flushed. A start whose guard was refused leaves focus wherever the
+              // dialog put it back.
+              onSelect={(value) => void bootstrapFrom(() => selectSource(value))}
+              onStartBlank={() => void bootstrapFrom(startBlank)}
+              onStartFromProfile={(id) => void bootstrapFrom(() => startFromProfile(id))}
+            />
+            {/*
+             * §4.8: the one write action left behind the masthead — Start
+             * blank / Start from curated now live in the Source picker's own
+             * START FROM group (#312). `disabled` composes the SHIPPED lock
+             * conditions: `sourceLocked` covers write/busy/recovery/in-flight,
+             * `locked` additionally freezes the surface while a consent
+             * challenge holds the visible request, and `outcome.drops !==
+             * null` is named EXPLICITLY because `locked` does not include the
+             * drop panel — which holds the visible request the same way a
+             * challenge does, and a Save would settle a document out from
+             * under it. `reason` names whichever of those the current lock
+             * is, for the title shown while the trigger is disabled. The
+             * picker above keeps the narrower `sourceLocked || saving`: a
+             * source switch is a §4.6a cancel-then-transition path, and the
+             * dirty-draft guard intercepts it while a challenge or drop set
+             * stands.
+             */}
+            <div className={styles.actions}>
+              <SaveProfileButton
+                saveRefusal={saveRefusal}
+                createRefusal={createRefusal}
+                disabled={projection === null || sourceLocked || locked || outcome.drops !== null}
+                reason={
+                  projection === null || projection.state === 'missing'
+                    ? 'Nothing to save until a configuration is applied.'
+                    : sourceLoading
+                      ? 'Wait for the profile to finish loading.'
+                      : saving
+                        ? 'A save is already in progress.'
+                        : saveRefusal !== ''
+                          ? saveRefusal
+                          : createRefusal !== ''
+                            ? createRefusal
+                            : locked || outcome.drops !== null
+                              ? 'Unavailable while a write, approval, or review is in progress.'
+                              : ''
+                }
+                saving={saving}
+                appliedRevision={projection?.revision}
+                saveProfileAs={saveProfileAs}
+                acquireProfileRevision={acquireProfileRevision}
+              />
+              {recovery ? (
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.warn}`}
+                  disabled={inFlight || sourceLoading || sending}
+                  title={
+                    inFlight || sourceLoading || sending
+                      ? 'Wait for the current operation to finish.'
+                      : undefined
+                  }
+                  onClick={() => void recover()}
+                >
+                  Recover state
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={inFlight || sourceLoading || sending}
+                  title={
+                    inFlight || sourceLoading || sending
+                      ? 'Wait for the current operation to finish.'
+                      : undefined
+                  }
+                  onClick={() => void refresh()}
+                >
+                  Refresh
+                </button>
+              )}
+              {/*
+               * Permanent (spec I15): nothing probes for missing destinations on
+               * mount and no event tells this surface when the set changes, so the
+               * action is always offered and every click asks Call 1 afresh. It
+               * needs a loaded document to have something to list against.
+               */}
+              <button
+                type="button"
+                className={`${styles.button} ${styles.checkDestinations}`}
+                disabled={checkDisabledReason !== ''}
+                title={checkDisabledReason !== '' ? checkDisabledReason : APPROVE_TITLE}
+                onClick={approveDestinations}
+              >
+                {APPROVE_ACTION}
+              </button>
+            </div>
+          </div>
+          {/* [C12][A6] A live region must pre-exist its text AND stay in the tree: this is the
+              codebase's persistent sr-only status pattern (see the card announcement regions).
+              `hidden` would lose to the author `display`, and hiding it would remove it before
+              it speaks — so the announcement and the visible spinner line are two elements. */}
+          <span
+            id={SOURCE_LOADING_ID}
+            className={styles.srOnly}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
           >
-            {APPROVE_ACTION}
-          </button>
-          <button
-            type="button"
-            className={`${styles.button} ${styles.quiet}`}
-            disabled={sending}
-            onClick={onClose}
-          >
-            Close
-          </button>
+            {sourceLoading ? 'Loading profile…' : ''}
+          </span>
+          {sourceLoading && (
+            <span className={styles.selectDescription} aria-hidden="true">
+              <span className={styles.spinner} />
+              Loading profile…
+            </span>
+          )}
+          {selectModel.description !== '' && (
+            <span id={SOURCE_DESCRIPTION_ID} className={styles.selectDescription}>
+              {selectModel.description}
+            </span>
+          )}
         </header>
 
         {grantNotice !== '' && (
@@ -1217,6 +1664,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     diagnostic.subjectKind,
                     diagnostic.subjectName
                   );
+                  // A diagnostic about a model names no row of its own; the route
+                  // that resolves to it is the only place the reader can act.
+                  const jump =
+                    diagnostic.subjectKind === 'model'
+                      ? (body?.routes.find((route) => route.role === diagnostic.subjectName)
+                          ?.useCase ?? null)
+                      : null;
                   return (
                     <li
                       key={`${diagnostic.code}-${diagnostic.subjectKind}-${diagnostic.subjectName}-${index}`}
@@ -1231,7 +1685,30 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                         {subject !== '' && (
                           <>
                             {' — '}
-                            <span className={styles.subject}>{subject}</span>
+                            {jump !== null ? (
+                              // [A1] Navigation stays visible while locked, but it must
+                              // not open editable controls.
+                              <button
+                                type="button"
+                                className={styles.bannerRef}
+                                disabled={!canEdit}
+                                title={
+                                  canEdit
+                                    ? `Jump to the ${jump} route and open its editor`
+                                    : 'Editing is unavailable while this configuration cannot be changed.'
+                                }
+                                onClick={() =>
+                                  setFocusRequest((current) => ({
+                                    changeId: `route:${jump}`,
+                                    nonce: (current?.nonce ?? 0) + 1,
+                                  }))
+                                }
+                              >
+                                {subject}
+                              </button>
+                            ) : (
+                              <span className={styles.subject}>{subject}</span>
+                            )}
                           </>
                         )}
                       </span>
@@ -1251,44 +1728,100 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            <ProvidersCard
-              // Remount when the surface locks and on every document the open
-              // editors could be diffing against. An editor derives its fields
-              // once but stages against the live projection, so keeping it
-              // mounted across a reload could re-stage stale values.
-              key={`providers-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
-              providers={body.providers}
-              usedProviders={usedProviders}
-              changes={draft.changes}
-              rows={projected.providerRows}
-              diagnostics={diagnostics}
-              stagedProviders={stagedProviders}
-              vault={vault}
-              editable={canEdit}
-              focusRequest={focusRequest}
-              onStage={stage}
-              onUnstagedChange={noteUnstaged}
-            />
-            <RoutingCard
-              // Same remount rule as the providers card: an open route editor
-              // must not survive a lock or read stale values back as a choice.
-              key={`routing-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
-              routes={body.routes}
-              models={body.models}
-              providers={routableProviders}
-              draft={draft}
-              // The COALESCED changes, never `draft.changes`: a row and a
-              // reopened editor must show the selector-wide truth Apply sends
-              // (§3.3), which is rebuilt from each group's last authority.
-              changes={projected.changes}
-              rows={projected.routeRows}
-              roleRows={projected.roleRows}
-              diagnostics={diagnostics}
-              editable={canEdit}
-              focusRequest={focusRequest}
-              onStage={stage}
-              onUnstagedChange={noteUnstaged}
-            />
+            {projection.state === 'missing' && draft.source.kind === 'applied' ? (
+              <section className={styles.emptyState} aria-labelledby="golem-config-empty">
+                <h3 id="golem-config-empty" className={styles.emptyTitle}>
+                  No applied configuration
+                </h3>
+                <p className={styles.emptyText}>
+                  Golem has nothing to route with. Start a draft, edit its providers and routes,
+                  then Apply. Nothing is written until you apply.
+                </p>
+                <div className={styles.emptyActions}>
+                  {selectModel.startFrom.curated.map((option) => {
+                    const id = startFromProfileId(option.value);
+                    return id === null ? null : (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`${styles.button} ${styles.primary}`}
+                        disabled={startGateBlocked}
+                        title={startDisabledReason !== '' ? startDisabledReason : undefined}
+                        onClick={() => void bootstrapFrom(() => startFromProfile(id))}
+                      >
+                        {/* [C7] The slug comes from the ID, the one place it is
+                            authoritative; stripping a prefix off the display
+                            label breaks the moment that label is reworded. */}
+                        {`Start from curated ${id.slice(id.indexOf('/') + 1)}`}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={startGateBlocked}
+                    title={startDisabledReason !== '' ? startDisabledReason : undefined}
+                    onClick={() => void bootstrapFrom(startBlank)}
+                  >
+                    Start blank
+                  </button>
+                </div>
+                {profileList.kind === 'unavailable' ? (
+                  <p className={styles.emptyNote}>{profileList.message}</p>
+                ) : profileList.kind === 'unloaded' ? (
+                  <p className={styles.emptyNote}>Loading profiles…</p>
+                ) : null}
+                {curatedDescriptions.map(([slug, description]) => (
+                  <p key={slug} className={styles.emptyNote}>
+                    <b>{`Curated ${slug}`}</b>
+                    {description}
+                  </p>
+                ))}
+              </section>
+            ) : (
+              <>
+                <ProvidersCard
+                  // Remount when the surface locks and on every document the open
+                  // editors could be diffing against. An editor derives its fields
+                  // once but stages against the live projection, so keeping it
+                  // mounted across a reload could re-stage stale values.
+                  key={`providers-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
+                  providers={body.providers}
+                  usedProviders={usedProviders}
+                  usage={usage}
+                  changes={draft.changes}
+                  rows={projected.providerRows}
+                  diagnostics={diagnostics}
+                  stagedProviders={stagedProviders}
+                  vault={vault}
+                  editable={canEdit}
+                  focusRequest={focusRequest}
+                  onStage={stage}
+                  onUnstagedChange={noteUnstaged}
+                />
+                <RoutingCard
+                  // Same remount rule as the providers card: an open route editor
+                  // must not survive a lock or read stale values back as a choice.
+                  key={`routing-${draftEpoch}:${projection.revision ?? ''}:${locked}`}
+                  routes={body.routes}
+                  models={body.models}
+                  providers={routableProviders}
+                  draft={draft}
+                  // The COALESCED changes, never `draft.changes`: a row and a
+                  // reopened editor must show the selector-wide truth Apply sends
+                  // (§3.3), which is rebuilt from each group's last authority.
+                  changes={projected.changes}
+                  rows={projected.routeRows}
+                  roleRows={projected.roleRows}
+                  selectorUseCases={projected.selectorUseCases}
+                  diagnostics={diagnostics}
+                  editable={canEdit}
+                  focusRequest={focusRequest}
+                  onStage={stage}
+                  onUnstagedChange={noteUnstaged}
+                />
+              </>
+            )}
 
             {/*
              * The result of the last write, rendered where the control that
@@ -1298,54 +1831,68 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
              * local refusal — landed out of view and Apply read as doing nothing.
              */}
             {outcome.challenge !== null && (
-              <div className={styles.panel} data-tone="caution" role="alert">
+              // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
+              // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
+              <div className={`${styles.panel} ${styles.grant}`} role="alert">
+                <div className={styles.grantHead}>
+                  <h3 className={styles.grantTitle}>
+                    {outcome.intent === 'grant-only'
+                      ? 'Approve destinations'
+                      : 'Approve before writing'}
+                  </h3>
+                  <Countdown expiresAt={outcome.challenge.expiresAt} />
+                </div>
                 <p className={styles.panelText}>
-                  {promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a
-                  settings approval, separate from run approval.
+                  {outcome.intent === 'grant-only'
+                    ? GRANT_PROMPT_EXPLAINER
+                    : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
                 </p>
-                {/* One line per destination, in the digest order the backend
-                    sent, with the routing hops that reach it beneath. Every
-                    entry is remote — a local destination never challenges —
-                    and the lead sentence above already says so, so the row
-                    itself does not repeat the classification. */}
-                <ul className={styles.dropList}>
+                {/* One row per destination in the digest order the backend sent:
+                    provider · model · endpoint · class, the class as the row's
+                    fourth cell rather than a repeated sentence. [C1] It reads the
+                    parsed `classification` rather than repeating the word: the
+                    parser refuses any other value (`readApplyDestination`), so the
+                    cell now says so by construction instead of by coincidence. */}
+                <ul className={styles.grantList}>
                   {outcome.challenge.destinations.map((destination) => (
-                    <li key={`${destination.endpoint} ${destination.provider} ${destination.model}`}>
-                      <p className={styles.destination}>
-                        <span className={styles.value}>{destination.endpoint}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className={styles.identifier}>{destination.provider}</span>
-                        {/* Absent on a recommendation entry, which names a
-                            provider and no model at all. */}
-                        {destination.model !== '' && (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className={styles.identifier}>{destination.model}</span>
-                          </>
+                    // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
+                    <li
+                      key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+                    >
+                      <span className={styles.grantProvider}>{destination.provider}</span>
+                      <span className={styles.identifier}>
+                        {destination.model !== '' ? (
+                          destination.model
+                        ) : (
+                          <span className={styles.absent}>—</span>
                         )}
-                      </p>
-                      <span className={styles.metaSub}>
-                        {`Reached by ${destination.provenance.join(', ')}`}
                       </span>
+                      <span className={styles.grantEndpoint}>{destination.endpoint}</span>
+                      <span className={styles.grantClass}>{destination.classification}</span>
+                      <span
+                        className={styles.metaSub}
+                      >{`Reached by ${destination.provenance.join(', ')}`}</span>
                     </li>
                   ))}
                 </ul>
-                <div className={styles.panelActions}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.primary}`}
-                    disabled={inFlight || sourceLoading || sending}
-                    onClick={confirmDestination}
-                  >
-                    Confirm destination
-                  </button>
+                <div className={`${styles.panelActions} ${styles.grantActions}`}>
                   <button
                     type="button"
                     className={`${styles.button} ${styles.quiet}`}
                     disabled={inFlight || sourceLoading || sending}
                     onClick={() => void cancelDestination()}
                   >
-                    Cancel approval
+                    {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.primary}`}
+                    disabled={inFlight || sourceLoading || sending}
+                    onClick={confirmDestination}
+                  >
+                    {outcome.intent === 'grant-only'
+                      ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
+                      : 'Confirm destination'}
                   </button>
                 </div>
               </div>
@@ -1448,6 +1995,34 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 }
 
 /**
+ * `expires in m:ss`, ticking once a second while the prompt stands; `lapsed()` still decides
+ * behaviour. [C13] The prompt is role="alert" (assertive + atomic), so the ticking text is
+ * aria-hidden and a static sr-only sentence announces the expiry once with the prompt.
+ */
+function Countdown({ expiresAt }: { expiresAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const remaining = Math.max(0, Math.round((expiresAt - now) / 1000));
+  const text =
+    remaining === 0
+      ? 'expired'
+      : `expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
+  return (
+    <>
+      <span className={styles.grantTtl} aria-hidden="true">
+        {text}
+      </span>
+      <span
+        className={styles.srOnly}
+      >{`Expires at ${new Date(expiresAt).toLocaleTimeString()}.`}</span>
+    </>
+  );
+}
+
+/**
  * The §4.6a confirmation: a native modal dialog, initially focused on the
  * non-destructive choice, cancelled by Escape, restoring focus to whatever
  * opened it. The same pattern the merge surface uses, for the same reason.
@@ -1455,6 +2030,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: boolean) => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -1475,6 +2051,19 @@ function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: bo
     if (invoker?.isConnected) invoker.focus();
   };
 
+  /**
+   * WKWebView with "Full Keyboard Access" off skips buttons on Tab, which left
+   * this dialog with no way to reach Discard from the keyboard. A two-button
+   * dialog needs no roving index: every move key simply hands focus to the
+   * other button, so Tab, Shift+Tab and the arrows all wrap by construction.
+   */
+  const moveFocus = (event: KeyboardEvent<HTMLDialogElement>) => {
+    if (!['Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const [keep, confirm] = [keepRef.current, confirmRef.current];
+    (document.activeElement === keep ? confirm : keep)?.focus();
+  };
+
   return (
     <dialog
       ref={dialogRef}
@@ -1483,6 +2072,7 @@ function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: bo
       aria-modal="true"
       aria-labelledby="golem-config-confirm-title"
       aria-describedby="golem-config-confirm-body"
+      onKeyDown={moveFocus}
       onCancel={(event) => {
         event.preventDefault(); // Escape cancels the transition, not the draft
         settleWith(false);
@@ -1504,6 +2094,7 @@ function ConfirmDialog({ prompt, onAnswer }: { prompt: Prompt; onAnswer: (ok: bo
           Keep editing
         </button>
         <button
+          ref={confirmRef}
           type="button"
           className={`${styles.button} ${styles.primary}`}
           onClick={() => settleWith(true)}

@@ -6,7 +6,10 @@ import { GolemContractError, parseSettingsProjection } from '../../types/golem';
 import {
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
   type ApplyMode,
@@ -102,10 +105,12 @@ describe('adapter routing', () => {
     ['GetGolemSettings', []],
     ['GetGolemStatus', [{ request: 'status' }]],
     ['GetGolemWindowState', []],
+    ['ListGolemProfiles', []],
     ['LoadGolemProfile', ['profile-id']],
     ['PrepareGolemDestinationGrants', []],
     ['ReloadGolemSettings', []],
     ['RunGolemTurn', [{ request: 'turn' }]],
+    ['SaveGolemProfileAs', [{ request: 'save-as' }]],
   ];
 
   it.each(routes)('%s calls ByID with its id and returns the payload as-is', async (name, args) => {
@@ -203,6 +208,15 @@ const replay = async (document: string, fixture: ApplyFixture, payload: unknown)
       return;
     case 'profile_load_result':
       parseGolemProfileLoadResult(await bindings.LoadGolemProfile('profile'));
+      return;
+    case 'profile_list_result':
+      parseGolemProfileListResult(await bindings.ListGolemProfiles());
+      return;
+    case 'profile_save_request':
+      parseSaveGolemProfileAsRequest(await bindings.SaveGolemProfileAs(payload as never));
+      return;
+    case 'profile_save_result':
+      parseGolemProfileSaveResult(await bindings.SaveGolemProfileAs(payload as never));
       return;
     default:
       throw new Error(`unknown document ${document}`);

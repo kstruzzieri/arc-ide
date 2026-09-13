@@ -85,23 +85,21 @@ export function formatSettingsDiagnostic(
 }
 
 /**
- * The profile-store vocabulary reuses the ONE copy map above, on exactly the
- * §5.6 mapping the apply path already uses for a profile-origin write: an
- * invalid id is an invalid argument, unreadable content is invalid content, and
- * every other store failure is "the selected profile could not be loaded".
- * Nothing here invents a second sentence for the same condition.
+ * §5.6 total profile-domain copy map — one bounded sentence per closed code.
+ * Slice C surfaces (the Save flow especially) depend on the distinct
+ * sentences, so the earlier collapse onto shared settings copy is gone.
  */
-const PROFILE_DIAGNOSTIC_CODE: Record<ProfileDiagnostic['code'], SettingsDiagnosticCode> = {
-  invalid_id: 'invalid_argument',
-  not_found: 'profile_source_unavailable',
-  curated_read_only: 'profile_source_unavailable',
-  store_unsafe: 'profile_source_unavailable',
-  io: 'profile_source_unavailable',
-  profile_limit: 'profile_source_unavailable',
-  config_invalid: 'config_invalid',
-  active_config_invalid: 'config_invalid',
+const PROFILE_TEXT: Record<ProfileDiagnostic['code'], string> = {
+  invalid_id: 'That profile name is invalid.',
+  not_found: 'That profile no longer exists.',
+  curated_read_only: 'Curated profiles cannot be replaced.',
+  store_unsafe: 'The profile store has unsafe permissions.',
+  io: 'The profile could not be read or saved.',
+  config_invalid: 'The profile configuration is invalid.',
+  active_config_invalid: 'The applied configuration is unavailable.',
+  profile_limit: 'Too many profiles exist to create another.',
 };
 
-/** One bounded sentence for the first profile diagnostic a load reported. */
+/** One bounded sentence for the first profile diagnostic an operation reported. */
 export const formatProfileDiagnostic = (diagnostic: ProfileDiagnostic): string =>
-  DIAGNOSTIC_TEXT[PROFILE_DIAGNOSTIC_CODE[diagnostic.code]];
+  PROFILE_TEXT[diagnostic.code];

@@ -2,8 +2,8 @@
  * Golem configuration workspace (#263 Slice B, spec §4, mockup v10).
  *
  * Grammar, verbatim from §4.7: only buttons are filled; status is a dot plus
- * plain text, never a bordered pill; cards hold separated row strips; errors
- * render inside the strip that owns them. Data is plain text with mono
+ * plain text, never a bordered pill; cards hold tables of records; errors
+ * render inside the row group that owns them. Data is plain text with mono
  * identifiers. Instructional copy never drops below --text-muted (6.71:1 on
  * --surface-panel); --text-disabled is reserved for the inert em-dash placeholder
  * and for status dots, which always carry a text label beside them.
@@ -12,10 +12,10 @@
  * --panel/--elevated/--hover/--border/--tp/--ts/--tm/--td/--accent/--teal/
  * --warn/--red map 1:1 onto the tokens used below), so nothing is re-declared.
  *
- * Width: the page caps at 920px and the ROOT is the container. Below 720px of
- * container width the column strips stack into label/value rows, so a narrow
- * centre pane never scrolls horizontally — no viewport media query and no
- * width prop is involved.
+ * Width: the page caps at 920px and the ROOT is the container. [A7] The BASE is
+ * the stacked record form, so a narrow centre pane never scrolls horizontally;
+ * the column-aligned table is an upgrade at >= 600 container px — no viewport
+ * media query and no width prop is involved.
  */
 
 .root {
@@ -42,17 +42,26 @@
   box-shadow: var(--shadow-panel);
 }
 
-/* ── masthead ───────────────────────────────────────────────────────────── */
+/* Generic flex spacer, still used by RouteEditor/ProviderEditor/ApplyBar/ModelBand. */
+.grow {
+  flex: 1;
+}
+
+/* ── masthead: identity row, control row, note ──────────────────────────── */
 
 .masthead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 22px;
+  padding: 10px 14px 12px;
   border-bottom: 1px solid var(--surface-border);
   border-radius: 9px 9px 0 0;
   background-color: var(--surface-elevated);
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  min-height: 28px;
 }
 
 .title {
@@ -62,6 +71,7 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .title:focus-visible {
@@ -69,8 +79,17 @@
   outline-offset: 3px;
 }
 
-.grow {
-  flex: 1;
+/* [C16] Not `.meta`: that class is the cards' column-flex cell and is redefined later in this file. */
+.mastheadMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  flex: 1 1 100%;
+  order: 3;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .revision {
@@ -83,6 +102,275 @@
 .source {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* [A7] Mobile-first: the BASE is the stacked form (picker full width, actions
+   wrapping, the check button on its own row). The min-width container queries
+   at the bottom of this file upgrade to the two-row and one-row forms. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 14px;
+  margin-top: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: stretch;
+  gap: 8px;
+  flex: 1 1 100%;
+}
+
+/* [C17] Direct children are the flex items: the Save button sits inside its
+   `.menuRoot` wrapper, so the wrapper is what stretches, and the button fills it. */
+.actions > .button,
+.actions > .menuRoot {
+  flex: 1 1 auto;
+}
+
+.actions > .menuRoot > .button {
+  width: 100%;
+}
+
+.actions > .checkDestinations {
+  flex: 1 1 100%;
+}
+
+.sourceLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.selectDescription {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  max-width: 62ch;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--surface-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-top-color: var(--accent);
+  }
+}
+
+/* ── Source picker (#312): trigger + listbox popover ─────────────────────── */
+
+.picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.pickerTrigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background-color: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickerTrigger:hover:not(:disabled),
+.pickerTrigger[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+.pickerTrigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pickerTrigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pickerValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerGroup {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.pickerGroup::after {
+  content: ' · ';
+  color: var(--text-disabled);
+}
+
+.pickerEmpty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.pickerFlag {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pickerCaret {
+  flex: none;
+  width: 8px;
+  height: 5px;
+  fill: var(--text-muted);
+}
+
+/* Clamps against the CONTAINER (.root), never the viewport — same reasoning as
+   .menuPanel above; the guard test asserts both. */
+/* [F1] The popover WRAPPER: the listbox below holds only options, and the
+   notices render beside it. [X5] Plain fallback first, then the cqw clamp —
+   a runtime without container queries keeps a usable 320px popover. */
+.pickerList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 320px;
+  width: min(320px, calc(100cqw - 32px));
+  min-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.pickerListbox {
+  /* [A4] 256 profiles must scroll, not run off the pane. */
+  max-height: 320px;
+  overflow-y: auto;
+  outline: none;
+}
+
+.pickerHeading {
+  padding: 8px 8px 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pickerGroupBlock + .pickerGroupBlock,
+.pickerOption + .pickerGroupBlock {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+.pickerOption {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 26px;
+  border-radius: 5px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.pickerOption[data-active],
+.pickerOption:hover {
+  background-color: var(--surface-hover);
+}
+
+/* [K7] The KEYBOARD-active option is the listbox's cursor, and a shared hover
+   background could not tell the two apart — the pointer moving across the list
+   looked exactly like the row Enter would choose. The ring says which is which. */
+.pickerOption[data-active] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.pickerOption[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 9px;
+  height: 5px;
+  border: 2px solid var(--accent);
+  border-top: 0;
+  border-right: 0;
+  transform: translateY(-70%) rotate(-45deg);
+}
+
+.pickerOption[aria-disabled='true'] {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.pickerOption[aria-disabled='true']:hover {
+  background-color: transparent;
+}
+
+.pickerAnnotation {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pickerStart::before {
+  content: '+';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-55%);
+  border: 0;
+  width: auto;
+  height: auto;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ── buttons: the only filled elements on the page ──────────────────────── */
@@ -121,6 +409,131 @@
   color: var(--text-secondary);
 }
 
+/* [X9] Every `.button` MODIFIER lives after the base rules above: CSS-module class
+   names carry equal specificity, so a modifier declared earlier in the file loses
+   the cascade to `.button` / `.button:hover` — which is what silently reverted the
+   close icon's square padding and the warn tone's border and colour. */
+
+/* The glyph centres itself rather than riding on symmetric padding: `.button`
+   contributes its own padding and line-height, which pushed the 12px cross off
+   the middle of the 28px box. A flex centre is immune to both. */
+.closeIcon {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  line-height: 0;
+}
+
+.closeIcon svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.warn {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.warn:hover:not(:disabled) {
+  border-color: var(--status-warning);
+  background-color: rgba(245, 158, 11, 0.08);
+}
+
+/* ── save as profile button (§4.8) ───────────────────────────────────────── */
+
+/* The panel positions against its OWN trigger span (`position: relative`
+   here, not on `.masthead`), so it stays attached to the button that opened
+   it even when the masthead wraps the trigger onto its own row. Anchoring to
+   the trigger means `.menuPanel`'s `max-width` can no longer resolve as a
+   percentage of the pane (the trigger is far narrower than the pane), so it
+   clamps with `cqw` against `.root`'s inline size instead — `.root` below is
+   the nearest `container-type: inline-size` ancestor between here and the
+   pane, and `cqw` resolves against it regardless of how many non-positioned
+   elements sit in between, the same containment the `@container
+   golem-config` query near the bottom of this file already relies on. This
+   must NOT be `vw`: Firn's shell docks resizable side panels beside the
+   editor column (see `MIN_SIDE_WIDTH` / `CENTER_LIMITS.minFiles` in
+   frontend/src/utils/centerLayout.ts), so this component's pane is routinely
+   far narrower than the OS viewport — a `vw`-based clamp does not shrink
+   with the pane and can let the panel overflow it. No fixed min-width for
+   the same pane-can-be-narrow reason. */
+.menuRoot {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.menuPanel {
+  position: absolute;
+  top: calc(100% + 4px);
+  /* [C15] Save is the first item of the wrapped actions row, so below the
+     800px one-row form its trigger sits near the pane's LEFT edge and a
+     right-anchored 320px panel would extend past that edge. Left-anchored
+     against the trigger works at every width the trigger itself can occupy. */
+  left: 0;
+  right: auto;
+  z-index: 30;
+  width: max-content;
+  min-width: 0;
+  /* [X5] Plain fallback first; the cqw clamp wins wherever it parses. */
+  max-width: 320px;
+  max-width: min(320px, calc(100cqw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-panel);
+}
+
+.menuHint {
+  margin: 0;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.menuForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.menuNameRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menuNamePrefix {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.menuNameInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.menuActions {
+  display: inline-flex;
+  gap: 6px;
+}
+
 /* ── status: dot + text, never a bordered pill ──────────────────────────── */
 
 .status {
@@ -140,15 +553,33 @@
 }
 
 .status[data-tone='ok'] .statusDot {
-  background-color: var(--accent-go);
+  background-color: var(--status-success);
+  box-shadow: 0 0 0 1px var(--status-success) inset;
 }
 
 .status[data-tone='warn'] .statusDot {
   background-color: var(--status-warning);
+  box-shadow: 0 0 0 1px var(--status-warning) inset;
 }
 
 .status[data-tone='bad'] .statusDot {
   background-color: var(--palette-red);
+  box-shadow: 0 0 0 1px var(--palette-red) inset;
+}
+
+/* Ruling 10: Limited is a hollow amber ring; Missing / No model a hollow muted ring. */
+.status[data-tone='limited'] .statusDot {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--status-warning) inset;
+}
+
+.status[data-tone='dim'] .statusDot {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--text-muted) inset;
+}
+
+.status[data-tone='dim'] {
+  color: var(--text-muted);
 }
 
 /* ── body + cards ───────────────────────────────────────────────────────── */
@@ -156,8 +587,8 @@
 .body {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 18px 22px 22px;
+  gap: 14px;
+  padding: 12px 12px 14px;
 }
 
 .card {
@@ -166,26 +597,32 @@
   background-color: var(--surface-panel);
 }
 
-/*
- * No left accent bar. A 3px rule down one rounded edge reads as a stray sliver
- * rather than structure; the header already separates itself with its own
- * background and its bottom border.
- */
+/* ── tables (#308, [A7] mobile-first): the BASE is the record form; the
+   column-aligned table is an upgrade inside @supports + the >= 600 container
+   query at the end of this file ─────────────────────────────────────────────
+
+   No left accent bar. A 3px rule down one rounded edge reads as a stray sliver
+   rather than structure; the header already separates itself with its own
+   background and its bottom border. */
 .cardHead {
   display: flex;
+  /* Kept wrapping: the hint and the Add button must fall to a second line in a
+     narrow pane rather than push the card into a horizontal scroll. */
   flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--surface-border);
   border-radius: 9px 9px 0 0;
-  background-color: var(--surface-hover);
+  background-color: var(--surface-elevated);
 }
 
 .cardTitle {
   margin: 0;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text-primary);
 }
 
@@ -197,61 +634,18 @@
 .cardBody {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px 12px 12px;
-}
-
-/*
- * The header row and the strips below it are SEPARATE grids that must line up,
- * so they share one template per card (.providerGrid / .routeGrid /
- * .definedGrid) and one horizontal inset. The inset is 15px, not 14px, because
- * a strip carries a 1px border and the header does not — with border-box that
- * is 1px of content-box offset the header has to match.
- */
-.columns {
-  display: grid;
-  gap: 14px;
-  padding: 2px 15px 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.rows {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin: 0;
   padding: 0;
-  list-style: none;
+  /* [X4] The last resort when even the bounded columns cannot fit: a pathological
+     pair of 256-byte identifiers scrolls THIS card, never the whole page. */
+  overflow-x: auto;
 }
 
-/* A row is its strip plus whatever the strip owns: its diagnostics and, while
-   it is expanded, its editor. */
-.row {
-  display: flex;
-  flex-direction: column;
+.table {
+  display: block;
 }
 
-.strip {
-  display: grid;
-  gap: 14px;
-  align-items: center;
-  padding: 9px 14px;
-  border: 1px solid var(--surface-border-subtle);
-  border-radius: 8px;
-  background-color: var(--surface-frame);
-}
-
-/*
- * Each cell names its own column, because the visible header row above the
- * strips is decorative. Visually hidden while that header row is showing, and
- * promoted to a real stacked label under the narrow container query below — one
- * element serving both, so nothing is announced twice.
- */
-.cellLabel {
+/* Visually hidden, never removed: the column names stay in the tree at every width. */
+.headRow {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -263,68 +657,185 @@
   border: 0;
 }
 
-/*
- * The expanded strip is the open editor's MASTHEAD: the record's title bar,
- * not another row of the editable surface below. It takes one surface step up
- * from the strips' frame fill (the same header idiom .cardHead uses), keeps
- * its full-width hairline beneath, and shares the editor's accent edge.
- * Closed strips stay on the flat frame fill, so the open row is the one that
- * pops.
- */
-.strip[data-expanded] {
-  border-color: var(--accent);
-  border-bottom-color: var(--surface-border-subtle);
-  border-radius: 8px 8px 0 0;
-  background-color: var(--surface-hover);
-}
-
-/* The record's identity leads the masthead — one size up from every other
-   cell in the row (weight is already 700 on the base class). */
-.strip[data-expanded] .useCase {
-  font-size: 13px;
-}
-
-/* The metadata trail (provider, model) steps back to secondary ink so the
-   name and the live state carry the row. .meta cells are muted already. */
-.strip[data-expanded] .value {
-  color: var(--text-muted);
-}
-
-/* The live-state signal: "editing…" reads in accent, dot and text, so the
-   eye lands on the state after the name. Copy still carries the meaning. */
-.strip[data-expanded] .status {
-  color: var(--accent);
-}
-
-.strip[data-expanded] .statusDot {
-  background-color: var(--accent);
-}
-
-/*
- * Every template below ends in a FIXED actions track, never `auto`. An `auto`
- * track sizes to its content, and the header's actions cell is empty while a
- * strip's holds a status and one or two buttons — so `auto` resolved to 0 in
- * the header and ~60-160px in the rows, and the `1fr` column swallowed the
- * difference. That pushed every column AFTER the `1fr` to the right in the
- * header only, which is exactly the drift Keith saw on THINK and STATUS.
- *
- * ponytail: a fixed reserve, sized to each card's ordinary row. The rare wide
- * row (a staged provider's extra Unstage, a defined model's "Unstage removal"
- * beside "Needs review") wraps inside .rowActions rather than widening the
- * track. `grid-template-columns: subgrid` is the real fix and needs the header
- * and the strips to share one grid container — a DOM change that would break
- * the list semantics the rows carry, so it waits for a reason bigger than this.
- */
-.providerGrid {
-  grid-template-columns: 130px 1fr 110px 150px 172px;
-}
-
-.rowActions {
+/* A record: name + status + Edit on line 1, the long value on line 2, mono labels on line 3. */
+.row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 4px 10px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--surface-border-subtle);
+}
+
+.table > .row:nth-child(even) {
+  background-color: rgba(2, 6, 23, 0.32);
+}
+
+.table > .row:hover,
+.editGroup > .row:hover {
+  background-color: var(--surface-hover);
+}
+
+.table > .row:last-child {
+  border-bottom: 0;
+}
+
+.cell {
+  min-width: 0;
+}
+
+.recordLabel {
+  display: inline;
+  margin-right: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/*
+ * [A3] Identifiers can be 256 bytes: they wrap, never nowrap. Scoped to `.row`,
+ * because the shipped `.identifier` also dresses the grant prompt's model cell
+ * and the provider editor's fixed name — neither of which is a record field,
+ * and both of which an `order` would silently reshuffle.
+ */
+.row > .identifier,
+.row > .useCase {
+  flex: 1 1 auto;
+  order: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.statusCell {
+  order: 2;
+}
+
+.actionsCell {
+  order: 3;
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
+}
+
+.endpointCell {
+  flex: 1 1 100%;
+  order: 4;
+}
+
+.providerCell {
+  order: 4;
+  flex: 0 1 auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.providerCell::after {
+  content: '›';
+  margin-left: 8px;
+  color: var(--text-disabled);
+}
+
+.modelCell {
+  order: 5;
+  flex: 1 1 auto;
+}
+
+/* A stack, not a line: the Type cell carries its apiFormat under the
+   classification at every width. Harmless for the single-child Think cell. */
+.metaCell {
+  order: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.endpointCell,
+.modelCell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.small {
+  padding: 3px 10px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Groups and detail rows stack in the record form. */
+.noticeGroup,
+.editGroup,
+.detailRow {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ruling 6: the open row and its editor are ONE outlined group, inset from the card edges. */
+.editGroup {
+  margin: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background-color: var(--surface-elevated);
+  /* Kept on one line: prettier would split the two shadows across lines, and the
+     stylesheet guard pins the halo. */
+  /* prettier-ignore */
+  box-shadow: 0 0 0 3px rgba(18, 181, 205, 0.12), var(--shadow-panel);
+}
+
+.editGroup > .row {
+  border-bottom: 1px solid var(--surface-border);
+  border-radius: 7px 7px 0 0;
+}
+
+.editGroup + .row {
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+.row[data-expanded] .useCase,
+.row[data-expanded] .identifier {
+  color: var(--accent);
+}
+
+.editingTag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background-color: rgba(18, 181, 205, 0.14);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  color: var(--accent);
+  vertical-align: 1px;
+}
+
+.editorCell {
+  min-width: 0;
+}
+
+/* The Add-provider form renders outside the table, with no editGroup wrapper to
+   outline it, so it carries the accent boundary and the inset itself. */
+.cardBody > .editor {
+  margin: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
 }
 
 /* ── row editor ─────────────────────────────────────────────────────────── */
@@ -332,10 +843,9 @@
 .editor {
   margin: 0;
   padding: 12px 14px 14px;
-  border: 1px solid var(--accent);
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
-  background-color: var(--surface-frame);
+  border: 0;
+  border-radius: 0 0 7px 7px;
+  background-color: var(--surface-elevated);
 }
 
 .editorLegend {
@@ -354,7 +864,7 @@
  */
 .editorGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px 18px;
   align-items: start;
 }
@@ -1059,11 +1569,12 @@ select.input {
 }
 
 .rowDiagnostic {
+  grid-column: 1 / -1;
   margin: 0;
   padding: 7px 14px;
-  border: 1px solid var(--surface-border);
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
+  border: 0;
+  border-top: 1px solid var(--surface-border-subtle);
+  border-radius: 0;
   background-color: var(--surface-panel);
   font-size: 12px;
   line-height: 1.5;
@@ -1158,14 +1669,6 @@ select.input {
   gap: 8px;
 }
 
-.destination {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  margin: 0;
-}
-
 .dropList {
   display: flex;
   flex-direction: column;
@@ -1176,10 +1679,95 @@ select.input {
   font-family: var(--font-mono);
 }
 
+/* ── destination approval prompt (grant-only, D13) ──────────────────────── */
+
+.grant {
+  border-color: var(--accent);
+}
+
+.grantHead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.grantTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.grantTtl {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.grantList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--surface-border-subtle);
+}
+
+/* [A7] Mobile-first BASE: stacked flex rows. The grid upgrade lives in the
+   `min-width: 600px` container query below. */
+.grantList li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  font-size: 12px;
+}
+
+.grantProvider {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.grantEndpoint {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  flex: 1 1 100%;
+}
+
+.grantClass {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--status-warning);
+}
+
+.grantActions .button {
+  flex: 1 1 auto;
+}
+
 /* ── confirmation dialog (§4.6a) ────────────────────────────────────────── */
 
+/* `reset.css` zeroes every margin, which cancels the UA stylesheet's
+   `dialog { margin: auto }` — the one rule that centres a modal dialog. Without
+   it `showModal` draws at the window's top-left, under the frameless titlebar
+   and over the macOS traffic lights. The margin comes back explicitly, and the
+   40px top inset keeps the dialog clear of that titlebar in a short window too.
+   `fit-content` keeps the box sized to its text: `inset` pins all four edges,
+   and an `auto` size against pinned edges would stretch to fill them. */
 .dialog {
+  position: fixed;
+  inset: 40px 0 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
   max-width: 420px;
+  max-height: calc(100% - 80px);
+  overflow-y: auto;
   padding: 16px;
   border: 1px solid var(--surface-border);
   border-radius: 8px;
@@ -1211,57 +1799,11 @@ select.input {
   gap: 8px;
 }
 
-/* Routing rows carry exactly one button (Edit or Assign): a narrow reserve. */
-.routeGrid {
-  grid-template-columns: 90px 120px 1fr 70px 120px 76px;
-}
-
-/*
- * THINK holds one short enumerated value, or an em-dash when there is none. Left
- * ragged in a 70px column it lands under the first letters of its own header and
- * reads as misaligned, so the column centres — header and values together, so
- * `auto` and the placeholder sit in the same place.
- */
-.routeGrid > *:nth-child(4) {
-  text-align: center;
-}
-
-.thinkCell {
-  align-items: center;
-}
-
-.definedGrid {
-  grid-template-columns: 130px 130px 1fr 152px;
-}
-
 .identifier {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-primary);
   overflow-wrap: anywhere;
-}
-
-.useCase {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.value {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .metaSub {
@@ -1297,7 +1839,7 @@ select.input {
 
 .subgroup {
   margin: 10px 0 0;
-  padding: 0 2px;
+  padding: 0 14px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -1335,8 +1877,8 @@ select.input {
 
 .diagnostic {
   display: grid;
-  grid-template-columns: 74px 1fr;
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 4px;
   align-items: baseline;
   padding: 8px 14px;
   border: 1px solid var(--surface-border);
@@ -1399,7 +1941,56 @@ select.input {
   border: 0;
 }
 
-/* ── narrow container: strips stack, nothing scrolls sideways ───────────── */
+/* ── Missing-state empty body (#312 ruling 4) ───────────────────────────── */
+
+/* [A7][X8] Mobile-first BASE: stacked actions, full-width buttons. It sits
+   BEFORE every `@container golem-config` block on purpose — CSS-module classes
+   carry equal specificity, so declaring the base after the >= 600px upgrade
+   cancelled that upgrade's wider padding and `flex: none` buttons outright. */
+.emptyState {
+  padding: 18px 14px 16px;
+  border: 1px dashed var(--surface-border);
+  border-radius: 8px;
+  background-color: var(--surface-panel);
+}
+
+.emptyTitle {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.emptyText,
+.emptyNote {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.emptyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 12px;
+}
+
+.emptyActions .button {
+  flex: 1 1 auto;
+}
+
+.emptyNote {
+  font-size: 11.5px;
+}
+
+.emptyNote b {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* ── narrow container: the route editor's master-detail strip stacks ─────── */
 
 @container golem-config (max-width: 720px) {
   /* The strip stacks: facts over exposure, the hairline becoming a rule. */
@@ -1414,58 +2005,331 @@ select.input {
     border-top: 1px solid var(--surface-border-subtle);
     border-left: none;
   }
+}
 
-  .root {
-    padding: 8px;
+/* ── TWO-ROW form: >= 600 container px (upgrade from the stacked base) ────── */
+
+@container golem-config (min-width: 600px) {
+  .masthead {
+    padding: 12px 22px 14px;
   }
 
-  /* Stacked rows have no column header to centre under. */
-  .routeGrid > *:nth-child(4) {
-    text-align: left;
+  .mastheadMeta {
+    flex: 1 1 auto;
+    order: 0;
   }
 
-  .thinkCell {
-    align-items: flex-start;
+  .picker {
+    flex: 0 0 280px;
   }
 
-  .columns {
-    display: none;
-  }
-
-  .providerGrid,
-  .routeGrid,
-  .definedGrid {
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
-
-  .rowActions {
+  .actions {
+    flex-wrap: nowrap;
     justify-content: flex-start;
+    flex: 1 1 100%;
   }
 
-  .editorGrid {
-    grid-template-columns: 1fr;
+  .actions > .button,
+  .actions > .menuRoot,
+  .actions > .checkDestinations {
+    flex: none;
   }
 
-  /* The column header row is gone, so each cell's own label becomes visible. */
-  .cellLabel {
-    position: static;
-    display: block;
+  .actions > .menuRoot > .button {
     width: auto;
-    height: auto;
-    padding: 0;
-    margin: 0;
-    overflow: visible;
-    clip: auto;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-muted);
   }
 
-  .diagnostic {
-    grid-template-columns: 1fr;
-    gap: 4px;
+  .body {
+    padding: 16px 22px 18px;
+    gap: 18px;
+  }
+
+  /* ── destination approval prompt: grid rows, actions right-aligned ─────── */
+
+  .grantList li {
+    display: grid;
+    /* [A3] provider and model are identifiers (up to 256 bytes): bounded, wrapping. */
+    grid-template-columns: fit-content(160px) fit-content(160px) minmax(0, 1fr) max-content;
+    column-gap: 16px;
+    align-items: baseline;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--surface-border-subtle);
+    font-size: 12px;
+  }
+
+  .grantList li .metaSub {
+    grid-column: 1 / -1;
+  }
+
+  .grantActions {
+    justify-content: flex-end;
+  }
+
+  .grantActions .button {
+    flex: none;
+  }
+
+  /* ── Missing-state empty body upgrade (#312 ruling 4, [A7]) ────────────── */
+
+  .emptyState {
+    padding: 26px 24px 22px;
+  }
+
+  .emptyActions .button {
+    flex: none;
+  }
+}
+
+/* ── ONE-ROW form: >= 800 container px ──────────────────────────────────── */
+
+@container golem-config (min-width: 800px) {
+  .controls {
+    flex-wrap: nowrap;
+  }
+
+  .actions {
+    flex: none;
+  }
+}
+
+/* ── change trace, usage, jumps (ruling 7) ─────────────────────────────── */
+
+.row[data-changed] {
+  position: relative;
+}
+
+/* Inset 9px top/bottom so the stripe never meets a rounded corner; 5px further
+   in inside the editing group. */
+.row[data-changed]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background-color: var(--status-warning);
+}
+
+.editGroup > .row[data-changed]::before {
+  left: 5px;
+  border-radius: 2px;
+}
+
+.was {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.was b {
+  margin-right: 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--status-warning);
+}
+
+.usedBy {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* [W4-3] The Assign list of a defined-model row grows the row the way the route
+   editor grows its own: nothing floats, so `.cardBody`'s overflow-x clip can
+   never cut it, and the record form needs no width rule at all. */
+.assignPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px 12px;
+}
+
+/* [A2] The backend classifies a staged endpoint on Apply; until then the row
+   says so. Information, not an inert placeholder, so --text-muted. */
+.pending {
+  color: var(--text-muted);
+}
+
+.chip::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background-color: var(--status-warning);
+  vertical-align: 1px;
+}
+
+.bannerRef {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.bannerRef:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.bannerRef:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
+.bannerRef:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.row[data-flash] {
+  outline: 2px solid transparent;
+  outline-offset: -3px;
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  from {
+    outline-color: var(--focus-ring);
+  }
+
+  to {
+    outline-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row[data-flash] {
+    animation: none;
+    outline-color: var(--focus-ring);
+  }
+}
+
+/* ── the table upgrade: column-aligned rows, header band, bounded identifier
+   columns. [A7][C19] Last block in the file on purpose: the masthead guard
+   matches the FIRST `@container golem-config (min-width: 600px)`, which must
+   stay the masthead's — and the stylesheet guard proves the upgrade's only
+   mechanism never leaks outside this feature query. */
+
+@supports (grid-template-columns: subgrid) {
+  @container golem-config (min-width: 600px) {
+    .table {
+      display: grid;
+    }
+
+    /* Only the long, variable-length columns are fluid; identifiers are bounded (A3).
+       [X4] The 200px cap is itself capped against the CONTAINER (`22cqw`), so a narrow
+       pane cannot let one 256-byte identifier claim a third of the row and squeeze the
+       fluid column to nothing; that column keeps an `8ch` floor rather than `0`, and
+       `.cardBody` scrolls when even those minimums exceed the pane. */
+    .providerTable {
+      /* prettier-ignore */
+      grid-template-columns: fit-content(min(200px, 22cqw)) minmax(8ch, 1fr) max-content max-content max-content;
+    }
+
+    .routeTable {
+      /* Kept on one line: prettier would fold the six tracks past 80 columns
+         into an unreadable split, and the stylesheet guard pins the template. */
+      /* prettier-ignore */
+      grid-template-columns: fit-content(min(200px, 22cqw)) fit-content(min(200px, 22cqw)) minmax(8ch, 1fr) max-content max-content max-content;
+    }
+
+    .definedTable {
+      /* prettier-ignore */
+      grid-template-columns: fit-content(min(200px, 22cqw)) fit-content(min(200px, 22cqw)) minmax(8ch, 1fr) max-content;
+    }
+
+    .row,
+    .headRow {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      align-items: baseline;
+      column-gap: 18px;
+      padding: 10px 14px;
+    }
+
+    /* Three tones: title band (elevated) > header band (frame) > rows (panel, alternating). */
+    .headRow {
+      position: static;
+      width: auto;
+      height: auto;
+      margin: 0;
+      overflow: visible;
+      clip: auto;
+      padding: 8px 14px;
+      background-color: var(--surface-frame);
+      border-bottom: 1px solid var(--surface-border);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      line-height: 1.4;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .recordLabel {
+      display: none;
+    }
+
+    .row > .identifier,
+    .row > .useCase,
+    .statusCell,
+    .actionsCell,
+    .endpointCell,
+    .providerCell,
+    .modelCell,
+    .metaCell {
+      order: 0;
+      flex: none;
+    }
+
+    .providerCell::after {
+      content: none;
+    }
+
+    .metaCell {
+      font-size: 12px;
+    }
+
+    .noticeGroup,
+    .editGroup,
+    .detailRow {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
+
+    .editGroup {
+      margin: 6px 8px;
+    }
+
+    .editorCell {
+      grid-column: 1 / -1;
+    }
+
+    /* The editor's own two-column belowgrid and the page diagnostics list join
+       the upgrade here: the base stacks both. */
+    .editorGrid {
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+
+    .diagnostic {
+      grid-template-columns: 74px 1fr;
+      gap: 10px;
+    }
   }
 }

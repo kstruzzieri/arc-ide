@@ -1,0 +1,19 @@
+{
+  "verdict": "accept",
+  "document": "profile_list_result",
+  "value": {
+    "status": "loaded",
+    "profiles": [
+      {
+        "id": "curated/local",
+        "description": "Vetted local llama-swap lineup",
+        "curated": true,
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "id": "user/mine",
+        "curated": false
+      }
+    ]
+  }
+}

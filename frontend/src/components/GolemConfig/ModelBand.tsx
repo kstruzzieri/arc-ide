@@ -31,6 +31,7 @@ import {
   type ModelType,
   type ProviderProjection,
 } from '../../types/golem';
+import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import styles from './GolemConfig.module.css';
@@ -132,15 +133,31 @@ const factsLine = (model: ModelProjection): string =>
 const contextTitle = (model: ModelProjection): string | undefined =>
   model.contextWindow === undefined ? undefined : `${model.contextWindow} tokens`;
 
-const missingFloor = (model: ModelProjection, floor: readonly CapabilityName[]): CapabilityName[] =>
-  floor.filter((cap) => !model.exposedCapabilities.includes(cap));
-
 export interface ModelBandProps {
   /** DOM id root; the grid is `<id>-grid` and its cards `<id>-card-N`. */
   id: string;
+  /** The use case being routed — the one thing every card below can serve. */
   useCase: string;
-  /** The use case's Firn floor; these capabilities are the filter. */
+  /**
+   * That use case's own floor: the filter label, and what a fresh declaration
+   * starts with (a new name has no selector siblings yet).
+   */
   floor: readonly CapabilityName[];
+  /**
+   * The union floor of everything the CURRENT candidate governs — `floor` plus
+   * whatever its own selector siblings need: the declare form's `required`
+   * tags (a declared name can join an existing selector) and the readout's
+   * highlighted chips. A tag is not a lock: only a cap the declaration already
+   * carries locks, because a declaration is what the user asserts.
+   */
+  required: readonly CapabilityName[];
+  /**
+   * One card's verdict: each floor capability the model lacks, with the use
+   * cases that need it. A card's OWN selector siblings count beyond `useCase`,
+   * which is why this is a question per card rather than one floor. Empty
+   * means the card can be chosen.
+   */
+  shortfalls: (model: ModelProjection) => readonly FloorShortfall[];
   /** Every model the document defines, across providers. */
   models: readonly ModelProjection[];
   provider: string;
@@ -164,6 +181,8 @@ export function ModelBand({
   id,
   useCase,
   floor,
+  required,
+  shortfalls,
   models,
   provider,
   providers,
@@ -190,9 +209,14 @@ export function ModelBand({
 
   const gridId = `${id}-grid`;
 
-  const rows = buildModelRows(models, provider);
-  const eligible = rows.filter((row) => missingFloor(row.model, floor).length === 0);
-  const blocked = rows.filter((row) => missingFloor(row.model, floor).length > 0);
+  // The verdict rides on the row: one call per card per render, and a blocked
+  // card renders the very shortfall that blocked it.
+  const judged = buildModelRows(models, provider).map((row) => ({
+    ...row,
+    short: shortfalls(row.model),
+  }));
+  const eligible = judged.filter((row) => row.short.length === 0);
+  const blocked = judged.filter((row) => row.short.length > 0);
 
   const needle = query.trim().toLowerCase();
   const matches = eligible.filter((row) => row.model.modelName.toLowerCase().includes(needle));
@@ -373,7 +397,10 @@ export function ModelBand({
         <fieldset className={styles.capabilities}>
           <legend className={styles.fieldLabel}>Capabilities this model supports</legend>
           {CAPABILITY_NAMES.map((cap) => {
-            const locked = floor.includes(cap);
+            // A required cap the declaration lacks stays unchecked and enabled:
+            // ticking it is the user's assertion, never the form's (§4.4).
+            const needed = required.includes(cap);
+            const locked = needed && manual.caps.includes(cap);
             return (
               <label
                 key={cap}
@@ -383,7 +410,7 @@ export function ModelBand({
                   className={styles.checkboxInput}
                   type="checkbox"
                   disabled={locked}
-                  checked={locked || manual.caps.includes(cap)}
+                  checked={manual.caps.includes(cap)}
                   onChange={(event) =>
                     patch({
                       caps: canonicalCaps(
@@ -396,7 +423,7 @@ export function ModelBand({
                 />
                 <span className={styles.checkboxBox} aria-hidden="true" />
                 {cap}
-                {locked && (
+                {needed && (
                   <>
                     {' '}
                     <span className={styles.requiredTag}>required</span>
@@ -406,8 +433,8 @@ export function ModelBand({
             );
           })}
           <span className={styles.fieldHint}>
-            What you declare here is what Golem may use. The capabilities this use case requires are
-            checked and locked.
+            What you declare here is what Golem may use. The route needs the capabilities tagged
+            required.
           </span>
         </fieldset>
         <button
@@ -542,7 +569,7 @@ export function ModelBand({
             >
               <span className={styles.modelCardTop}>
                 <span className={styles.modelName}>{row.model.modelName}</span>
-                <span className={styles.modelCardFacts}>{`not eligible for ${useCase}`}</span>
+                <span className={styles.modelCardFacts}>{shortfallLine(row.short)}</span>
               </span>
               <span className={styles.modelCardMeta}>
                 <span className={styles.factTag}>{row.model.type}</span>
@@ -551,7 +578,7 @@ export function ModelBand({
                 </span>
               </span>
               <span className={styles.capChips}>
-                {missingFloor(row.model, floor).map((cap) => (
+                {row.short.map(({ cap }) => (
                   <span key={cap} className={`${styles.capChip} ${styles.capChipMissing}`}>
                     {`✕ ${cap}`}
                   </span>
@@ -643,7 +670,7 @@ export function ModelBand({
                     {detail.exposedCapabilities.map((cap) => (
                       <span
                         key={cap}
-                        className={`${styles.capChip} ${floor.includes(cap) ? styles.capChipFloor : ''}`}
+                        className={`${styles.capChip} ${required.includes(cap) ? styles.capChipFloor : ''}`}
                       >
                         {cap}
                       </span>
@@ -673,7 +700,7 @@ export function ModelBand({
           <span className={styles.hiddenCount}>
             {`${blocked.length} model${blocked.length === 1 ? '' : 's'}`}
           </span>
-          {` do${blocked.length === 1 ? 'es' : ''} not meet ${floor.join(' · ')} — `}
+          {` ${blocked.length === 1 ? 'is' : 'are'} not eligible — `}
           <span className={styles.hiddenToggle}>
             {`${showHidden ? 'hide' : 'show'} ${blocked.length === 1 ? 'it' : 'them'}`}
           </span>

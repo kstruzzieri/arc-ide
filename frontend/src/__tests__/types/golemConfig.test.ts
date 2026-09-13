@@ -8,28 +8,40 @@ import {
 } from '../../types/golem';
 import {
   ACTIVE_PROFILE_KEY,
+  affectedUseCases,
   buildApplyRequest,
   canApplyDraft,
   changeStableID,
   cleanDraft,
   draftChangeCount,
+  effectiveRoutes,
+  floorShortfalls,
+  governedUseCasesOf,
   isDraftDirty,
   KeyVault,
   meetsUseCaseFloor,
   parseCancelSettingsApplyResult,
   parseConfirmSettingsApplyRequest,
   parseDestinationGrantsResult,
+  parseGolemProfileListResult,
   parseGolemProfileLoadResult,
+  parseGolemProfileSaveResult,
+  parseSaveGolemProfileAsRequest,
   parseSettingsApplyRequest,
   parseSettingsApplyResult,
+  probeRouteChange,
   projectDraft,
+  providerUsage,
   readActiveProfile,
   recordApplyProvenance,
   replaceSource,
   retainsKeys,
+  retargetOf,
   setTargetRevision,
   settleDraft,
   stageChange,
+  stagedRoutes,
+  unionFloor,
   unstageChange,
   USE_CASE_FLOORS,
   type ApplyMode,
@@ -79,6 +91,15 @@ const checkFixture = (fixture: ApplyFixture): void => {
       return;
     case 'profile_load_result':
       parseGolemProfileLoadResult(fixture.value);
+      return;
+    case 'profile_list_result':
+      parseGolemProfileListResult(fixture.value);
+      return;
+    case 'profile_save_request':
+      parseSaveGolemProfileAsRequest(fixture.value);
+      return;
+    case 'profile_save_result':
+      parseGolemProfileSaveResult(fixture.value);
       return;
     default:
       throw new Error(`unknown document ${fixture.document}`);
@@ -627,6 +648,21 @@ describe('projected draft normalization', () => {
     const projected = projectDraft(base, stage([routeChange({ useCase: 'chat' })]));
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
+    // An override sits on the selector the current role is on, so it governs
+    // summarize too; a fork onto a selector nobody is on governs chat alone and
+    // summarize is confirmation-only (the source role is left as it was).
+    expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    const forked = projectDraft(
+      base,
+      stage([
+        routeChange({
+          useCase: 'chat',
+          modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        }),
+      ])
+    );
+    expect(forked.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    expect(forked.governedUseCases.get('chat')).toEqual(['chat']);
   });
 
   it('marks shared selector siblings Modified and inherits Needs review', () => {
@@ -994,5 +1030,364 @@ describe('use-case floors', () => {
     ['planning', ['chat', 'stream', 'tool_call'], true],
   ])('meetsUseCaseFloor(%s, %j) is %s', (useCase, caps, expected) => {
     expect(meetsUseCaseFloor(useCase as string, caps as CapabilityName[])).toBe(expected);
+  });
+});
+
+describe('effectiveRoutes / providerUsage (one derived view)', () => {
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'a' },
+      { useCase: 'chat', role: 'c' },
+    ],
+    models: [
+      // The fallback-inclusive claim each model carries has to AGREE with the
+      // routes above, or the fold [X3] applies would credit a use case the base
+      // never routed there. `modelRow` defaults to `['chat']`.
+      modelRow({ role: 'a', provider: 'llama-swap', modelName: 'm1', routedUseCases: ['agent'] }),
+      modelRow({ role: 'c', provider: 'zen', modelName: 'm2' }),
+    ],
+  };
+
+  it('reflects staged moves and unassigns, not only the base', () => {
+    const changes: Change[] = [
+      {
+        kind: 'route',
+        useCase: 'agent',
+        modelFacts: { provider: 'zen', model: 'm3', type: 'dense' },
+        capabilityFacts: { caps: [], knownCaps: [] },
+        exposedCaps: [],
+        thinkMode: '',
+        confirmUnknown: false,
+      },
+      { kind: 'route-unassign', useCase: 'chat' },
+    ];
+    const routes = effectiveRoutes(base, changes);
+    expect(routes.get('agent')).toEqual({ provider: 'zen', model: 'm3' });
+    expect(routes.get('chat')).toBeNull();
+    expect(providerUsage(routes, base, changes)).toEqual(new Map([['zen', ['agent']]]));
+  });
+
+  it('with no changes equals the base', () => {
+    expect(providerUsage(effectiveRoutes(base, []), base, [])).toEqual(
+      new Map([
+        ['llama-swap', ['agent']],
+        ['zen', ['chat']],
+      ])
+    );
+  });
+
+  it('credits a provider reached only through a fallback chain', () => {
+    // [X3] `agent` routes DIRECTLY to provider A, but the backend resolved its
+    // fallback chain onto provider B and says so on B's model (`routedUseCases`).
+    // Counting only direct routes would report B as `not routed`.
+    const withFallback: DraftBaseProjection = {
+      routes: [{ useCase: 'agent', role: 'a' }],
+      models: [
+        modelRow({ role: 'a', provider: 'A', modelName: 'm1', routedUseCases: ['agent'] }),
+        modelRow({ role: 'b', provider: 'B', modelName: 'm2', routedUseCases: ['agent'] }),
+      ],
+    };
+    expect(providerUsage(effectiveRoutes(withFallback, []), withFallback, [])).toEqual(
+      new Map([
+        ['A', ['agent']],
+        ['B', ['agent']],
+      ])
+    );
+  });
+
+  it('lets a staged route override the base claim on that use case', () => {
+    // The fold answers only use cases this draft is NOT restaging: once `agent` is
+    // retargeted, the applied models' claim on it is exactly what Apply replaces.
+    const withFallback: DraftBaseProjection = {
+      routes: [{ useCase: 'agent', role: 'a' }],
+      models: [
+        modelRow({ role: 'a', provider: 'A', modelName: 'm1', routedUseCases: ['agent'] }),
+        modelRow({ role: 'b', provider: 'B', modelName: 'm2', routedUseCases: ['agent'] }),
+      ],
+    };
+    const changes: Change[] = [
+      {
+        kind: 'route',
+        useCase: 'agent',
+        modelFacts: { provider: 'C', model: 'm3', type: 'dense' },
+        capabilityFacts: { caps: [], knownCaps: [] },
+        exposedCaps: [],
+        thinkMode: '',
+        confirmUnknown: false,
+      },
+    ];
+    expect(providerUsage(effectiveRoutes(withFallback, changes), withFallback, changes)).toEqual(
+      new Map([['C', ['agent']]])
+    );
+  });
+});
+
+describe('floors across a selector (wave 4c)', () => {
+  // Transport order (routes by use case, models by role), as a real projection arrives.
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'reasoning', role: 'reason-role' },
+    ],
+    models: [
+      modelRow({
+        role: 'agent-role',
+        modelName: 'gpt-5',
+        effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+        capabilityFacts: {
+          caps: ['chat', 'stream', 'tool_call'],
+          knownCaps: [...CAPABILITY_NAMES],
+        },
+        exposedCapabilities: ['chat', 'stream', 'tool_call'],
+        routedUseCases: ['agent'],
+      }),
+      modelRow({ routedUseCases: ['chat'] }),
+      // agent reaches reason-role through a fallback chain: routedUseCases is
+      // fallback-inclusive (internal/ai/settings.go roleUsage).
+      modelRow({
+        role: 'reason-role',
+        modelName: 'deepseek',
+        routedUseCases: ['agent', 'reasoning'],
+      }),
+    ],
+  };
+  const byRole = (role: string): ModelProjection => {
+    const found = base.models.find((model) => model.role === role);
+    if (found === undefined) throw new Error(`no model role ${role}`);
+    return found;
+  };
+
+  it('unions the floors of the use cases named, in canonical order', () => {
+    expect(unionFloor(['reasoning'])).toEqual([]);
+    expect(unionFloor(['reasoning', 'agent', 'embedding'])).toEqual([
+      'chat',
+      'stream',
+      'embed',
+      'tool_call',
+    ]);
+  });
+
+  it('lists what a candidate asks the user to confirm, the edited use case first', () => {
+    // reasoning's current role also serves agent; gpt-5's selector serves agent directly.
+    expect(
+      affectedUseCases(
+        base,
+        cleanDraft(REVISION_A),
+        probeRouteChange('reasoning', byRole('agent-role'))
+      )
+    ).toEqual(['reasoning', 'agent']);
+    // A card on chat-role's selector adds chat to the set.
+    expect(
+      affectedUseCases(
+        base,
+        cleanDraft(REVISION_A),
+        probeRouteChange('reasoning', byRole('chat-role'))
+      )
+    ).toEqual(['reasoning', 'agent', 'chat']);
+  });
+
+  it('lists what a candidate governs: the changed use case, then the target selector routes', () => {
+    // agent-role is on gpt-5's selector, so a fork of reasoning onto it governs agent…
+    expect(
+      governedUseCasesOf(
+        base,
+        cleanDraft(REVISION_A),
+        probeRouteChange('reasoning', byRole('agent-role'))
+      )
+    ).toEqual(['reasoning', 'agent']);
+    // …while on chat-role's selector agent — reached only through reasoning's
+    // CURRENT role — is confirmation-only: the fork leaves that role as it is.
+    const ontoChat = probeRouteChange('reasoning', byRole('chat-role'));
+    expect(governedUseCasesOf(base, cleanDraft(REVISION_A), ontoChat)).toEqual([
+      'reasoning',
+      'chat',
+    ]);
+    expect(affectedUseCases(base, cleanDraft(REVISION_A), ontoChat)).toEqual([
+      'reasoning',
+      'agent',
+      'chat',
+    ]);
+  });
+
+  it('folds a staged change on the same selector into the set', () => {
+    const draft = stage([
+      routeChange({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+      }),
+    ]);
+    expect(
+      affectedUseCases(base, draft, probeRouteChange('reasoning', byRole('agent-role')))
+    ).toEqual(['reasoning', 'agent', 'chat']);
+  });
+
+  it('names each missing capability with the use cases that need it', () => {
+    expect(floorShortfalls(['chat', 'stream'], ['reasoning', 'agent', 'chat'])).toEqual([
+      { cap: 'tool_call', useCases: ['agent'] },
+    ]);
+    expect(floorShortfalls(['embed'], ['chat', 'agent'])).toEqual([
+      { cap: 'chat', useCases: ['chat', 'agent'] },
+      { cap: 'stream', useCases: ['chat', 'agent'] },
+      { cap: 'tool_call', useCases: ['agent'] },
+    ]);
+    expect(floorShortfalls(['chat', 'stream', 'tool_call'], ['reasoning', 'agent'])).toEqual([]);
+  });
+
+  it("carries every optional fact and the model's own exposure into the probe", () => {
+    const probe = probeRouteChange('agent', modelRow({ parameters: '7b', contextWindow: 4096 }));
+    expect(probe.modelFacts).toEqual({
+      provider: 'hosted',
+      model: 'gpt-5-mini',
+      type: 'dense',
+      parameters: '7b',
+      contextWindow: 4096,
+    });
+    // What the card exposes, nothing added: the floor it misses is the verdict, not the probe.
+    expect(probe.exposedCaps).toEqual(['chat', 'stream']);
+    expect(probe.thinkMode).toBe('');
+  });
+
+  it('drops a sibling the draft already moves off the selector from the governed set', () => {
+    // [W4-10] agent sits on gpt-5 today. A draft that routes it onto ANOTHER
+    // selector leaves nothing of it on gpt-5 for chat to govern; a draft that
+    // routes it ONTO gpt-5 is in chat's own selector group.
+    const gpt5 = byRole('agent-role');
+    const twoRoutes: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [gpt5, modelRow({ routedUseCases: ['chat'] })],
+    };
+    const probe = probeRouteChange('chat', gpt5);
+    const agentOnto = (model: string): RouteChange =>
+      routeChange({
+        useCase: 'agent',
+        modelFacts: { provider: 'hosted', model, type: 'dense' },
+        exposedCaps: ['chat', 'stream', 'tool_call'],
+      });
+    expect(governedUseCasesOf(twoRoutes, stage([agentOnto('claude')]), probe)).toEqual(['chat']);
+    expect(governedUseCasesOf(twoRoutes, stage([agentOnto('gpt-5')]), probe)).toEqual([
+      'chat',
+      'agent',
+    ]);
+
+    // An unassign is NOT a departure: the unbind runs after every route plan,
+    // so the sibling's route is still bound when the join is gated. (agent is
+    // Firn's run path and can never be unassigned; the sibling routes planning.)
+    const planRole: ModelProjection = { ...gpt5, role: 'plan-role', routedUseCases: ['planning'] };
+    const withPlanning: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [modelRow({ routedUseCases: ['chat'] }), planRole],
+    };
+    expect(
+      governedUseCasesOf(
+        withPlanning,
+        stage([{ kind: 'route-unassign', useCase: 'planning' }]),
+        probeRouteChange('chat', planRole)
+      )
+    ).toEqual(['chat', 'planning']);
+  });
+
+  it('keeps every use case a fork source still serves once one of its routes leaves', () => {
+    // pair-role routes planning AND summarize on gpt-5: forking planning away
+    // leaves pair-role's Defaults bound to BOTH until the binds phase, so
+    // chat joining gpt-5 still gates on everything pair-role still serves.
+    const gpt5 = byRole('agent-role');
+    const pairRole: ModelProjection = {
+      ...gpt5,
+      role: 'pair-role',
+      routedUseCases: ['planning', 'summarize'],
+    };
+    const forked: DraftBaseProjection = {
+      routes: [
+        { useCase: 'planning', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [pairRole, modelRow({ routedUseCases: ['chat'] })],
+    };
+    const planningAway = routeChange({
+      useCase: 'planning',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    expect(
+      governedUseCasesOf(forked, stage([planningAway]), probeRouteChange('chat', pairRole))
+    ).toEqual(['chat', 'planning', 'summarize']);
+  });
+
+  it('keeps a route the draft moves off a role it reaches only as a fallback', () => {
+    // routedUseCases is fallback-inclusive: agent reaches judge-role through
+    // agent-role's chain. Retargeting agent rewrites (or forks) agent-role, its
+    // OWN role; judge-role stays on gpt-5, still on agent's chain, so agent
+    // still gates a join there.
+    const gpt5 = byRole('agent-role');
+    const judge: ModelProjection = { ...gpt5, role: 'judge-role', modelName: 'gpt-5' };
+    const viaFallback: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        { ...gpt5, modelName: 'claude-opus' },
+        modelRow({ routedUseCases: ['chat'] }),
+        judge,
+      ],
+    };
+    const agentAway = routeChange({
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    expect(
+      governedUseCasesOf(viaFallback, stage([agentAway]), probeRouteChange('chat', judge))
+    ).toEqual(['chat', 'agent']);
+  });
+});
+
+describe('retargetOf', () => {
+  const chatRole = modelRow({ role: 'chat-role', routedUseCases: ['chat'] });
+  const base: DraftBaseProjection = {
+    routes: [{ useCase: 'chat', role: 'chat-role' }],
+    models: [chatRole],
+  };
+
+  it('returns the route for a single-use-case role moved to another selector', () => {
+    const away = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+    });
+    expect(retargetOf(base, stagedRoutes([away]), chatRole)).toBe(away);
+  });
+
+  it('returns undefined for a fork source routing more than one use case', () => {
+    const pairRole = modelRow({ role: 'pair-role', routedUseCases: ['chat', 'summarize'] });
+    const forkBase: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+      ],
+      models: [pairRole],
+    };
+    const away = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+    });
+    expect(retargetOf(forkBase, stagedRoutes([away]), pairRole)).toBeUndefined();
+  });
+
+  it('returns undefined for a route staying on the same selector', () => {
+    const sameSelector = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: chatRole.provider, model: chatRole.modelName, type: chatRole.type },
+      thinkMode: 'always',
+    });
+    expect(retargetOf(base, stagedRoutes([sameSelector]), chatRole)).toBeUndefined();
   });
 });

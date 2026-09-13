@@ -1,9 +1,9 @@
 /**
  * The Apply bar (#263 spec §4.1 item 4, §3.3, mockup v10).
  *
- * Dirty only, and honest about what "dirty" means: `N changes waiting for
- * Apply`, one chip per change reading `target → effect`, then Discard and
- * Apply. A chip is not decoration — it is the only handle some changes have
+ * Dirty only, and honest about what "dirty" means: `N staged changes`, one
+ * chip per change reading `target · field` (ruling 7), then Discard and Apply.
+ * A chip is not decoration — it is the only handle some changes have
  * (a staged provider-add has no applied row to sit on), so every chip opens and
  * focuses the editor that produced it.
  *
@@ -26,25 +26,42 @@ export interface EditorFocusRequest {
   nonce: number;
 }
 
-/** `target → effect`, the one chip grammar. */
+/**
+ * `target · field`, the one chip grammar (ruling 7); the row's WAS lines carry
+ * the values.
+ *
+ * [C23] A route change bundles model, think and exposure and the bar has no
+ * applied document to diff against, so it names the row honestly; a provider
+ * update names every field it carries.
+ */
 export function changeChipLabel(change: Change): string {
   switch (change.kind) {
     case 'route':
-      return `${change.useCase} → ${change.modelFacts.model}`;
+      return `${change.useCase} · route`;
     case 'route-unassign':
-      return `${change.useCase} → unassigned`;
+      return `${change.useCase} · unassigned`;
     case 'provider-add':
-      return `${change.name} → new provider`;
-    case 'provider-update':
-      return `${change.name} → updated`;
+      return `${change.name} · new provider`;
+    case 'provider-update': {
+      const fields = [
+        change.endpoint !== undefined ? 'endpoint' : '',
+        change.apiFormat !== undefined ? 'type' : '',
+      ].filter((field) => field !== '');
+      return `${change.name} · ${fields.join(', ')}`;
+    }
     case 'provider-remove':
-      return `${change.name} → removed`;
+      return `${change.name} · removed`;
+    // [F7] Setting a key and clearing one are opposite intents; one label for both
+    // left the chip unable to say which of them Apply would send.
     case 'provider-key-set':
-      return `${change.name} → new API key`;
+      return `${change.name} · API key`;
     case 'provider-key-clear':
-      return `${change.name} → key cleared`;
+      return `${change.name} · API key cleared`;
+    // [C6] `removed` alone read as a provider removal: a provider and a model role
+    // may carry the same name, and the two chips sat side by side saying the same
+    // thing about different things.
     case 'role-remove':
-      return `${change.role} → model removed`;
+      return `${change.role} · model removed`;
   }
 }
 
@@ -104,9 +121,7 @@ export function ApplyBar({
 
   return (
     <div className={styles.draftBar} data-testid="golem-config-draft">
-      <span className={styles.draftCount}>
-        {`${count} change${count === 1 ? '' : 's'} waiting for Apply`}
-      </span>
+      <span className={styles.draftCount}>{`${count} staged change${count === 1 ? '' : 's'}`}</span>
       <span className={styles.chips}>
         {sourceChip !== null && (
           <button type="button" className={styles.chip} disabled={locked} onClick={onOpenSource}>

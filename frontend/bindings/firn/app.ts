@@ -744,12 +744,25 @@ export function LSPSetInterpreter(workspacePath: string, interpreterPath: string
 }
 
 /**
+ * ListGolemProfiles returns the closed §5.6 profile list projection: the
+ * curated catalog block followed by the user block, bounded and in stable ID
+ * order. Paths never cross Wails, and user rows carry id only until Load.
+ * Every outcome is a closed domain result; only a missing service is an error.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function ListGolemProfiles(): $CancellablePromise<ai$0.GolemProfileListResult> {
+    return $Call.ByID(2723764165).then(($result: any) => {
+        return $$createType39($result);
+    });
+}
+
+/**
  * ListRecentWorkspaces returns summaries of recently opened workspaces.
  * This is exposed to the frontend via Wails bindings.
  */
 export function ListRecentWorkspaces(): $CancellablePromise<workspace$0.Summary[]> {
     return $Call.ByID(3459539712).then(($result: any) => {
-        return $$createType40($result);
+        return $$createType41($result);
     });
 }
 
@@ -764,7 +777,7 @@ export function ListRecentWorkspaces(): $CancellablePromise<workspace$0.Summary[
  */
 export function LoadGolemProfile(profileID: string): $CancellablePromise<ai$0.GolemProfileLoadResult> {
     return $Call.ByID(1561429884, profileID).then(($result: any) => {
-        return $$createType41($result);
+        return $$createType42($result);
     });
 }
 
@@ -784,7 +797,7 @@ export function LoadRunProfiles(workspacePath: string): $CancellablePromise<void
  */
 export function LoadWorkspaceState(workspacePath: string): $CancellablePromise<workspace$0.State | null> {
     return $Call.ByID(2334223351, workspacePath).then(($result: any) => {
-        return $$createType43($result);
+        return $$createType44($result);
     });
 }
 
@@ -845,7 +858,7 @@ export function PrepareGolemDestinationGrants(): $CancellablePromise<ai$0.Destin
  */
 export function ReadDirectory(path: string): $CancellablePromise<filesystem$0.FileEntry[]> {
     return $Call.ByID(3882613584, path).then(($result: any) => {
-        return $$createType45($result);
+        return $$createType46($result);
     });
 }
 
@@ -856,7 +869,7 @@ export function ReadDirectory(path: string): $CancellablePromise<filesystem$0.Fi
  */
 export function ReadDirectoryShallow(path: string, rootPath: string): $CancellablePromise<filesystem$0.FileEntry[]> {
     return $Call.ByID(1781218628, path, rootPath).then(($result: any) => {
-        return $$createType45($result);
+        return $$createType46($result);
     });
 }
 
@@ -867,7 +880,7 @@ export function ReadDirectoryShallow(path: string, rootPath: string): $Cancellab
  */
 export function ReadFile(path: string): $CancellablePromise<filesystem$0.FileContent | null> {
     return $Call.ByID(1160596971, path).then(($result: any) => {
-        return $$createType47($result);
+        return $$createType48($result);
     });
 }
 
@@ -879,7 +892,7 @@ export function ReadFile(path: string): $CancellablePromise<filesystem$0.FileCon
  */
 export function ReloadGolemSettings(): $CancellablePromise<ai$0.SettingsReloadResult> {
     return $Call.ByID(1366669581).then(($result: any) => {
-        return $$createType48($result);
+        return $$createType49($result);
     });
 }
 
@@ -919,7 +932,22 @@ export function RestartRunProfile(profileID: string): $CancellablePromise<void> 
  */
 export function RunGolemTurn(req: ai$0.TurnRequest): $CancellablePromise<ai$0.TurnAdmission> {
     return $Call.ByID(2592072505, req).then(($result: any) => {
-        return $$createType49($result);
+        return $$createType50($result);
+    });
+}
+
+/**
+ * SaveGolemProfileAs duplicates the applied configuration into the user
+ * profile store as a credential-scrubbed named profile (§5.3). Absent
+ * expectedRevision is create-only; present is compare-and-replace against the
+ * stored profile's revision. It never touches the staged draft, the active
+ * publication, or the run barrier. Every outcome is a closed §5.6 domain
+ * result; only a missing service is an error.
+ * This is exposed to the frontend via Wails bindings.
+ */
+export function SaveGolemProfileAs(req: ai$0.SaveGolemProfileAsRequest): $CancellablePromise<ai$0.GolemProfileSaveResult> {
+    return $Call.ByID(354391537, req).then(($result: any) => {
+        return $$createType51($result);
     });
 }
 
@@ -929,7 +957,7 @@ export function RunGolemTurn(req: ai$0.TurnRequest): $CancellablePromise<ai$0.Tu
  */
 export function SaveRunProfile(profile: runprofile$0.RunProfile): $CancellablePromise<runprofile$0.ValidationResult> {
     return $Call.ByID(2441820046, profile).then(($result: any) => {
-        return $$createType50($result);
+        return $$createType52($result);
     });
 }
 
@@ -951,7 +979,7 @@ export function SaveWorkspaceState(state: workspace$0.State): $CancellablePromis
  */
 export function SearchWorkspace(request: search$0.SearchRequest): $CancellablePromise<search$0.SearchResponse> {
     return $Call.ByID(99753730, request).then(($result: any) => {
-        return $$createType51($result);
+        return $$createType53($result);
     });
 }
 
@@ -1048,7 +1076,7 @@ export function UnpinRunProfile(id: string): $CancellablePromise<void> {
  */
 export function ValidateRunProfile(profile: runprofile$0.RunProfile): $CancellablePromise<runprofile$0.ValidationResult> {
     return $Call.ByID(162550721, profile).then(($result: any) => {
-        return $$createType50($result);
+        return $$createType52($result);
     });
 }
 
@@ -1108,16 +1136,18 @@ const $$createType35 = lsp$0.Hover.createFrom;
 const $$createType36 = $Create.Nullable($$createType35);
 const $$createType37 = lsp$0.CompletionItem.createFrom;
 const $$createType38 = $Create.Nullable($$createType37);
-const $$createType39 = workspace$0.Summary.createFrom;
-const $$createType40 = $Create.Array($$createType39);
-const $$createType41 = ai$0.GolemProfileLoadResult.createFrom;
-const $$createType42 = workspace$0.State.createFrom;
-const $$createType43 = $Create.Nullable($$createType42);
-const $$createType44 = filesystem$0.FileEntry.createFrom;
-const $$createType45 = $Create.Array($$createType44);
-const $$createType46 = filesystem$0.FileContent.createFrom;
-const $$createType47 = $Create.Nullable($$createType46);
-const $$createType48 = ai$0.SettingsReloadResult.createFrom;
-const $$createType49 = ai$0.TurnAdmission.createFrom;
-const $$createType50 = runprofile$0.ValidationResult.createFrom;
-const $$createType51 = search$0.SearchResponse.createFrom;
+const $$createType39 = ai$0.GolemProfileListResult.createFrom;
+const $$createType40 = workspace$0.Summary.createFrom;
+const $$createType41 = $Create.Array($$createType40);
+const $$createType42 = ai$0.GolemProfileLoadResult.createFrom;
+const $$createType43 = workspace$0.State.createFrom;
+const $$createType44 = $Create.Nullable($$createType43);
+const $$createType45 = filesystem$0.FileEntry.createFrom;
+const $$createType46 = $Create.Array($$createType45);
+const $$createType47 = filesystem$0.FileContent.createFrom;
+const $$createType48 = $Create.Nullable($$createType47);
+const $$createType49 = ai$0.SettingsReloadResult.createFrom;
+const $$createType50 = ai$0.TurnAdmission.createFrom;
+const $$createType51 = ai$0.GolemProfileSaveResult.createFrom;
+const $$createType52 = runprofile$0.ValidationResult.createFrom;
+const $$createType53 = search$0.SearchResponse.createFrom;

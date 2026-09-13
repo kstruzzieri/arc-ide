@@ -770,6 +770,40 @@ func (a *App) LoadGolemProfile(profileID string) (ai.GolemProfileLoadResult, err
 	return ai.LoadGolemProfile(a.ctx, profileID), nil
 }
 
+// ListGolemProfiles returns the closed §5.6 profile list projection: the
+// curated catalog block followed by the user block, bounded and in stable ID
+// order. Paths never cross Wails, and user rows carry id only until Load.
+// Every outcome is a closed domain result; only a missing service is an error.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) ListGolemProfiles() (ai.GolemProfileListResult, error) {
+	if a.aiService == nil {
+		return ai.GolemProfileListResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.ListGolemProfiles()
+	if err != nil {
+		return ai.GolemProfileListResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
+// SaveGolemProfileAs duplicates the applied configuration into the user
+// profile store as a credential-scrubbed named profile (§5.3). Absent
+// expectedRevision is create-only; present is compare-and-replace against the
+// stored profile's revision. It never touches the staged draft, the active
+// publication, or the run barrier. Every outcome is a closed §5.6 domain
+// result; only a missing service is an error.
+// This is exposed to the frontend via Wails bindings.
+func (a *App) SaveGolemProfileAs(req ai.SaveGolemProfileAsRequest) (ai.GolemProfileSaveResult, error) {
+	if a.aiService == nil {
+		return ai.GolemProfileSaveResult{}, a.golemError(errGolemUnavailable)
+	}
+	result, err := a.aiService.SaveGolemProfileAs(req)
+	if err != nil {
+		return ai.GolemProfileSaveResult{}, a.golemError(err)
+	}
+	return result, nil
+}
+
 // ReadDirectory reads a directory and returns its contents as a tree structure.
 // This is exposed to the frontend via Wails bindings.
 func (a *App) ReadDirectory(path string) ([]filesystem.FileEntry, error) {

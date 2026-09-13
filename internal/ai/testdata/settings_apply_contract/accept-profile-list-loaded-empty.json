@@ -1,0 +1,8 @@
+{
+  "verdict": "accept",
+  "document": "profile_list_result",
+  "value": {
+    "status": "loaded",
+    "profiles": []
+  }
+}

@@ -556,6 +556,60 @@ export class Diagnostic {
 }
 
 /**
+ * GolemProfileListResult is the closed §5.6 list union. `limited` carries the
+ * first maxProjectionEntries rows in stable ID order.
+ */
+export class GolemProfileListResult {
+    "status": string;
+
+    /**
+     * Profiles MUST be non-empty whenever Status is "loaded" or "limited". That
+     * is guaranteed, not merely hoped for: the embedded curated catalog always
+     * contributes at least "curated/local" to Store.List, so an empty
+     * loaded/limited result is unreachable by construction, and Task 3's
+     * TestListGolemProfilesNeverEmpty is the guard that pins it. `omitempty`
+     * here is deliberate and depends on that invariant holding — marshaling a
+     * genuinely EMPTY slice would silently drop the member and produce
+     * {"status":"loaded"}, which is exactly the byte shape the shared corpus
+     * records as reject (reject-profile-list-missing-profiles.json), not the
+     * accept shape {"status":"loaded","profiles":[]}
+     * (accept-profile-list-loaded-empty.json — that fixture documents a wire
+     * shape the SCHEMA allows, not one this producer ever emits). Do not "fix"
+     * this by dropping omitempty or switching to *[]ProfileInfo — see
+     * TestGolemProfileResultsRoundTripTheContract in settings_apply_test.go,
+     * which proves every result this producer can actually emit round-trips
+     * through the same contract checks a fixture takes.
+     */
+    "profiles"?: ProfileInfo[];
+    "diagnostics"?: ProfileDiagnostic[];
+
+    /** Creates a new GolemProfileListResult instance. */
+    constructor($$source: Partial<GolemProfileListResult> = {}) {
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GolemProfileListResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): GolemProfileListResult {
+        const $$createField1_0 = $$createType13;
+        const $$createField2_0 = $$createType15;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("profiles" in $$parsedSource) {
+            $$parsedSource["profiles"] = $$createField1_0($$parsedSource["profiles"]);
+        }
+        if ("diagnostics" in $$parsedSource) {
+            $$parsedSource["diagnostics"] = $$createField2_0($$parsedSource["diagnostics"]);
+        }
+        return new GolemProfileListResult($$parsedSource as Partial<GolemProfileListResult>);
+    }
+}
+
+/**
  * GolemProfileLoadResult carries a draft preview plus the provenance the
  * frontend needs to stage a profile-source Apply.
  */
@@ -579,7 +633,7 @@ export class GolemProfileLoadResult {
      * Creates a new GolemProfileLoadResult instance from a string or object.
      */
     static createFrom($$source: any = {}): GolemProfileLoadResult {
-        const $$createField3_0 = $$createType13;
+        const $$createField3_0 = $$createType17;
         const $$createField4_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projection" in $$parsedSource) {
@@ -589,6 +643,46 @@ export class GolemProfileLoadResult {
             $$parsedSource["diagnostics"] = $$createField4_0($$parsedSource["diagnostics"]);
         }
         return new GolemProfileLoadResult($$parsedSource as Partial<GolemProfileLoadResult>);
+    }
+}
+
+/**
+ * GolemProfileSaveResult is the closed §5.6 save union. The two CAS failures
+ * are distinct conflict kinds: active_revision (the applied configuration
+ * moved under the caller) and profile_target (the destination profile moved
+ * or appeared). The durability warning rides the SAVED variant — upstream
+ * reports it with a nil error, never as a failure.
+ */
+export class GolemProfileSaveResult {
+    "status": string;
+    "profile"?: SavedProfile | null;
+    "warning"?: string;
+    "conflict"?: string;
+    "diagnostics"?: ProfileDiagnostic[];
+
+    /** Creates a new GolemProfileSaveResult instance. */
+    constructor($$source: Partial<GolemProfileSaveResult> = {}) {
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GolemProfileSaveResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): GolemProfileSaveResult {
+        const $$createField1_0 = $$createType19;
+        const $$createField4_0 = $$createType15;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("profile" in $$parsedSource) {
+            $$parsedSource["profile"] = $$createField1_0($$parsedSource["profile"]);
+        }
+        if ("diagnostics" in $$parsedSource) {
+            $$parsedSource["diagnostics"] = $$createField4_0($$parsedSource["diagnostics"]);
+        }
+        return new GolemProfileSaveResult($$parsedSource as Partial<GolemProfileSaveResult>);
     }
 }
 
@@ -795,10 +889,10 @@ export class ProfileDraftProjection {
      * Creates a new ProfileDraftProjection instance from a string or object.
      */
     static createFrom($$source: any = {}): ProfileDraftProjection {
-        const $$createField3_0 = $$createType17;
-        const $$createField4_0 = $$createType19;
-        const $$createField5_0 = $$createType21;
-        const $$createField6_0 = $$createType23;
+        const $$createField3_0 = $$createType21;
+        const $$createField4_0 = $$createType23;
+        const $$createField5_0 = $$createType25;
+        const $$createField6_0 = $$createType27;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("routes" in $$parsedSource) {
             $$parsedSource["routes"] = $$createField3_0($$parsedSource["routes"]);
@@ -813,6 +907,39 @@ export class ProfileDraftProjection {
             $$parsedSource["diagnostics"] = $$createField6_0($$parsedSource["diagnostics"]);
         }
         return new ProfileDraftProjection($$parsedSource as Partial<ProfileDraftProjection>);
+    }
+}
+
+/**
+ * ProfileInfo is one §5.6 list row. Store.List user rows carry ID only —
+ * description and revision stay absent until Load supplies them, never
+ * invented (§5.3). Curated is derived from the namespace by the producer, so
+ * the flag can never disagree with the id.
+ */
+export class ProfileInfo {
+    "id": string;
+    "description"?: string;
+    "curated": boolean;
+    "revision"?: string;
+
+    /** Creates a new ProfileInfo instance. */
+    constructor($$source: Partial<ProfileInfo> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("curated" in $$source)) {
+            this["curated"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProfileInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProfileInfo {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProfileInfo($$parsedSource as Partial<ProfileInfo>);
     }
 }
 
@@ -980,6 +1107,67 @@ export class RunIdentity {
 }
 
 /**
+ * SaveGolemProfileAsRequest is the §5.6 save request. ExpectedRevision is nil
+ * exactly when the caller omitted it: absent means create-only and present
+ * means compare-and-replace — there is no empty-string sentinel and no
+ * overwrite boolean (§5.3), which is why the member is presence-preserving.
+ */
+export class SaveGolemProfileAsRequest {
+    "id": string;
+    "expectedRevision"?: string | null;
+    "appliedRevision": string;
+
+    /** Creates a new SaveGolemProfileAsRequest instance. */
+    constructor($$source: Partial<SaveGolemProfileAsRequest> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("appliedRevision" in $$source)) {
+            this["appliedRevision"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SaveGolemProfileAsRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SaveGolemProfileAsRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SaveGolemProfileAsRequest($$parsedSource as Partial<SaveGolemProfileAsRequest>);
+    }
+}
+
+/**
+ * SavedProfile is the saved outcome's identity: the user profile id and the
+ * revision the store reports for the written bytes.
+ */
+export class SavedProfile {
+    "id": string;
+    "revision": string;
+
+    /** Creates a new SavedProfile instance. */
+    constructor($$source: Partial<SavedProfile> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("revision" in $$source)) {
+            this["revision"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SavedProfile instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SavedProfile {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SavedProfile($$parsedSource as Partial<SavedProfile>);
+    }
+}
+
+/**
  * SettingsApplyRequest is the complete staged write. TargetRevision is nil
  * exactly when the caller omitted it (Create); Changes and Keys are non-null
  * collections.
@@ -1009,9 +1197,9 @@ export class SettingsApplyRequest {
      * Creates a new SettingsApplyRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsApplyRequest {
-        const $$createField1_0 = $$createType24;
-        const $$createField2_0 = $$createType26;
-        const $$createField3_0 = $$createType27;
+        const $$createField1_0 = $$createType28;
+        const $$createField2_0 = $$createType30;
+        const $$createField3_0 = $$createType31;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("source" in $$parsedSource) {
             $$parsedSource["source"] = $$createField1_0($$parsedSource["source"]);
@@ -1052,10 +1240,10 @@ export class SettingsApplyResult {
      * Creates a new SettingsApplyResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsApplyResult {
-        const $$createField1_0 = $$createType29;
+        const $$createField1_0 = $$createType33;
         const $$createField3_0 = $$createType11;
-        const $$createField4_0 = $$createType31;
-        const $$createField7_0 = $$createType23;
+        const $$createField4_0 = $$createType35;
+        const $$createField7_0 = $$createType27;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projection" in $$parsedSource) {
             $$parsedSource["projection"] = $$createField1_0($$parsedSource["projection"]);
@@ -1133,10 +1321,10 @@ export class SettingsProjection {
      * Creates a new SettingsProjection instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsProjection {
-        const $$createField5_0 = $$createType17;
-        const $$createField6_0 = $$createType19;
-        const $$createField7_0 = $$createType21;
-        const $$createField8_0 = $$createType23;
+        const $$createField5_0 = $$createType21;
+        const $$createField6_0 = $$createType23;
+        const $$createField7_0 = $$createType25;
+        const $$createField8_0 = $$createType27;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("routes" in $$parsedSource) {
             $$parsedSource["routes"] = $$createField5_0($$parsedSource["routes"]);
@@ -1179,7 +1367,7 @@ export class SettingsReloadResult {
      * Creates a new SettingsReloadResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SettingsReloadResult {
-        const $$createField1_0 = $$createType28;
+        const $$createField1_0 = $$createType32;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("projection" in $$parsedSource) {
             $$parsedSource["projection"] = $$createField1_0($$parsedSource["projection"]);
@@ -1228,10 +1416,10 @@ export class Status {
      * Creates a new Status instance from a string or object.
      */
     static createFrom($$source: any = {}): Status {
-        const $$createField2_0 = $$createType32;
-        const $$createField3_0 = $$createType33;
-        const $$createField5_0 = $$createType35;
-        const $$createField6_0 = $$createType37;
+        const $$createField2_0 = $$createType36;
+        const $$createField3_0 = $$createType37;
+        const $$createField5_0 = $$createType39;
+        const $$createField6_0 = $$createType41;
         const $$createField7_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("identity" in $$parsedSource) {
@@ -1319,8 +1507,8 @@ export class TurnAdmission {
     static createFrom($$source: any = {}): TurnAdmission {
         const $$createField1_0 = $$createType0;
         const $$createField2_0 = $$createType9;
-        const $$createField3_0 = $$createType38;
-        const $$createField4_0 = $$createType35;
+        const $$createField3_0 = $$createType42;
+        const $$createField4_0 = $$createType39;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("identity" in $$parsedSource) {
             $$parsedSource["identity"] = $$createField1_0($$parsedSource["identity"]);
@@ -1393,30 +1581,34 @@ const $$createType8 = SettingsApplyRequest.createFrom;
 const $$createType9 = ProviderDestination.createFrom;
 const $$createType10 = ApplyChallenge.createFrom;
 const $$createType11 = $Create.Nullable($$createType10);
-const $$createType12 = ProfileDraftProjection.createFrom;
-const $$createType13 = $Create.Nullable($$createType12);
+const $$createType12 = ProfileInfo.createFrom;
+const $$createType13 = $Create.Array($$createType12);
 const $$createType14 = ProfileDiagnostic.createFrom;
 const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = RouteProjection.createFrom;
-const $$createType17 = $Create.Array($$createType16);
-const $$createType18 = ModelProjection.createFrom;
-const $$createType19 = $Create.Array($$createType18);
-const $$createType20 = ProviderProjection.createFrom;
+const $$createType16 = ProfileDraftProjection.createFrom;
+const $$createType17 = $Create.Nullable($$createType16);
+const $$createType18 = SavedProfile.createFrom;
+const $$createType19 = $Create.Nullable($$createType18);
+const $$createType20 = RouteProjection.createFrom;
 const $$createType21 = $Create.Array($$createType20);
-const $$createType22 = Diagnostic.createFrom;
+const $$createType22 = ModelProjection.createFrom;
 const $$createType23 = $Create.Array($$createType22);
-const $$createType24 = ApplySource.createFrom;
-const $$createType25 = Change.createFrom;
-const $$createType26 = $Create.Array($$createType25);
-const $$createType27 = $Create.Map($Create.Any, $Create.Any);
-const $$createType28 = SettingsProjection.createFrom;
-const $$createType29 = $Create.Nullable($$createType28);
-const $$createType30 = ChangeDropSet.createFrom;
-const $$createType31 = $Create.Array($$createType30);
-const $$createType32 = ConversationIdentity.createFrom;
-const $$createType33 = $Create.Nullable($$createType9);
-const $$createType34 = ConsentChallenge.createFrom;
-const $$createType35 = $Create.Nullable($$createType34);
-const $$createType36 = ActiveRunStatus.createFrom;
-const $$createType37 = $Create.Array($$createType36);
-const $$createType38 = ContextReceipt.createFrom;
+const $$createType24 = ProviderProjection.createFrom;
+const $$createType25 = $Create.Array($$createType24);
+const $$createType26 = Diagnostic.createFrom;
+const $$createType27 = $Create.Array($$createType26);
+const $$createType28 = ApplySource.createFrom;
+const $$createType29 = Change.createFrom;
+const $$createType30 = $Create.Array($$createType29);
+const $$createType31 = $Create.Map($Create.Any, $Create.Any);
+const $$createType32 = SettingsProjection.createFrom;
+const $$createType33 = $Create.Nullable($$createType32);
+const $$createType34 = ChangeDropSet.createFrom;
+const $$createType35 = $Create.Array($$createType34);
+const $$createType36 = ConversationIdentity.createFrom;
+const $$createType37 = $Create.Nullable($$createType9);
+const $$createType38 = ConsentChallenge.createFrom;
+const $$createType39 = $Create.Nullable($$createType38);
+const $$createType40 = ActiveRunStatus.createFrom;
+const $$createType41 = $Create.Array($$createType40);
+const $$createType42 = ContextReceipt.createFrom;

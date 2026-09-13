@@ -1,0 +1,9 @@
+{
+  "verdict": "accept",
+  "document": "profile_save_request",
+  "value": {
+    "id": "user/mine",
+    "expectedRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "appliedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
