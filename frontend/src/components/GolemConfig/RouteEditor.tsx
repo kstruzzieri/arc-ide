@@ -48,6 +48,7 @@ import {
   governedUseCasesOf,
   leavingRoutes,
   modelFactsOf,
+  overridesSelector,
   probeRouteChange,
   retargetOf,
   sameModelFacts,
@@ -73,6 +74,9 @@ const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
 
 const MODEL_INVALID = copy('model_invalid');
 const INELIGIBLE = copy('eligibility_ineligible');
+/** [W5-1] What an all-unticked checklist would actually persist. */
+const EMPTY_EXPOSURE =
+  "Tick at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing.";
 
 /** Transport order, the order the backend's drop set is compared in. */
 const DROP_ORDER: readonly DropField[] = ['slots', 'think_tags'];
@@ -354,6 +358,22 @@ export function RouteEditor({
    * backend's planRouteChanges asks, through the same comparison.
    */
   const isOverride = current !== null && facts !== null && sameModelFacts(current, facts);
+  /**
+   * [W5-2] Whether Think reaches the selector. An override writes it there
+   * itself; a join does too once the draft already holds an override on the
+   * selector — the reducer coalesces the group onto its latest change and the
+   * backend runs the group's override selector-wide. `isOverride` alone still
+   * decides what a retarget drops.
+   */
+  const thinkReaches =
+    isOverride ||
+    (candidate !== null &&
+      overridesSelector(
+        base,
+        draft.changes,
+        candidate.modelFacts.provider,
+        candidate.modelFacts.model
+      ));
 
   /**
    * What a real retarget would drop. An override drops nothing, and a
@@ -502,6 +522,13 @@ export function RouteEditor({
     }
     if (candidate === null) {
       setRefusal('Choose a model, or enter one manually.');
+      return;
+    }
+    // [W5-1] go-llm reads an empty override as "clear it" — the model type's
+    // defaults come back — and a join with none lands the declared set;
+    // neither is the empty set the checklist shows (§4.4).
+    if (exposed.length === 0) {
+      setRefusal(EMPTY_EXPOSURE);
       return;
     }
     // The clause the backend would refuse with, before the round trip.
@@ -717,11 +744,12 @@ export function RouteEditor({
       )}
 
       {/* This edit reaches past the row being edited. [W4-8] Only an override
-          writes Think selector-wide; a join carries its Think on its own role. */}
+          writes Think selector-wide; a join carries its Think on its own role —
+          unless the draft already holds an override on the selector [W5-2]. */}
       {alsoGoverns.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
           <p className={styles.disclosureText}>
-            {isOverride ? (
+            {thinkReaches ? (
               <>
                 Capabilities and Think are properties of <strong>the model</strong>, not the route.
                 Changing them here also changes them for {boldList(alsoGoverns)}.

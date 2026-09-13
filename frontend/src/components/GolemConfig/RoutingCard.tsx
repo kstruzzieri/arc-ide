@@ -34,8 +34,8 @@ import {
   floorShortfalls,
   governedUseCasesOf,
   meetsUseCaseFloor,
+  overridesSelector,
   probeRouteChange,
-  sameModelFacts,
   shortfallLine,
   type Change,
   type Draft,
@@ -303,12 +303,10 @@ export function RoutingCard({
         group.push(change);
     }
     if (group.length === 0) return undefined;
-    const override = group.some((change) => {
-      const role = byUseCase.get(change.useCase);
-      const current = role === undefined ? undefined : byRole.get(role);
-      return current !== undefined && sameModelFacts(current, change.modelFacts);
-    });
-    return { change: group[0], override };
+    return {
+      change: group[0],
+      override: overridesSelector(base, group, applied.provider, applied.modelName),
+    };
   };
 
   const assignId = (index: number): string => `golem-defined-assign-${index}`;
@@ -404,10 +402,10 @@ export function RoutingCard({
                         governing?.override === true
                           ? governing.change.thinkMode
                           : applied.thinkMode,
-                      // An empty exposure asserts nothing on a join and clears the
-                      // override on an override; the row keeps its applied exposure
-                      // either way (reachable only from a floorless editor with every
-                      // cap unticked).
+                      // The editor refuses an empty exposure [W5-1] (go-llm would
+                      // clear the override to the type's defaults, not to nothing);
+                      // should a draft carry one anyway, the row keeps its applied
+                      // exposure rather than paint a set nobody chose.
                       caps:
                         governing !== undefined && governing.change.exposedCaps.length > 0
                           ? governing.change.exposedCaps

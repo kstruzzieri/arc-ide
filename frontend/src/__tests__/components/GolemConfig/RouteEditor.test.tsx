@@ -654,6 +654,55 @@ describe('RouteEditor', () => {
     );
   });
 
+  it('says Think reaches the selector when the draft already holds an override on it', async () => {
+    // agent sits on gpt-5 with no Think, and the draft already stages an OVERRIDE
+    // of that route (same facts) that sets one. The reducer coalesces the whole
+    // selector group onto its latest change and the backend runs the group's
+    // override selector-wide (SetRoleOverrides), so a route JOINING gpt-5 now sets
+    // Think for agent too — the notice must say so, not "this route only".
+    const agentModel = model({
+      role: 'agent-role',
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      routedUseCases: ['agent'],
+    });
+    const override: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: agentModel.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'always',
+      confirmUnknown: false,
+    };
+    const routes = [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'agent', role: 'agent-role' },
+    ];
+    const models = [model(), agentModel];
+    const { onStage } = renderRouting({ routes, models, draft: draftWith(override) });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByText(/not the route/)).toHaveTextContent(
+      'Capabilities and Think are properties of the model, not the route. Changing them here also changes them for agent.'
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    await stage();
+    const staged = onStage.mock.calls[0][0][0];
+    // What Apply sends: the join is the group's latest change, so its Think is
+    // the override's Think too.
+    const projected = projectDraft({ routes, models }, draftWith(override, staged));
+    expect(
+      projected.changes.map((change) => (change.kind === 'route' ? change.thinkMode : change.kind))
+    ).toEqual(['auto', 'auto']);
+  });
+
   it('refuses a join whose Think differs from what a sibling already sets on the model', async () => {
     const { onStage } = renderRouting({
       routes: [
@@ -928,6 +977,37 @@ describe('RouteEditor', () => {
     const staged = onStage.mock.calls[0][0][0];
     expect(staged.exposedCaps).toEqual(['chat', 'stream']);
     expect(staged.thinkMode).toBe('');
+  });
+
+  it('refuses an empty exposure, which would fall back to the type defaults rather than to nothing', async () => {
+    // A floorless route: no shortfall stands in the way, only the acknowledgement.
+    // go-llm reads an empty override as "clear it": the model's capabilities
+    // derive from its type again (dense → chat, generate, stream), so an
+    // all-unticked checklist would persist MORE than it shows.
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'summarize', role: 'summarize-role' }],
+      models: [
+        model({
+          role: 'summarize-role',
+          effectiveCapabilities: ['chat'],
+          capabilityFacts: { caps: ['chat'], knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ['chat'],
+          routedUseCases: ['summarize'],
+        }),
+      ],
+    });
+    await openRoute('summarize');
+    await userEvent.click(screen.getByLabelText('chat'));
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Tick at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
+    );
+
+    await userEvent.click(screen.getByLabelText('chat'));
+    await stage();
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat']);
   });
 
   it('offers Unassign for an optional route and never for the agent', async () => {

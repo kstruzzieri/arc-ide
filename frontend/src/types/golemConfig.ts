@@ -1350,6 +1350,35 @@ export const sameModelFacts = (model: ModelProjection, facts: ModelFacts): boole
   (model.dimensions ?? 0) === (facts.dimensions ?? 0);
 
 /**
+ * Whether a staged route change onto `provider`/`model` is an OVERRIDE — the
+ * same full facts its use case's role already names. That is the one change
+ * the backend runs through `SetRoleOverrides`, selector-wide; and since
+ * `projectDraft` coalesces a selector group onto its latest change, an
+ * override anywhere in the group carries the group's Think to every role on
+ * the selector — a join beside it reaches them too.
+ */
+export const overridesSelector = (
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  provider: string,
+  model: string
+): boolean => {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((current) => [current.role, current]));
+  return changes.some((change) => {
+    if (
+      change.kind !== 'route' ||
+      change.modelFacts.provider !== provider ||
+      change.modelFacts.model !== model
+    )
+      return false;
+    const role = roleOf.get(change.useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    return current !== undefined && sameModelFacts(current, change.modelFacts);
+  });
+};
+
+/**
  * Every use case whose route this draft moves or clears — the staged `route`
  * and `route-unassign` changes. The question `providerUsage` asks: what does
  * a provider serve once the WHOLE request has landed? Both kinds have left by
